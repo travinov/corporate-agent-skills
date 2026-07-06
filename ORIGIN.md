@@ -11,5 +11,5 @@ This repository mirrors the original skill folder from Agents365-ai/drawio-skill
 
 - Added `DRAWIO_BIN` and `~/.drawio-skill/config.json` guidance for non-standard draw.io executable paths.
 - Added macOS and Windows internal marketplace / SberUserSoft install guidance.
-- Added Russian README for corporate deployment.
-- Packaged version: 1.19.0-corporate.4
+- Replaced Russian README with `metadata.md` in the requested extension metadata format.
+- Packaged version: 1.19.0-corporate.5
