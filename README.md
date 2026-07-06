@@ -36,18 +36,21 @@ unzip drawio-skill-corporate.zip -d ~/.agents/skills
 
 ### macOS
 
+В корпоративной среде устанавливайте draw.io Desktop через внутренний маркетплейс приложений компании, так же как на Windows. Не используйте Homebrew и не скачивайте внешний installer, если корпоративные правила требуют установку через маркетплейс.
+
+Прямая поисковая ссылка SberUserSoft:
+
+```text
+https://sberusersoft.sigma.sbrf.ru/#search/Draw.io
+```
+
+После установки проверьте CLI:
+
 ```bash
-brew install --cask drawio
 drawio --version
 ```
 
-Если Homebrew недоступен, установите draw.io Desktop из официального релиза:
-
-```text
-https://github.com/jgraph/drawio-desktop/releases
-```
-
-Проверка через полный путь:
+Если команда `drawio` не добавлена в `PATH`, проверьте полный путь:
 
 ```bash
 "/Applications/draw.io.app/Contents/MacOS/draw.io" --version
@@ -183,12 +186,18 @@ drawio -x -f png -o test.png test.drawio
 
 ## Частые проблемы
 
-`draw.io` не найден после `brew install --cask drawio`
+`draw.io` не найден на macOS
 
-На macOS Homebrew устанавливает команду `drawio`, без точки:
+На macOS команда обычно называется `drawio`, без точки:
 
 ```bash
 drawio --version
+```
+
+Если `drawio` не найден, проверьте, что draw.io Desktop установлен через SberUserSoft, затем попробуйте полный путь:
+
+```bash
+"/Applications/draw.io.app/Contents/MacOS/draw.io" --version
 ```
 
 Windows path содержит пробелы
@@ -219,4 +228,4 @@ https://github.com/Agents365-ai/drawio-skill
 4cb39bbeab09f1caa6959d3f60ef56e3cb685f08
 ```
 
-Отличие этой сборки: добавлены корпоративные инструкции для Windows/macOS, Windows-установка через внутренний маркетплейс, явная настройка пути к `drawio` через `DRAWIO_BIN` и config-файл, а также этот README на русском.
+Отличие этой сборки: добавлены корпоративные инструкции для Windows/macOS, установка draw.io через внутренний маркетплейс / SberUserSoft, явная настройка пути к `drawio` через `DRAWIO_BIN` и config-файл, а также этот README на русском.
