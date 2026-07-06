@@ -57,9 +57,15 @@ https://github.com/jgraph/drawio-desktop/releases
 
 В корпоративной среде устанавливайте draw.io Desktop через внутренний маркетплейс приложений компании. Не скачивайте внешний installer, если корпоративные правила требуют установку через маркетплейс.
 
+Прямая поисковая ссылка SberUserSoft:
+
+```text
+https://sberusersoft.sigma.sbrf.ru/#search/Draw.io
+```
+
 Обычно порядок такой:
 
-1. Открыть внутренний маркетплейс приложений.
+1. Открыть ссылку SberUserSoft выше или внутренний маркетплейс приложений.
 2. Найти `draw.io`, `diagrams.net` или `drawio`.
 3. Установить draw.io Desktop.
 4. Проверить, где оказался `draw.io.exe`.
