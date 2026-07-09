@@ -29,6 +29,8 @@ skipped with a warning — this skill always writes uncompressed XML.
 Usage: python3 validate.py <file.drawio> [--strict]
 """
 import argparse
+import html
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -87,6 +89,117 @@ def style_num(style, key):
             except ValueError:
                 return None
     return None
+
+
+def style_value(style, key):
+    """Return raw draw.io style value for key, or None."""
+    for part in (style or "").split(";"):
+        if part.startswith(key + "="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def cell_text(cell):
+    """Return readable text for a cell value, stripping simple HTML markup."""
+    value = html.unescape(cell.get("value") or "")
+    value = value.replace("&#xa;", "\n").replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    value = re.sub(r"<[^>]+>", "", value)
+    return value.strip()
+
+
+def estimated_text_size(text, font_size):
+    """Approximate rendered text size for draw.io labels.
+
+    This is intentionally conservative and dependency-free. It is not a text
+    renderer; it catches obvious cases such as long labels inside 36px
+    milestone diamonds while avoiding pixel-perfect claims.
+    """
+    lines = [line for line in text.splitlines() if line.strip()] or [text]
+    widths = []
+    for line in lines:
+        width = 0.0
+        for ch in line:
+            if ch.isspace():
+                width += 0.35 * font_size
+            elif ord(ch) > 127:
+                width += 0.72 * font_size
+            elif ch.isupper():
+                width += 0.62 * font_size
+            else:
+                width += 0.55 * font_size
+        widths.append(width)
+    return max(widths, default=0.0), len(lines) * font_size * 1.25
+
+
+def text_box_capacity(cell, box):
+    """Return approximate (width, height) available for a cell label."""
+    _, _, w, h = box
+    style = cell.get("style") or ""
+    # Diamonds/rhombi have much less horizontal room near their vertical center
+    # than their bounding box suggests, and labels inside them are the common
+    # source of visually overflowing roadmap milestones.
+    shape = style_value(style, "shape") or ""
+    if "rhombus" in style or shape == "rhombus":
+        w *= 0.58
+        h *= 0.72
+    elif "ellipse" in style or shape == "ellipse":
+        w *= 0.78
+        h *= 0.78
+    else:
+        w -= 12
+        h -= 8
+    return max(1.0, w), max(1.0, h)
+
+
+def is_constrained_text_shape(cell, box):
+    """True when labels have little room and overflow is likely visible."""
+    _, _, w, h = box
+    style = cell.get("style") or ""
+    shape = style_value(style, "shape") or ""
+    return "rhombus" in style or shape in {"rhombus", "ellipse"} or w < 90
+
+
+def text_fit_warnings(cells):
+    """Warnings for labels that clearly cannot fit inside their vertex."""
+    warns = []
+    for c in cells:
+        if c.get("vertex") != "1" or is_edge_label(c):
+            continue
+        text = cell_text(c)
+        if not text:
+            continue
+        box = rect(c)
+        if box is None or any(v != v for v in box):
+            continue
+        style = c.get("style") or ""
+        font_size = style_num(style, "fontSize") or 12.0
+        required_w, required_h = estimated_text_size(text, font_size)
+        capacity_w, capacity_h = text_box_capacity(c, box)
+        cid = c.get("id")
+        if required_h > capacity_h * 1.15:
+            warns.append(
+                f"vertex {cid!r} label height likely overflows "
+                f"({required_h:.0f}px text > {capacity_h:.0f}px box)"
+            )
+        # If wrapping is enabled, long text can still fit by wrapping, but only
+        # when the available height can hold the resulting line count. Estimate
+        # the wrapped line count instead of warning on width alone.
+        constrained = is_constrained_text_shape(c, box)
+        if style_value(style, "whiteSpace") == "wrap" or "whiteSpace=wrap" in style:
+            wrapped_lines = max(1, int((required_w + capacity_w - 1) // capacity_w))
+            wrapped_h = wrapped_lines * font_size * 1.25
+            severe = required_w > capacity_w * 2.2 and wrapped_h > capacity_h * 1.5
+            if (constrained or severe) and wrapped_h > capacity_h * 1.15:
+                warns.append(
+                    f"vertex {cid!r} label likely overflows after wrapping "
+                    f"({wrapped_lines} line(s) need {wrapped_h:.0f}px > {capacity_h:.0f}px)"
+                )
+        elif constrained and required_w > capacity_w * 1.10:
+            warns.append(
+                f"vertex {cid!r} label width likely overflows "
+                f"({required_w:.0f}px text > {capacity_w:.0f}px box)"
+            )
+    return warns
 
 
 def abs_rect(cell, by_id):
@@ -297,6 +410,7 @@ def check_page(diagram):
             (ia, pa, ra), (ib, pb, rb) = boxes[i], boxes[j]
             if pa == pb and overlap(ra, rb):
                 warns.append(f"vertices {ia!r} and {ib!r} overlap")
+    warns += text_fit_warnings(cells)
     warns += geometry_warnings(cells, ids, parents)
     return errors, warns
 
@@ -330,8 +444,9 @@ def main():
         through = sum(1 for w in warns if "routes through" in w)
         cross = sum(1 for w in warns if " cross" in w)
         olap = sum(1 for w in warns if " overlap" in w)
-        print(f"score: {20 * through + 10 * cross + 5 * olap} "
-              f"({through} through-vertex, {cross} crossings, {olap} overlaps)")
+        text = sum(1 for w in warns if "label" in w and "overflow" in w)
+        print(f"score: {20 * through + 10 * cross + 5 * olap + 3 * text} "
+              f"({through} through-vertex, {cross} crossings, {olap} overlaps, {text} text)")
     if errors or (args.strict and warns):
         sys.exit(1)
 
