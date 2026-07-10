@@ -1,0 +1,18 @@
+schema_version: 1
+process:
+  id: cycle-without-exit
+  name: Cycle Without Exit
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: do-work
+    type: task
+    name: Do work
+flows:
+  - id: flow1
+    from: start
+    to: do-work
+  - id: flow2
+    from: do-work
+    to: do-work

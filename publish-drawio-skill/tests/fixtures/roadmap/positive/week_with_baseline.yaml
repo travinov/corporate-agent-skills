@@ -1,0 +1,30 @@
+schema_version: 1
+title: Weekly roadmap with baseline
+time_scale: week
+lanes:
+  - id: delivery
+    title: Delivery
+tasks:
+  - id: weekly-task
+    title: Deliver weekly slice
+    lane: delivery
+    start: 2026-07-06
+    end: 2026-07-17
+milestones:
+  - id: weekly-ready
+    title: Weekly release ready
+    lane: delivery
+    date: 2026-07-17
+baseline:
+  version: previous
+  tasks:
+    - id: weekly-task
+      title: Deliver weekly slice
+      lane: delivery
+      start: 2026-07-06
+      end: 2026-07-10
+  milestones:
+    - id: weekly-ready
+      title: Weekly release ready
+      lane: delivery
+      date: 2026-07-10

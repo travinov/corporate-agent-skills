@@ -1,0 +1,2 @@
+41177fcddededd39fc24ff5fdc0efd258ca75d3dad39ab47f4e0a3f501a1c0e1  bpmn-architect-skill.zip
+678a548fd1b18ce667240e416053667aeb84ede01ce78ec32522bbedf4ce3b60  drawio-skill-corporate.zip

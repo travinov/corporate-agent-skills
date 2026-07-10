@@ -1,0 +1,7 @@
+schema_version: 1
+title: Quarterly roadmap
+time_scale: quarter
+milestones:
+  - id: q-ready
+    title: Quarter ready
+    date: 2026-11-15

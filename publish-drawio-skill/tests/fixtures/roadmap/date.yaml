@@ -1,0 +1,12 @@
+schema_version: 1
+title: Daily roadmap
+time_scale: date
+tasks:
+  - id: daily-task
+    title: Daily task
+    start: 2026-07-09
+    end: 2026-07-11
+milestones:
+  - id: daily-ready
+    title: Daily ready
+    date: 2026-07-11

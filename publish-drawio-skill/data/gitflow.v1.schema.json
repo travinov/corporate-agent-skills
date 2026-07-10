@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/gitflow.v1.schema.json",
+  "title": "Git-flow timeline v1",
+  "type": "object",
+  "required": ["schema_version", "branches", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "title": {"type": "string", "minLength": 1},
+    "workflow": {"type": "string", "enum": ["git-flow", "custom"], "default": "git-flow"},
+    "timeMode": {"type": "string", "enum": ["date", "order"], "default": "date"},
+    "branches": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/branch"}},
+    "events": {"type": "array"}
+  },
+  "allOf": [{
+    "if": {"properties": {"timeMode": {"const": "order"}}, "required": ["timeMode"]},
+    "then": {"properties": {"events": {"type": "array", "items": {"$ref": "#/$defs/orderEvent"}}}},
+    "else": {"properties": {"events": {"type": "array", "items": {"$ref": "#/$defs/dateEvent"}}}}
+  }],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"},
+    "branch": {
+      "type": "object", "required": ["id"], "additionalProperties": false,
+      "properties": {"id": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "kind": {"type": "string", "enum": ["main", "master", "develop", "feature", "release", "hotfix", "support", "custom"]}}
+    },
+    "dateEvent": {"oneOf": [
+      {"type": "object", "required": ["id", "type", "branch", "at"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"enum": ["commit", "tag", "release", "hotfix", "cherry-pick", "revert", "note"]}, "branch": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "at": {"type": "string", "format": "date"}}},
+      {"type": "object", "required": ["id", "type", "from", "to", "at"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "branch"}, "from": {"$ref": "#/$defs/id"}, "to": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "at": {"type": "string", "format": "date"}}},
+      {"type": "object", "required": ["id", "type", "from", "to", "at"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "merge"}, "from": {"$ref": "#/$defs/id"}, "to": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "at": {"type": "string", "format": "date"}}}
+    ]},
+    "orderEvent": {"oneOf": [
+      {"type": "object", "required": ["id", "type", "branch", "order"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"enum": ["commit", "tag", "release", "hotfix", "cherry-pick", "revert", "note"]}, "branch": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "order": {"type": "integer"}}},
+      {"type": "object", "required": ["id", "type", "from", "to", "order"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "branch"}, "from": {"$ref": "#/$defs/id"}, "to": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "order": {"type": "integer"}}},
+      {"type": "object", "required": ["id", "type", "from", "to", "order"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/id"}, "type": {"const": "merge"}, "from": {"$ref": "#/$defs/id"}, "to": {"$ref": "#/$defs/id"}, "label": {"type": "string"}, "role": {"type": "string"}, "order": {"type": "integer"}}}
+    ]}
+  }
+}

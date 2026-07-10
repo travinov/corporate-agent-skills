@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio">
+  <diagram id="missing-model" name="Missing model" />
+  <diagram id="structural" name="Structural errors">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell parent="1" vertex="1">
+          <mxGeometry x="0" y="0" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="duplicate" parent="1" vertex="1">
+          <mxGeometry x="10" y="10" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="duplicate" parent="1" vertex="1">
+          <mxGeometry x="40" y="10" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="both" parent="1" vertex="1" edge="1">
+          <mxGeometry x="70" y="10" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="bad-parent" parent="missing-parent" vertex="1">
+          <mxGeometry x="100" y="10" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="bad-geometry" parent="1" vertex="1">
+          <mxGeometry x="130" y="10" width="NaN" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="0" parent="1" vertex="1">
+          <mxGeometry x="160" y="10" width="20" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="missing-edge-geometry" parent="1" edge="1" source="duplicate" target="both" />
+        <mxCell id="bad-target" parent="1" edge="1" source="duplicate" target="missing-target">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap-a" parent="1" vertex="1">
+          <mxGeometry x="200" y="10" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap-b" parent="1" vertex="1">
+          <mxGeometry x="220" y="20" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="overflow" value="A very long milestone label that cannot fit" style="rhombus;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="280" y="10" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="negative-size" parent="1" vertex="1">
+          <mxGeometry x="330" y="-5" width="-1" height="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

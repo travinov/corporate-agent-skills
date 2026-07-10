@@ -1,0 +1,87 @@
+schema_version: 1
+process:
+  id: coffee-three-methods
+  name: Приготовление кофе тремя способами
+  executable: false
+  target_engine: none
+participants:
+  - id: coffee-shop
+    name: Кофейня
+    lanes:
+      - id: barista
+        name: Бариста
+nodes:
+  - id: start
+    type: startEvent
+    name: Получен заказ
+    participant: coffee-shop
+    lane: barista
+  - id: choose-method
+    type: exclusiveGateway
+    name: Как приготовить кофе
+    participant: coffee-shop
+    lane: barista
+  - id: prepare-v60
+    type: manualTask
+    name: Приготовить V60
+    participant: coffee-shop
+    lane: barista
+  - id: prepare-french-press
+    type: manualTask
+    name: Приготовить френч-пресс
+    participant: coffee-shop
+    lane: barista
+  - id: prepare-espresso
+    type: manualTask
+    name: Приготовить эспрессо
+    participant: coffee-shop
+    lane: barista
+  - id: method-complete
+    type: exclusiveGateway
+    name: Кофе приготовлен
+    participant: coffee-shop
+    lane: barista
+  - id: end
+    type: endEvent
+    name: Кофе готов
+    participant: coffee-shop
+    lane: barista
+flows:
+  - id: flow-start-choice
+    from: start
+    to: choose-method
+  - id: flow-choice-v60
+    from: choose-method
+    to: prepare-v60
+    label: V60
+    condition:
+      body: method == "v60"
+  - id: flow-choice-french-press
+    from: choose-method
+    to: prepare-french-press
+    label: Френч-пресс
+    condition:
+      body: method == "french-press"
+  - id: flow-choice-espresso
+    from: choose-method
+    to: prepare-espresso
+    label: Эспрессо
+    condition:
+      body: method == "espresso"
+  - id: flow-v60-end
+    from: prepare-v60
+    to: method-complete
+  - id: flow-french-press-end
+    from: prepare-french-press
+    to: method-complete
+  - id: flow-espresso-end
+    from: prepare-espresso
+    to: method-complete
+  - id: flow-complete-end
+    from: method-complete
+    to: end
+message_flows: []
+documentation:
+  purpose: Показать три варианта как ветви одного процесса, а не как lanes.
+  assumptions:
+    - Все способы выполняет бариста.

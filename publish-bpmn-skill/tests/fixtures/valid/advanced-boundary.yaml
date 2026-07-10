@@ -1,0 +1,30 @@
+schema_version: 1
+process:
+  id: advanced-boundary
+  name: Advanced Boundary
+  executable: false
+  target_engine: none
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: wait-for-response
+    type: task
+    name: Request response
+  - id: timeout
+    type: boundaryEvent
+    name: Timeout
+    attachedTo: wait-for-response
+    eventDefinition: timer
+  - id: end
+    type: endEvent
+    name: Done
+flows:
+  - id: flow1
+    from: start
+    to: wait-for-response
+  - id: flow2
+    from: wait-for-response
+    to: end
+documentation:
+  purpose: Advanced BPMN schema acceptance fixture.

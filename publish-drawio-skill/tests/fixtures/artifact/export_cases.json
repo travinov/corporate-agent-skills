@@ -1,0 +1,22 @@
+{
+  "expected_codes": [
+    "export.source.missing",
+    "export.cli.unavailable",
+    "export.command.launch",
+    "export.command.failed",
+    "export.png.missing",
+    "export.png.empty",
+    "export.png.signature",
+    "export.png.iend"
+  ],
+  "cases": [
+    {"id": "source-missing", "mode": "source_missing", "expected": ["export.source.missing"]},
+    {"id": "cli-unavailable", "mode": "cli_unavailable", "expected": ["export.cli.unavailable"]},
+    {"id": "command-launch", "mode": "launch_error", "expected": ["export.command.launch"]},
+    {"id": "command-failed", "mode": "fake", "exit_code": 7, "payload_hex": "89504e470d0a1a0a0000000049454e44ae426082", "expected": ["export.command.failed"]},
+    {"id": "png-missing", "mode": "fake", "write_output": false, "expected": ["export.png.missing"]},
+    {"id": "png-empty", "mode": "fake", "payload_hex": "", "expected": ["export.png.empty"]},
+    {"id": "png-signature", "mode": "fake", "payload_hex": "6e6f742d612d706e67", "expected": ["export.png.signature", "export.png.iend"]},
+    {"id": "png-truncated-iend", "mode": "fake", "payload_hex": "89504e470d0a1a0a", "expected": ["export.png.iend"]}
+  ]
+}

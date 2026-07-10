@@ -1,0 +1,239 @@
+{
+  "expected_codes": [
+    "contract.version.missing",
+    "contract.version.unsupported",
+    "schema.type",
+    "schema.required",
+    "schema.additionalProperties",
+    "schema.enum",
+    "schema.minimum",
+    "schema.minItems",
+    "schema.minLength",
+    "schema.pattern",
+    "schema.uniqueItems",
+    "schema.format",
+    "reference.id.duplicate",
+    "reference.id.global_duplicate",
+    "reference.lane.unknown",
+    "reference.milestone.unknown",
+    "reference.outcome.unknown",
+    "reference.dependency.source_unknown",
+    "reference.dependency.target_unknown",
+    "reference.baseline.lane_unknown",
+    "reference.baseline.outcome_unknown",
+    "reference.baseline.milestone_unknown",
+    "reference.baseline.source_unknown",
+    "reference.baseline.target_unknown",
+    "roadmap.task.range",
+    "roadmap.dependency.self",
+    "roadmap.density.dependencies",
+    "roadmap.density.milestones",
+    "roadmap.density.deltas"
+  ],
+  "cases": [
+    {
+      "id": "top-level-type",
+      "base": "basic.yaml",
+      "expected": ["schema.type"],
+      "ops": [{"op": "replace_document", "value": []}]
+    },
+    {
+      "id": "missing-version-strict",
+      "base": "basic.yaml",
+      "strict": true,
+      "expected": ["contract.version.missing"],
+      "ops": [{"op": "remove", "path": "/schema_version"}]
+    },
+    {
+      "id": "unsupported-version",
+      "base": "basic.yaml",
+      "expected": ["contract.version.unsupported"],
+      "ops": [{"op": "set", "path": "/schema_version", "value": 2}]
+    },
+    {
+      "id": "required-title",
+      "base": "basic.yaml",
+      "expected": ["schema.required"],
+      "ops": [{"op": "remove", "path": "/title"}]
+    },
+    {
+      "id": "unknown-property",
+      "base": "basic.yaml",
+      "expected": ["schema.additionalProperties"],
+      "ops": [{"op": "set", "path": "/unsupported", "value": true}]
+    },
+    {
+      "id": "nested-type",
+      "base": "basic.yaml",
+      "expected": ["schema.type"],
+      "ops": [{"op": "set", "path": "/title", "value": 3}]
+    },
+    {
+      "id": "scale-enum",
+      "base": "basic.yaml",
+      "expected": ["schema.enum"],
+      "ops": [{"op": "set", "path": "/time_scale", "value": "year"}]
+    },
+    {
+      "id": "negative-threshold",
+      "base": "basic.yaml",
+      "expected": ["schema.minimum"],
+      "ops": [{"op": "set", "path": "/shift_threshold_days", "value": -1}]
+    },
+    {
+      "id": "empty-milestones",
+      "base": "basic.yaml",
+      "expected": ["schema.minItems"],
+      "ops": [{"op": "set", "path": "/milestones", "value": []}]
+    },
+    {
+      "id": "empty-title",
+      "base": "basic.yaml",
+      "expected": ["schema.minLength"],
+      "ops": [{"op": "set", "path": "/title", "value": ""}]
+    },
+    {
+      "id": "invalid-id-pattern",
+      "base": "basic.yaml",
+      "expected": ["schema.pattern"],
+      "ops": [{"op": "set", "path": "/tasks/0/id", "value": "1-invalid"}]
+    },
+    {
+      "id": "duplicate-array-ref",
+      "base": "basic.yaml",
+      "expected": ["schema.uniqueItems"],
+      "ops": [{"op": "append", "path": "/tasks/0/outcomes", "value": "outcome-fast-payments"}]
+    },
+    {
+      "id": "invalid-calendar-date",
+      "base": "basic.yaml",
+      "expected": ["schema.format"],
+      "ops": [{"op": "set", "path": "/milestones/0/date", "value": "2026-02-31"}]
+    },
+    {
+      "id": "duplicate-id",
+      "base": "basic.yaml",
+      "expected": ["reference.id.duplicate", "reference.id.global_duplicate"],
+      "ops": [{
+        "op": "append",
+        "path": "/tasks",
+        "value": {"id": "task-wallets", "title": "Duplicate task", "start": "2026-07-01", "end": "2026-07-02"}
+      }]
+    },
+    {
+      "id": "global-id-collision",
+      "base": "basic.yaml",
+      "expected": ["reference.id.global_duplicate"],
+      "ops": [{"op": "set", "path": "/milestones/0/id", "value": "task-wallets"}]
+    },
+    {
+      "id": "unknown-lane",
+      "base": "basic.yaml",
+      "expected": ["reference.lane.unknown"],
+      "ops": [{"op": "set", "path": "/tasks/0/lane", "value": "missing-lane"}]
+    },
+    {
+      "id": "unknown-task-milestone",
+      "base": "basic.yaml",
+      "expected": ["reference.milestone.unknown"],
+      "ops": [{"op": "set", "path": "/tasks/0/milestones/0", "value": "missing-milestone"}]
+    },
+    {
+      "id": "unknown-outcome",
+      "base": "basic.yaml",
+      "expected": ["reference.outcome.unknown"],
+      "ops": [{"op": "set", "path": "/tasks/0/outcomes/0", "value": "missing-outcome"}]
+    },
+    {
+      "id": "unknown-dependency-source",
+      "base": "basic.yaml",
+      "expected": ["reference.dependency.source_unknown"],
+      "ops": [{"op": "set", "path": "/dependencies/0/from", "value": "missing-source"}]
+    },
+    {
+      "id": "unknown-dependency-target",
+      "base": "basic.yaml",
+      "expected": ["reference.dependency.target_unknown"],
+      "ops": [{"op": "set", "path": "/dependencies/0/to", "value": "missing-target"}]
+    },
+    {
+      "id": "unknown-baseline-lane",
+      "base": "baseline_shift.yaml",
+      "expected": ["reference.baseline.lane_unknown"],
+      "ops": [{"op": "set", "path": "/baseline/milestones/0/lane", "value": "missing-lane"}]
+    },
+    {
+      "id": "unknown-baseline-outcome",
+      "base": "order.yaml",
+      "expected": ["reference.baseline.outcome_unknown"],
+      "ops": [{"op": "set", "path": "/baseline/tasks/0/outcomes/0", "value": "missing-outcome"}]
+    },
+    {
+      "id": "unknown-baseline-milestone",
+      "base": "order.yaml",
+      "expected": ["reference.baseline.milestone_unknown"],
+      "ops": [{"op": "set", "path": "/baseline/tasks/0/milestones/0", "value": "missing-milestone"}]
+    },
+    {
+      "id": "unknown-baseline-dependency-endpoints",
+      "base": "order.yaml",
+      "expected": ["reference.baseline.source_unknown", "reference.baseline.target_unknown"],
+      "ops": [{
+        "op": "set",
+        "path": "/baseline/dependencies",
+        "value": [{"id": "baseline-dependency", "from": "missing-source", "to": "missing-target"}]
+      }]
+    },
+    {
+      "id": "task-range",
+      "base": "basic.yaml",
+      "expected": ["roadmap.task.range"],
+      "ops": [
+        {"op": "set", "path": "/tasks/0/start", "value": "2026-10-01"},
+        {"op": "set", "path": "/tasks/0/end", "value": "2026-09-01"}
+      ]
+    },
+    {
+      "id": "self-dependency",
+      "base": "basic.yaml",
+      "expected": ["roadmap.dependency.self"],
+      "ops": [{"op": "set", "path": "/dependencies/0/to", "value": "m-billing-api"}]
+    },
+    {
+      "id": "dependency-density-strict",
+      "base": "basic.yaml",
+      "strict": true,
+      "expected": ["roadmap.density.dependencies"],
+      "ops": [{
+        "op": "repeat",
+        "path": "/dependencies",
+        "count": 17,
+        "template": {"id": "dependency-{i}", "from": "m-billing-api", "to": "m-wallet-pilot"}
+      }]
+    },
+    {
+      "id": "milestone-density-strict",
+      "base": "quarter.yaml",
+      "strict": true,
+      "expected": ["roadmap.density.milestones"],
+      "ops": [{
+        "op": "repeat",
+        "path": "/milestones",
+        "count": 25,
+        "template": {"id": "milestone-{i}", "title": "Milestone {i}", "date": "2026-11-15"}
+      }]
+    },
+    {
+      "id": "delta-density-strict",
+      "base": "date.yaml",
+      "strict": true,
+      "expected": ["roadmap.density.deltas"],
+      "ops": [{
+        "op": "repeat",
+        "path": "/baseline/outcomes",
+        "count": 21,
+        "template": {"id": "baseline-outcome-{i}", "title": "Baseline outcome {i}"}
+      }]
+    }
+  ]
+}

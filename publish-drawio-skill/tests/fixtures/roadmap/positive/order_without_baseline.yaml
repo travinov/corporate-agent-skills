@@ -1,0 +1,17 @@
+schema_version: 1
+title: Ordered roadmap without baseline
+time_scale: order
+lanes:
+  - id: stream
+    title: Stream
+tasks:
+  - id: ordered-task
+    title: Complete ordered work
+    lane: stream
+    start_order: 10
+    end_order: 30
+milestones:
+  - id: ordered-ready
+    title: Ordered work ready
+    lane: stream
+    order: 30

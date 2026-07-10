@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+.venv/
+venv/
+
+# Generated BPMN example output; process.yaml remains the source of truth.
+publish-bpmn-skill/examples/**/process.bpmn
+publish-bpmn-skill/examples/**/process.md
+publish-bpmn-skill/examples/**/validation-report.json

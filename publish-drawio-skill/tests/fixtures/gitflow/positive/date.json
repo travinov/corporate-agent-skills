@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "title": "Date-mode git-flow",
+  "workflow": "git-flow",
+  "timeMode": "date",
+  "branches": [
+    {"id": "main", "label": "main", "kind": "main"},
+    {"id": "develop", "label": "develop", "kind": "develop"}
+  ],
+  "events": [
+    {"id": "main-start", "type": "commit", "branch": "main", "label": "Start", "at": "2026-07-01"},
+    {"id": "create-develop", "type": "branch", "from": "main", "to": "develop", "at": "2026-07-02"},
+    {"id": "develop-work", "type": "commit", "branch": "develop", "label": "Work", "at": "2026-07-03"}
+  ]
+}

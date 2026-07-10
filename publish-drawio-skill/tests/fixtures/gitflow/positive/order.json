@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "title": "Order-mode git-flow",
+  "workflow": "git-flow",
+  "timeMode": "order",
+  "branches": [
+    {"id": "main", "label": "main", "kind": "main"},
+    {"id": "develop", "label": "develop", "kind": "develop"},
+    {"id": "feature_one", "label": "feature/one", "kind": "feature"}
+  ],
+  "events": [
+    {"id": "main-start", "type": "commit", "branch": "main", "order": 1},
+    {"id": "create-develop", "type": "branch", "from": "main", "to": "develop", "order": 2},
+    {"id": "create-feature", "type": "branch", "from": "develop", "to": "feature_one", "order": 3},
+    {"id": "feature-work", "type": "commit", "branch": "feature_one", "order": 4},
+    {"id": "merge-feature", "type": "merge", "from": "feature_one", "to": "develop", "order": 5}
+  ]
+}

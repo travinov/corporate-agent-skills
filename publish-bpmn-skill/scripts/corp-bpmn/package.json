@@ -1,0 +1,25 @@
+{
+  "name": "corp-bpmn",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "bin": {
+    "corp-bpmn": "src/cli/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test ../../tests/*.test.mjs",
+    "build:example": "node src/cli/index.mjs build ../../examples/credit-approval/process.yaml",
+    "self-check": "node src/commands/self-check.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "bpmn-auto-layout": "^1.0.1",
+    "bpmn-moddle": "^9.0.4",
+    "bpmnlint": "^11.6.0",
+    "commander": "^14.0.2",
+    "yaml": "^2.8.2"
+  }
+}

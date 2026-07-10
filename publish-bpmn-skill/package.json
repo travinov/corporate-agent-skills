@@ -1,0 +1,15 @@
+{
+  "name": "bpmn-architect-skill",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Corporate BPMN Architect skill with local BPMN 2.0 generation, layout, validation, and documentation toolchain.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "test": "npm --prefix scripts/corp-bpmn test",
+    "build:example": "npm --prefix scripts/corp-bpmn run build:example",
+    "self-check": "npm --prefix scripts/corp-bpmn run self-check"
+  }
+}

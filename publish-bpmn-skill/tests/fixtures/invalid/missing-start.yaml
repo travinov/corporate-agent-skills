@@ -1,0 +1,15 @@
+schema_version: 1
+process:
+  id: missing-start
+  name: Missing Start
+nodes:
+  - id: do-work
+    type: task
+    name: Do work
+  - id: end
+    type: endEvent
+    name: End
+flows:
+  - id: flow1
+    from: do-work
+    to: end

@@ -1,0 +1,358 @@
+{
+  "archive": "bpmn-architect-skill.zip",
+  "archive_root": "bpmn-architect",
+  "archive_sha256": "41177fcddededd39fc24ff5fdc0efd258ca75d3dad39ab47f4e0a3f501a1c0e1",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "fbf3f5e01a0e0b39b17207fae8b72dd5008cb403d08ee028ce34a2d75bb2a661",
+      "size": 1072
+    },
+    {
+      "path": "README.md",
+      "sha256": "589c0131d4d09cb62cb84144c082dfce64f279fa7c8ead147a4743a8db635b50",
+      "size": 2058
+    },
+    {
+      "path": "SKILL.md",
+      "sha256": "93608ca4767979666cacfd75bd0fa55086340d41c9ba4e8745b2a5eb5974791a",
+      "size": 7517
+    },
+    {
+      "path": "examples/credit-approval/process.yaml",
+      "sha256": "182f8fb226d9acc796af97765f3c7edd3a42bd42b10e5faaa644de310a2aac36",
+      "size": 2816
+    },
+    {
+      "path": "metadata.md",
+      "sha256": "8ad24167e8545afc9c68063ce3c4e5d477c00c7b2f5b1d724fc1503386da3733",
+      "size": 704
+    },
+    {
+      "path": "package.json",
+      "sha256": "5e54c33c4ac0366ba3acbf68a76cc555cf58671a84860faf4846e12ab8881f82",
+      "size": 483
+    },
+    {
+      "path": "references/bpmn-authoring.md",
+      "sha256": "37f86c4e488c9270a56cfdb88e7ae907527842bd59b37ccb5e4b7b3e79546905",
+      "size": 3157
+    },
+    {
+      "path": "references/bpmn-intake.md",
+      "sha256": "d5dc6abba56f828c0a4374872e5bc9937e3eb3ad7da8ff15297dd2f18963f5ed",
+      "size": 3446
+    },
+    {
+      "path": "references/bpmn-layout.md",
+      "sha256": "f28be928bc0316515ab2f90008414776063378283cb6b58b7e4018c474447458",
+      "size": 841
+    },
+    {
+      "path": "references/bpmn-validation.md",
+      "sha256": "4992122bed1c7876834fbf395b31b1931d7ba6dbab8776ed2610a981197a8aae",
+      "size": 1663
+    },
+    {
+      "path": "references/camunda-zeebe.md",
+      "sha256": "f56a44888395f2e655c83f16a3f8d4d22174c74e5e1dcb6fc4dfaf2edd5374de",
+      "size": 703
+    },
+    {
+      "path": "references/process-yaml.md",
+      "sha256": "ed21d0434ec57896ae48ed4d891aa70fe59fb4734c2ef1e0193b7cfbac7f24e3",
+      "size": 4859
+    },
+    {
+      "path": "references/troubleshooting.md",
+      "sha256": "37351a78b5f0b5f2a65f76537a976de3d25fe5950f7865d37ff552396469e55d",
+      "size": 1098
+    },
+    {
+      "path": "scripts/corp-bpmn/package-lock.json",
+      "sha256": "e052034e896d96b752f5a8c236ce1bd3926566d743d8c13deb122a34bb93e4fe",
+      "size": 14680
+    },
+    {
+      "path": "scripts/corp-bpmn/package.json",
+      "sha256": "96f11805bdfa7e28127dfe6ce16366767525571d81e11f3035c173bf3777d99b",
+      "size": 589
+    },
+    {
+      "path": "scripts/corp-bpmn/src/capabilities/capability-matrix.json",
+      "sha256": "30e70fc2b6ae3fdc488ea4b2a11afcd6a02259d2b77ecc8b6ec8a8fd0b8cd442",
+      "size": 9021
+    },
+    {
+      "path": "scripts/corp-bpmn/src/cli/index.mjs",
+      "sha256": "19643cf5fd24940051fd186d24d83c2cfeae36f8a0561969284fe34cb3d6a847",
+      "size": 2758
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/build.mjs",
+      "sha256": "d3ec3799f2f7bd1c3f969820a7793f2921ebaef9f9b5d9fa08a19aaabee26e35",
+      "size": 2281
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/generate.mjs",
+      "sha256": "c5e963ab245ca6406c2330b1cff4f78cbdb53a01dcfc869276031a0610ebc954",
+      "size": 522
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/init.mjs",
+      "sha256": "98f0a57e70f1636d5d40d0262babfc6af10ca0248898dc78c1c31b22fe428abb",
+      "size": 3436
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/layout.mjs",
+      "sha256": "221048852762a60c5d43fc912d7a125dfd77c3aa1090df10f65903a028aece29",
+      "size": 478
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/migrate.mjs",
+      "sha256": "7e4b424b0944b410a66f9c1ce98a9b94a3f58b50d90d4031d9911388ccf23747",
+      "size": 2540
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/self-check.mjs",
+      "sha256": "b92a0591d1b3849b680661c79bf5d29606e44c73f9ab4a9e690ec64bda304bcc",
+      "size": 535
+    },
+    {
+      "path": "scripts/corp-bpmn/src/commands/validate.mjs",
+      "sha256": "03b9f1e8e42da5c8408f22ff334447c9432963fcd41682347c0f1f0a61a72f7a",
+      "size": 719
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/bpmn-generator.mjs",
+      "sha256": "f2549c520277c21845997859e218bd21e74f64fd00232b8accdb1f1a630fceff",
+      "size": 7634
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/bpmn-layout.mjs",
+      "sha256": "ed45a19264caf4e6fcbdcee4858dd4c1043f506bbe58efaee70ca0a657a9737f",
+      "size": 4986
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/bpmn-validator.mjs",
+      "sha256": "e376395fb6a809b4befca3b767045118065f0685ce05898870023aeae230ae44",
+      "size": 7297
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/documentation-generator.mjs",
+      "sha256": "3889c6cc944b3da30d0e885c46753b31dd668c0c3e085a2cdf85861e3193518e",
+      "size": 3792
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/migrator.mjs",
+      "sha256": "cc4314471f739d1c2d78416dafbb3e1928c2ada96bb57bd0b0a8a0a0a38b6a39",
+      "size": 2472
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/model-utils.mjs",
+      "sha256": "853bdcba237c7599a064232bc051de8005cc3506401600b8b5aa14138661a81e",
+      "size": 3691
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/self-check.mjs",
+      "sha256": "f67b37ff1b0b22a770780917f1261f6cc78fe7ff6ad581df113631a87d6ef90e",
+      "size": 3122
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/semantic-linter.mjs",
+      "sha256": "8ddd4db28e50374e2b67f68175541272364b3bb9428dc5ba05773d691024c0eb",
+      "size": 7360
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/semantic-roundtrip.mjs",
+      "sha256": "3477bb9070a5b305cf8619a6af8c3b2daf5b67802f97901b402b879b5113d921",
+      "size": 8420
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/validation-report.mjs",
+      "sha256": "aca0ce78a31681e6fd28064330869fd399a313996ca0a850dced38e82ee5bd0e",
+      "size": 2967
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/yaml-reader.mjs",
+      "sha256": "7e2f40facd867012be730997681d95195c795c4ac9f18f7e4c76e270a15cd71c",
+      "size": 1262
+    },
+    {
+      "path": "scripts/corp-bpmn/src/core/yaml-validator.mjs",
+      "sha256": "677361071215f3bb9a5953ab041f2434ab5fbf3ca3762c51165e84cbc40042ea",
+      "size": 14001
+    },
+    {
+      "path": "scripts/corp-bpmn/src/rules/.bpmnlintrc",
+      "sha256": "4a259466f1e2b312bc5ef14a4f49652b8cfc1293dbb8894a391231d35ebdc7c4",
+      "size": 91
+    },
+    {
+      "path": "scripts/corp-bpmn/src/schemas/process.v1.schema.json",
+      "sha256": "91102497cc0541207b2fc16f00d1d24fc1f59184925357dc42fefc742301fbd2",
+      "size": 6900
+    },
+    {
+      "path": "scripts/corp-bpmn/src/schemas/process.v2.schema.json",
+      "sha256": "0a96e03f6dfac277149110d59f8d02ceede3b492041a4e97344d0babfff7ecfc",
+      "size": 7109
+    },
+    {
+      "path": "tests/build.test.mjs",
+      "sha256": "63931e1069fd24a13662420e0264e55c55e276f129f760ea96ca70f02fa047ad",
+      "size": 1369
+    },
+    {
+      "path": "tests/contracts-v2.test.mjs",
+      "sha256": "d0dd67c7d6806e0b70841a775de5710b3315534de69320eb63b111d65cdb953c",
+      "size": 21158
+    },
+    {
+      "path": "tests/fixtures/invalid/condition-string-v1.yaml",
+      "sha256": "1cccb4063c30c46df840b03844216da2697c3dcacbf3557724a4d8c0d484f88a",
+      "size": 371
+    },
+    {
+      "path": "tests/fixtures/invalid/cycle-without-exit.yaml",
+      "sha256": "f04711daaeb3757481b0497935e00cd866641e82ffe384cce3ee890141f1c3fc",
+      "size": 287
+    },
+    {
+      "path": "tests/fixtures/invalid/dangling-flow.yaml",
+      "sha256": "a0bf22da990db2b7e44dede7fd8743a712f3d6aefebd7e09c32024beec402c35",
+      "size": 230
+    },
+    {
+      "path": "tests/fixtures/invalid/exclusive-default-target-v1.yaml",
+      "sha256": "a318755258f7bb173216bf788f130f79e061e991b57c483ee7639ea20c3f7507",
+      "size": 758
+    },
+    {
+      "path": "tests/fixtures/invalid/exclusive-invalid-default.yaml",
+      "sha256": "c8cbeb16b73431f5ba3921fc766314d32449035549d0685a1e2685514fdfe742",
+      "size": 745
+    },
+    {
+      "path": "tests/fixtures/invalid/exclusive-without-labels.yaml",
+      "sha256": "664827a861245f89c9f576979c3b130f4db33d2f12b1bc497f4d147ff36d6215",
+      "size": 448
+    },
+    {
+      "path": "tests/fixtures/invalid/message-flow-inside-pool.yaml",
+      "sha256": "e4a00d0ba9ba6c5ed10288543f3a872125f6ea5487a5d98a5e36bea2c8ca4dac",
+      "size": 756
+    },
+    {
+      "path": "tests/fixtures/invalid/missing-start.yaml",
+      "sha256": "e151f317844eb989a515b027fd0b7cb16e2dc7b6c9ad7a07c8067bb233fb6475",
+      "size": 221
+    },
+    {
+      "path": "tests/fixtures/invalid/unknown-property.yaml",
+      "sha256": "a1ea3d6f11b049d90164a0b0c529be9b823e9c123f97d321c920af643a736271",
+      "size": 245
+    },
+    {
+      "path": "tests/fixtures/invalid/unsupported-node.yaml",
+      "sha256": "c5170fbd331b28dab379332eb2c3424667e37d5d9f6c886d94cf8ad82ffead3e",
+      "size": 353
+    },
+    {
+      "path": "tests/fixtures/invalid/v1-multi-participant.yaml",
+      "sha256": "6d5b1291b3a4cd1c53a46b5bc2151203a385c85a485a2f1e3445cdbe7f0ee13b",
+      "size": 311
+    },
+    {
+      "path": "tests/fixtures/invalid/v2-cross-process-sequence.yaml",
+      "sha256": "c4b86df33d30048ffc905e3efd63ad08cdbb2c6ec351625e763c614549cf5e74",
+      "size": 804
+    },
+    {
+      "path": "tests/fixtures/valid/advanced-boundary.yaml",
+      "sha256": "c261d6dcd631d3e8c30740e9f885f3665e9375f9d8a8d0c6ce77b97ae0b76867",
+      "size": 594
+    },
+    {
+      "path": "tests/fixtures/valid/coffee-three-methods.yaml",
+      "sha256": "940bb6bb8bff812ecd5b19dc1ad8a3b185dcb83f447bb1152c00dd09682ff3a0",
+      "size": 2276
+    },
+    {
+      "path": "tests/fixtures/valid/collaboration-message-flow.yaml",
+      "sha256": "b8bf1e7f1c4b4ebdb1a6d2c8f5fb426aba372fe06affd83980864583638503a9",
+      "size": 1850
+    },
+    {
+      "path": "tests/fixtures/valid/cycle-with-exit.yaml",
+      "sha256": "e77eb5838ec694ea8b6b19ef50a29156d3a344c0ae66bcc4277e3e0acdf2b820",
+      "size": 778
+    },
+    {
+      "path": "tests/fixtures/valid/exclusive-default-flow.yaml",
+      "sha256": "8eb28793934bbb2974d282f299154802a3c96c1a54032413646fb1a8d15b584d",
+      "size": 773
+    },
+    {
+      "path": "tests/fixtures/valid/exclusive-default-target.yaml",
+      "sha256": "1c86714370da0c498ceb43cf4f22cae306c22d76c537ab9490ee053b68d240d7",
+      "size": 734
+    },
+    {
+      "path": "tests/fixtures/valid/simple-approval.yaml",
+      "sha256": "8589cad27b46dcba03e5db112caf323afc377df89ade9bc44a85137d3b521a71",
+      "size": 852
+    },
+    {
+      "path": "tests/fixtures/valid/subprocess.yaml",
+      "sha256": "e7e2a9b032a3d50ad162de5a406df2185cc0b044310b8d15412bf1ed9806a0c2",
+      "size": 477
+    },
+    {
+      "path": "tests/fixtures/valid/v2-participant-message-flow.yaml",
+      "sha256": "f1dc47ce2ca00df0a5962b23e66cba90b464d2e78fd1f220edb706abdf9eaf8b",
+      "size": 872
+    },
+    {
+      "path": "tests/generation.test.mjs",
+      "sha256": "ff7561084605f708b5353b9cbf64f484fa6c9f2da04b872b53d8fbb6b291e87e",
+      "size": 3725
+    },
+    {
+      "path": "tests/schema.test.mjs",
+      "sha256": "8c7ac2722d293d3e27a30b95dc672bb186fb2aeb4e8e7e746f51b2fe204e8dc8",
+      "size": 2820
+    },
+    {
+      "path": "tests/traceability.json",
+      "sha256": "618079694d29c7a38fe64929e09a3121d6a7bc7194d901e4fc58d168c2797124",
+      "size": 6892
+    },
+    {
+      "path": "tests/validation.test.mjs",
+      "sha256": "528a8ec8d109cee5a6b8c27086a5dc50241103e57418ffacf392b1f68fc7c736",
+      "size": 3668
+    }
+  ],
+  "format_version": 1,
+  "skill": "bpmn",
+  "version": "0.2.0",
+  "version_sources": [
+    {
+      "path": "SKILL.md",
+      "value": "0.2.0"
+    },
+    {
+      "path": "metadata.md",
+      "value": "0.2.0"
+    },
+    {
+      "path": "package.json",
+      "value": "0.2.0"
+    },
+    {
+      "path": "scripts/corp-bpmn/package.json",
+      "value": "0.2.0"
+    }
+  ]
+}

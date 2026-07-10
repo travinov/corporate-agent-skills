@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://corp.example/schemas/corp-bpmn/process.v2.schema.json",
+  "title": "Corp BPMN Collaboration YAML v2",
+  "type": "object",
+  "required": ["schema_version", "definitions", "processes", "participants", "message_flows"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 2 },
+    "definitions": { "$ref": "#/$defs/definitions" },
+    "processes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/process" }
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/participant" }
+    },
+    "message_flows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/messageFlow" }
+    },
+    "extensions": { "$ref": "#/$defs/emptyExtensions" },
+    "documentation": { "$ref": "#/$defs/documentation" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+    },
+    "targetEngine": {
+      "type": "string",
+      "enum": ["none", "camunda-platform", "zeebe", "flowable", "activiti", "corporate"]
+    },
+    "definitions": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "target_namespace": { "type": "string", "minLength": 1 }
+      }
+    },
+    "process": {
+      "type": "object",
+      "required": ["id", "name", "nodes", "flows"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "executable": { "type": "boolean", "default": false },
+        "target_engine": { "$ref": "#/$defs/targetEngine" },
+        "lanes": { "type": "array", "items": { "$ref": "#/$defs/lane" }, "default": [] },
+        "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } },
+        "flows": { "type": "array", "items": { "$ref": "#/$defs/sequenceFlow" } },
+        "data": { "type": "array", "maxItems": 0, "items": { "$ref": "#/$defs/unsupportedItem" }, "default": [] },
+        "artifacts": { "type": "array", "maxItems": 0, "items": { "$ref": "#/$defs/unsupportedItem" }, "default": [] },
+        "extensions": { "$ref": "#/$defs/emptyExtensions" },
+        "documentation": { "$ref": "#/$defs/documentation" }
+      }
+    },
+    "participant": {
+      "type": "object",
+      "required": ["id", "name", "process_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "process_ref": { "$ref": "#/$defs/id" }
+      }
+    },
+    "lane": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "$ref": "#/$defs/nodeType" },
+        "name": { "type": "string", "minLength": 1 },
+        "lane": { "$ref": "#/$defs/id" },
+        "eventDefinition": { "$ref": "#/$defs/eventDefinition" },
+        "attachedTo": { "$ref": "#/$defs/id" },
+        "default": { "$ref": "#/$defs/id" },
+        "documentation": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "boundaryEvent" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "attachedTo": { "$ref": "#/$defs/id" },
+              "eventDefinition": { "$ref": "#/$defs/eventDefinition" }
+            },
+            "required": ["attachedTo", "eventDefinition"]
+          },
+          "else": { "properties": { "attachedTo": false } }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": ["startEvent", "endEvent", "intermediateCatchEvent", "intermediateThrowEvent", "boundaryEvent"]
+              }
+            },
+            "required": ["type"]
+          },
+          "else": { "properties": { "eventDefinition": false } }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "enum": ["exclusiveGateway", "inclusiveGateway", "complexGateway"] }
+            },
+            "required": ["type"]
+          },
+          "else": { "properties": { "default": false } }
+        }
+      ]
+    },
+    "nodeType": {
+      "type": "string",
+      "enum": [
+        "startEvent", "endEvent", "intermediateCatchEvent", "intermediateThrowEvent", "boundaryEvent",
+        "task", "userTask", "serviceTask", "manualTask", "businessRuleTask", "scriptTask", "sendTask", "receiveTask",
+        "callActivity", "subProcess", "transaction",
+        "exclusiveGateway", "parallelGateway", "inclusiveGateway", "eventBasedGateway", "complexGateway"
+      ]
+    },
+    "eventDefinition": {
+      "type": "string",
+      "enum": ["timer", "message", "error", "escalation", "signal", "conditional", "compensation", "link"]
+    },
+    "condition": {
+      "type": "object",
+      "required": ["body"],
+      "additionalProperties": false,
+      "properties": {
+        "body": { "type": "string", "minLength": 1 },
+        "language": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sequenceFlow": {
+      "type": "object",
+      "required": ["id", "from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" },
+        "label": { "type": "string", "minLength": 1 },
+        "condition": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "messageFlow": {
+      "type": "object",
+      "required": ["id", "from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" },
+        "label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "unsupportedItem": { "type": "object", "additionalProperties": true },
+    "emptyExtensions": { "type": "object", "maxProperties": 0, "default": {} },
+    "documentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "purpose": { "type": "string", "minLength": 1 },
+        "assumptions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "advanced_elements": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "migration": {
+          "type": "object",
+          "required": ["source_schema_version", "ownership"],
+          "additionalProperties": false,
+          "properties": {
+            "source_schema_version": { "const": 1 },
+            "ownership": { "type": "string", "minLength": 1 }
+          }
+        }
+      },
+      "default": {}
+    }
+  }
+}

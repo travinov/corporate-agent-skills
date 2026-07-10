@@ -1,0 +1,39 @@
+schema_version: 2
+definitions:
+  id: cross-process-definitions
+  name: Cross Process Sequence
+processes:
+  - id: first-process
+    name: First
+    nodes:
+      - id: first-start
+        type: startEvent
+        name: Start
+      - id: first-end
+        type: endEvent
+        name: End
+    flows:
+      - id: invalid-cross-flow
+        from: first-start
+        to: second-end
+  - id: second-process
+    name: Second
+    nodes:
+      - id: second-start
+        type: startEvent
+        name: Start
+      - id: second-end
+        type: endEvent
+        name: End
+    flows:
+      - id: second-flow
+        from: second-start
+        to: second-end
+participants:
+  - id: first
+    name: First
+    process_ref: first-process
+  - id: second
+    name: Second
+    process_ref: second-process
+message_flows: []

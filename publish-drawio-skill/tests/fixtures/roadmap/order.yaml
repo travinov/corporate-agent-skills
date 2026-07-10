@@ -1,0 +1,48 @@
+schema_version: 1
+title: Ordered roadmap
+time_scale: order
+lanes:
+  - id: stream
+    title: Stream
+outcomes:
+  - id: outcome-quality
+    title: A & B <качество>
+    metric: defects
+tasks:
+  - id: ordered-task
+    title: A & B <задача>
+    lane: stream
+    start_order: 10
+    end_order: 30
+    status: at_risk
+    risk: external dependency
+    outcomes: [outcome-quality]
+    milestones: [ordered-ready]
+milestones:
+  - id: ordered-ready
+    title: Готово "точно"
+    lane: stream
+    order: 30
+    status: on_track
+    risk: launch window
+    outcomes: [outcome-quality]
+baseline:
+  version: previous
+  tasks:
+    - id: ordered-task
+      title: A & B <задача>
+      lane: stream
+      start_order: 5
+      end_order: 20
+      outcomes: [outcome-quality]
+      milestones: [ordered-ready]
+  milestones:
+    - id: ordered-ready
+      title: Готово "точно"
+      lane: stream
+      order: 20
+      outcomes: [outcome-quality]
+  outcomes:
+    - id: outcome-quality
+      title: A & B <качество>
+      metric: defects

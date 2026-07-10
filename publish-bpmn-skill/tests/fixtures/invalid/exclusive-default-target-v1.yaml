@@ -1,0 +1,38 @@
+schema_version: 1
+process:
+  id: exclusive-default-target-v1
+  name: Exclusive Default Target V1
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: choose-route
+    type: exclusiveGateway
+    name: Which route?
+    default: handle-other
+  - id: handle-known
+    type: task
+    name: Process known route
+  - id: handle-other
+    type: task
+    name: Process other route
+  - id: end
+    type: endEvent
+    name: End
+flows:
+  - id: flow-start-choice
+    from: start
+    to: choose-route
+  - id: flow-known
+    from: choose-route
+    to: handle-known
+    label: Known
+  - id: flow-other
+    from: choose-route
+    to: handle-other
+  - id: flow-known-end
+    from: handle-known
+    to: end
+  - id: flow-other-end
+    from: handle-other
+    to: end

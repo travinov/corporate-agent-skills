@@ -1,0 +1,16 @@
+schema_version: 1
+process:
+  id: unknown-property
+  name: Unknown Property
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+    actor: Nobody
+  - id: end
+    type: endEvent
+    name: End
+flows:
+  - id: flow1
+    from: start
+    to: end

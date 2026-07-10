@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "title": "Out of order",
+  "workflow": "custom",
+  "timeMode": "date",
+  "branches": [
+    {"id": "main", "label": "main", "kind": "main"}
+  ],
+  "events": [
+    {"id": "late", "type": "commit", "branch": "main", "label": "late", "at": "2026-07-03"},
+    {"id": "early", "type": "commit", "branch": "main", "label": "early", "at": "2026-07-01"},
+    {"id": "tie-a", "type": "commit", "branch": "main", "label": "tie-a", "at": "2026-07-02"},
+    {"id": "tie-b", "type": "commit", "branch": "main", "label": "tie-b", "at": "2026-07-02"}
+  ]
+}
