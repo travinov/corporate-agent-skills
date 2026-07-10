@@ -1,0 +1,127 @@
+{
+  "format_version": 1,
+  "forbidden_parts": [
+    ".git",
+    "..",
+    ".DS_Store",
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache"
+  ],
+  "skills": {
+    "drawio": {
+      "source": "publish-drawio-skill",
+      "archive_root": "drawio-skill",
+      "output": "drawio-skill-corporate.zip",
+      "include": [
+        "SKILL.md",
+        "README.md",
+        "metadata.md",
+        "ORIGIN.md",
+        "LICENSE",
+        "requirements.txt",
+        "requirements.lock.txt",
+        "DEPENDENCIES.md",
+        "config.example.json",
+        "data/*",
+        "examples/**/*.*",
+        "references/*.md",
+        "scripts/aiicons.py",
+        "scripts/autolayout.py",
+        "scripts/c4.py",
+        "scripts/composeimports.py",
+        "scripts/encode_drawio_url.py",
+        "scripts/export_smoke.py",
+        "scripts/gitflow.py",
+        "scripts/gitflow_validate.py",
+        "scripts/goimports.py",
+        "scripts/jsimports.py",
+        "scripts/k8simports.py",
+        "scripts/pyclasses.py",
+        "scripts/pyimports.py",
+        "scripts/repair_png.py",
+        "scripts/roadmap.py",
+        "scripts/roadmap_timeline.py",
+        "scripts/roadmap_validate.py",
+        "scripts/rustimports.py",
+        "scripts/self_check.py",
+        "scripts/seqlayout.py",
+        "scripts/shapesearch.py",
+        "scripts/sqlerd.py",
+        "scripts/tfimports.py",
+        "scripts/validate.py",
+        "scripts/validation_common.py",
+        "scripts/verify_determinism.py",
+        "styles/**/*.json",
+        "tests/**/*.py",
+        "tests/**/*.json",
+        "tests/**/*.yaml",
+        "tests/**/*.drawio"
+      ],
+      "version_sources": [
+        {"path": "SKILL.md", "pattern": "(?m)^version:\\s*(\\S+)\\s*$"},
+        {"path": "metadata.md", "pattern": "(?m)^- Версия:\\s*(\\S+)\\s*$"}
+      ],
+      "python_packages": {
+        "jsonschema": "jsonschema",
+        "PyYAML": "yaml"
+      },
+      "python_requirements": "requirements.lock.txt",
+      "registry_packages": ["jsonschema", "PyYAML"],
+      "required_commands": ["python3", "drawio"],
+      "optional_commands": ["dot", "neato"],
+      "verify_commands": [
+        ["{python}", "scripts/self_check.py"],
+        ["{python}", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
+      ]
+    },
+    "bpmn": {
+      "source": "publish-bpmn-skill",
+      "archive_root": "bpmn-architect",
+      "output": "bpmn-architect-skill.zip",
+      "include": [
+        "SKILL.md",
+        "README.md",
+        "metadata.md",
+        "LICENSE",
+        "package.json",
+        "references/*.md",
+        "scripts/corp-bpmn/package.json",
+        "scripts/corp-bpmn/package-lock.json",
+        "scripts/corp-bpmn/src/**/*.mjs",
+        "scripts/corp-bpmn/src/**/*.json",
+        "scripts/corp-bpmn/src/rules/.bpmnlintrc",
+        "tests/**/*.mjs",
+        "tests/**/*.json",
+        "tests/**/*.yaml",
+        "examples/**/*.yaml"
+      ],
+      "version_sources": [
+        {"path": "SKILL.md", "pattern": "(?m)^version:\\s*(\\S+)\\s*$"},
+        {"path": "metadata.md", "pattern": "(?m)^- Version:\\s*`?([^`\\s]+)`?\\s*$"},
+        {"path": "package.json", "json_key": "version"},
+        {"path": "scripts/corp-bpmn/package.json", "json_key": "version"}
+      ],
+      "npm_package_dir": "scripts/corp-bpmn",
+      "registry_packages": [
+        "ajv",
+        "bpmn-auto-layout",
+        "bpmn-moddle",
+        "bpmnlint",
+        "commander",
+        "yaml"
+      ],
+      "required_commands": ["node", "npm"],
+      "optional_commands": [],
+      "verify_commands": [
+        ["npm", "--prefix", "scripts/corp-bpmn", "ci", "--ignore-scripts"],
+        ["node", "scripts/corp-bpmn/src/cli/index.mjs", "self-check"],
+        ["npm", "test"],
+        ["node", "scripts/corp-bpmn/src/cli/index.mjs", "build", "examples/credit-approval/process.yaml", "--strict"],
+        ["node", "scripts/corp-bpmn/src/cli/index.mjs", "build", "tests/fixtures/valid/collaboration-message-flow.yaml", "--strict"],
+        ["node", "scripts/corp-bpmn/src/cli/index.mjs", "migrate", "tests/fixtures/valid/simple-approval.yaml", "--to-version", "2", "--out", "tests/release-smoke/process.yaml"],
+        ["node", "scripts/corp-bpmn/src/cli/index.mjs", "build", "tests/release-smoke/process.yaml", "--strict"]
+      ]
+    }
+  }
+}

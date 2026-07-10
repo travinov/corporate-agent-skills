@@ -1,0 +1,27 @@
+schema_version: 1
+process:
+  id: subprocess-fixture
+  name: Subprocess Fixture
+  executable: false
+  target_engine: none
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: handle-case
+    type: subProcess
+    name: Handle case
+  - id: end
+    type: endEvent
+    name: End
+flows:
+  - id: flow1
+    from: start
+    to: handle-case
+  - id: flow2
+    from: handle-case
+    to: end
+documentation:
+  purpose: Subprocess fixture.
+  advanced_elements:
+    - handle-case

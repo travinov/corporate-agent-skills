@@ -1,0 +1,291 @@
+{
+  "expected_codes": [
+    "contract.version.missing",
+    "contract.version.unsupported",
+    "schema.type",
+    "schema.required",
+    "schema.additionalProperties",
+    "schema.enum",
+    "schema.minItems",
+    "schema.minLength",
+    "schema.pattern",
+    "schema.oneOf",
+    "reference.branch.duplicate",
+    "reference.branch.unknown",
+    "reference.event.duplicate",
+    "gitflow.branch.self",
+    "gitflow.merge.self",
+    "gitflow.branch.duplicate_creation",
+    "gitflow.branch.source_inactive",
+    "gitflow.branch.used_before_creation",
+    "gitflow.policy.main_required",
+    "gitflow.policy.develop_missing",
+    "gitflow.policy.feature_source",
+    "gitflow.policy.feature_target",
+    "gitflow.policy.release_source",
+    "gitflow.policy.release_main_target",
+    "gitflow.policy.release_develop_target",
+    "gitflow.policy.hotfix_source",
+    "gitflow.policy.hotfix_main_target",
+    "gitflow.policy.hotfix_back_target"
+  ],
+  "cases": [
+    {
+      "id": "top-level-type",
+      "base": "positive/date.json",
+      "expected": ["schema.type"],
+      "ops": [{"op": "replace_document", "value": []}]
+    },
+    {
+      "id": "missing-version-strict",
+      "base": "positive/date.json",
+      "strict": true,
+      "expected": ["contract.version.missing"],
+      "ops": [{"op": "remove", "path": "/schema_version"}]
+    },
+    {
+      "id": "unsupported-version",
+      "base": "positive/date.json",
+      "expected": ["contract.version.unsupported"],
+      "ops": [{"op": "set", "path": "/schema_version", "value": 2}]
+    },
+    {
+      "id": "required-branches",
+      "base": "positive/date.json",
+      "expected": ["schema.required"],
+      "ops": [{"op": "remove", "path": "/branches"}]
+    },
+    {
+      "id": "unknown-property",
+      "base": "positive/date.json",
+      "expected": ["schema.additionalProperties"],
+      "ops": [{"op": "set", "path": "/unsupported", "value": true}]
+    },
+    {
+      "id": "nested-type",
+      "base": "positive/date.json",
+      "expected": ["schema.type"],
+      "ops": [{"op": "set", "path": "/title", "value": 3}]
+    },
+    {
+      "id": "workflow-enum",
+      "base": "positive/date.json",
+      "expected": ["schema.enum"],
+      "ops": [{"op": "set", "path": "/workflow", "value": "trunk"}]
+    },
+    {
+      "id": "empty-branches",
+      "base": "positive/date.json",
+      "expected": ["schema.minItems"],
+      "ops": [{"op": "set", "path": "/branches", "value": []}]
+    },
+    {
+      "id": "empty-title",
+      "base": "positive/date.json",
+      "expected": ["schema.minLength"],
+      "ops": [{"op": "set", "path": "/title", "value": ""}]
+    },
+    {
+      "id": "invalid-id-pattern",
+      "base": "positive/date.json",
+      "expected": ["schema.pattern"],
+      "ops": [{"op": "set", "path": "/branches/0/id", "value": "1-invalid"}]
+    },
+    {
+      "id": "event-variant-missing-branch",
+      "base": "positive/date.json",
+      "expected": ["schema.oneOf"],
+      "ops": [{"op": "remove", "path": "/events/0/branch"}]
+    },
+    {
+      "id": "invalid-real-date",
+      "base": "positive/date.json",
+      "expected": ["schema.oneOf"],
+      "ops": [{"op": "set", "path": "/events/0/at", "value": "2026-02-31"}]
+    },
+    {
+      "id": "duplicate-branch-id",
+      "base": "positive/date.json",
+      "expected": ["reference.branch.duplicate"],
+      "ops": [{"op": "append", "path": "/branches", "value": {"id": "main", "kind": "custom"}}]
+    },
+    {
+      "id": "unknown-branch-ref",
+      "base": "positive/date.json",
+      "expected": ["reference.branch.unknown"],
+      "ops": [{"op": "set", "path": "/events/0/branch", "value": "missing"}]
+    },
+    {
+      "id": "duplicate-event-id",
+      "base": "positive/date.json",
+      "expected": ["reference.event.duplicate"],
+      "ops": [{"op": "append", "path": "/events", "value": {"id": "main-start", "type": "commit", "branch": "main", "at": "2026-07-04"}}]
+    },
+    {
+      "id": "self-branch",
+      "base": "positive/date.json",
+      "expected": ["gitflow.branch.self"],
+      "ops": [{"op": "set", "path": "/events", "value": [{"id": "self", "type": "branch", "from": "main", "to": "main", "at": "2026-07-01"}]}]
+    },
+    {
+      "id": "self-merge",
+      "base": "positive/date.json",
+      "expected": ["gitflow.merge.self"],
+      "ops": [{"op": "set", "path": "/events", "value": [{"id": "self", "type": "merge", "from": "main", "to": "main", "at": "2026-07-01"}]}]
+    },
+    {
+      "id": "duplicate-creation",
+      "base": "positive/custom.json",
+      "expected": ["gitflow.branch.duplicate_creation"],
+      "ops": [{"op": "append", "path": "/events", "value": {"id": "create-delivery-again", "type": "branch", "from": "production", "to": "delivery", "order": 5}}]
+    },
+    {
+      "id": "inactive-branch-source",
+      "base": "positive/custom.json",
+      "expected": ["gitflow.branch.source_inactive"],
+      "ops": [
+        {"op": "set", "path": "/branches", "value": [{"id": "main"}, {"id": "first"}, {"id": "second"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-second", "type": "branch", "from": "first", "to": "second", "order": 1},
+          {"id": "create-first", "type": "branch", "from": "main", "to": "first", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "use-before-creation",
+      "base": "positive/custom.json",
+      "expected": ["gitflow.branch.used_before_creation"],
+      "ops": [
+        {"op": "set", "path": "/branches", "value": [{"id": "main"}, {"id": "later"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "early-use", "type": "commit", "branch": "later", "order": 1},
+          {"id": "create-later", "type": "branch", "from": "main", "to": "later", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "main-required",
+      "base": "positive/custom.json",
+      "expected": ["gitflow.policy.main_required"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "develop", "kind": "develop"}]},
+        {"op": "set", "path": "/events", "value": []}
+      ]
+    },
+    {
+      "id": "develop-missing-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.develop_missing"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}]},
+        {"op": "set", "path": "/events", "value": []}
+      ]
+    },
+    {
+      "id": "feature-source-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.feature_source"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "feature", "kind": "feature"}]},
+        {"op": "set", "path": "/events", "value": [{"id": "create-feature", "type": "branch", "from": "main", "to": "feature", "order": 1}]}
+      ]
+    },
+    {
+      "id": "feature-target-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.feature_target"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "feature", "kind": "feature"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-feature", "type": "branch", "from": "develop", "to": "feature", "order": 1},
+          {"id": "merge-feature", "type": "merge", "from": "feature", "to": "main", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "release-source-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.release_source"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "release", "kind": "release"}]},
+        {"op": "set", "path": "/events", "value": [{"id": "create-release", "type": "branch", "from": "main", "to": "release", "order": 1}]}
+      ]
+    },
+    {
+      "id": "release-main-target-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.release_main_target"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "release", "kind": "release"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-release", "type": "branch", "from": "develop", "to": "release", "order": 1},
+          {"id": "merge-release", "type": "merge", "from": "release", "to": "develop", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "release-develop-target-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.release_develop_target"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "release", "kind": "release"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-release", "type": "branch", "from": "develop", "to": "release", "order": 1},
+          {"id": "merge-release", "type": "merge", "from": "release", "to": "main", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "hotfix-source-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.hotfix_source"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "hotfix", "kind": "hotfix"}]},
+        {"op": "set", "path": "/events", "value": [{"id": "create-hotfix", "type": "branch", "from": "develop", "to": "hotfix", "order": 1}]}
+      ]
+    },
+    {
+      "id": "hotfix-main-target-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.hotfix_main_target"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "hotfix", "kind": "hotfix"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-hotfix", "type": "branch", "from": "main", "to": "hotfix", "order": 1},
+          {"id": "merge-hotfix", "type": "merge", "from": "hotfix", "to": "develop", "order": 2}
+        ]}
+      ]
+    },
+    {
+      "id": "hotfix-back-target-strict",
+      "base": "positive/custom.json",
+      "strict": true,
+      "expected": ["gitflow.policy.hotfix_back_target"],
+      "ops": [
+        {"op": "set", "path": "/workflow", "value": "git-flow"},
+        {"op": "set", "path": "/branches", "value": [{"id": "main", "kind": "main"}, {"id": "develop", "kind": "develop"}, {"id": "hotfix", "kind": "hotfix"}]},
+        {"op": "set", "path": "/events", "value": [
+          {"id": "create-hotfix", "type": "branch", "from": "main", "to": "hotfix", "order": 1},
+          {"id": "merge-hotfix", "type": "merge", "from": "hotfix", "to": "main", "order": 2}
+        ]}
+      ]
+    }
+  ]
+}

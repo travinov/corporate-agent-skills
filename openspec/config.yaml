@@ -1,0 +1,27 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+context: |
+  Project: BPMN Architect Skill and Corp BPMN Toolchain for GigaCode/Codex-style agents.
+  Methodology: spec-driven development. Write and approve specs before implementation.
+  Core architecture: natural-language process description -> bpmn-architect skill -> process.yaml -> local corp-bpmn CLI -> BPMN 2.0 XML -> auto-layout -> validation -> process.bpmn, process.md, validation-report.json.
+  Corporate constraints: local-first; no external SaaS, online renderers, or external MCP servers for process data. Approved/internal npm registries are acceptable.
+  Modeling policy: full BPMN 2.0 support should be available, but complexity must not be pushed by default. Prefer the simplest BPMN construct that preserves business meaning; use advanced BPMN elements only when simpler constructs distort semantics or the user explicitly asks.
+  Current source specs: bpmn/bpmn_toolchain_spec_gigacode.md and bpmn/bpmn_architect_sdd_spec.md.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

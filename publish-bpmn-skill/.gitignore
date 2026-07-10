@@ -1,0 +1,7 @@
+.DS_Store
+scripts/.DS_Store
+scripts/corp-bpmn/.DS_Store
+scripts/corp-bpmn/node_modules/
+examples/*/process.bpmn
+examples/*/process.md
+examples/*/validation-report.json

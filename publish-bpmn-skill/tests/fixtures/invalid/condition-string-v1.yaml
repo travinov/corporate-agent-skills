@@ -1,0 +1,22 @@
+schema_version: 1
+process:
+  id: condition-string-v1
+  name: Condition String V1
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: decision
+    type: exclusiveGateway
+    name: Approved?
+  - id: end
+    type: endEvent
+    name: End
+flows:
+  - id: flow1
+    from: start
+    to: decision
+  - id: flow2
+    from: decision
+    to: end
+    condition: approved

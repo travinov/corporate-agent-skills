@@ -1,0 +1,115 @@
+schema_version: 1
+process:
+  id: credit-approval
+  name: Corporate Credit Approval
+  executable: false
+  target_engine: none
+
+participants:
+  - id: bank
+    name: Bank
+    lanes:
+      - id: relationship-manager
+        name: Relationship Manager
+      - id: risk-analyst
+        name: Risk Analyst
+      - id: credit-committee
+        name: Credit Committee
+
+nodes:
+  - id: start
+    type: startEvent
+    name: Credit request received
+    lane: relationship-manager
+    participant: bank
+  - id: document-collection-entry
+    type: exclusiveGateway
+    name: Enter document collection?
+    lane: relationship-manager
+    participant: bank
+  - id: collect-documents
+    type: userTask
+    name: Collect client documents
+    lane: relationship-manager
+    participant: bank
+  - id: check-completeness
+    type: exclusiveGateway
+    name: Documents complete?
+    lane: relationship-manager
+    participant: bank
+  - id: request-missing-documents
+    type: userTask
+    name: Request missing documents
+    lane: relationship-manager
+    participant: bank
+  - id: analyze-risk
+    type: userTask
+    name: Analyze borrower risk
+    lane: risk-analyst
+    participant: bank
+  - id: decision
+    type: exclusiveGateway
+    name: Approved?
+    lane: credit-committee
+    participant: bank
+  - id: prepare-decision
+    type: userTask
+    name: Prepare credit decision
+    lane: credit-committee
+    participant: bank
+  - id: end-approved
+    type: endEvent
+    name: Credit approved
+    lane: credit-committee
+    participant: bank
+  - id: end-rejected
+    type: endEvent
+    name: Credit rejected
+    lane: credit-committee
+    participant: bank
+
+flows:
+  - id: flow-start-collect
+    from: start
+    to: document-collection-entry
+  - id: flow-entry-collect
+    from: document-collection-entry
+    to: collect-documents
+  - id: flow-collect-check
+    from: collect-documents
+    to: check-completeness
+  - id: flow-check-yes
+    from: check-completeness
+    to: analyze-risk
+    label: "Yes"
+  - id: flow-check-no
+    from: check-completeness
+    to: request-missing-documents
+    label: "No"
+  - id: flow-request-documents
+    from: request-missing-documents
+    to: document-collection-entry
+  - id: flow-analyze-decision
+    from: analyze-risk
+    to: decision
+  - id: flow-approved
+    from: decision
+    to: prepare-decision
+    label: "Yes"
+  - id: flow-rejected
+    from: decision
+    to: end-rejected
+    label: "No"
+  - id: flow-prepare-end
+    from: prepare-decision
+    to: end-approved
+
+message_flows: []
+data: []
+artifacts: []
+extensions: {}
+documentation:
+  purpose: Model the corporate credit approval process from request intake through approval or rejection.
+  assumptions:
+    - Missing documents create a valid rework loop back to collection.
+    - One pool is used because all roles belong to the bank.

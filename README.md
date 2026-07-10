@@ -1,142 +1,63 @@
-# drawio-skill extension
+# Corporate Agent Skills for GigaCode CLI
 
-`drawio-skill extension` помогает GigaCode превращать текстовый запрос пользователя в редактируемую диаграмму `.drawio`, проверять ее структурно и экспортировать через draw.io Desktop CLI в PNG, SVG, PDF или JPG.
+Репозиторий содержит два независимых skill-based extension для GigaCode CLI:
 
-Extension состоит из агентных инструкций, reference-файлов и локальных Python-скриптов. В корпоративной сборке отключены внешние CDN для брендовых SVG-иконок: используются локальные draw.io shapes и встроенные генераторы.
+| Extension | Версия | Назначение |
+|---|---:|---|
+| [`drawio-skill`](publish-drawio-skill/) | `1.20.0-corporate.1` | Редактируемые draw.io-диаграммы, roadmap, git-flow, архитектурные и специализированные схемы |
+| [`bpmn-architect`](publish-bpmn-skill/) | `0.2.0` | Семантические BPMN 2.0 модели с versioned schemas, валидацией и round-trip проверкой |
 
-## Как работает
+Extension не вложены друг в друга и могут устанавливаться отдельно.
 
-1. **Diagram Intake Agent** анализирует запрос пользователя, определяет тип диаграммы и при необходимости задает короткие уточняющие вопросы.
-2. Агент формирует `confirmed diagram brief`: тип диаграммы, цель, уровень детализации, layout, формат вывода и assumptions.
-3. Skill выбирает подходящий путь генерации: Mermaid conversion, hand-written XML или один из bundled generators.
-4. Скрипт создает `.drawio`.
-5. `scripts/validate.py` проверяет структуру: dangling edges, duplicate ids, broken parents, overlaps и routing warnings.
-6. draw.io Desktop CLI экспортирует preview/final изображения, если CLI доступен.
+## Готовые архивы
 
-Intake не является жесткой анкетой. Он использует question matrix и задает только вопросы, которые реально улучшают диаграмму. Для сложных запросов последний вопрос свободный: например, нужно ли не разносить роли по дорожкам, а выделить их цветом, сгруппировать шаги по этапам или показать артефакты отдельными блоками.
+- [`dist/drawio-skill-corporate.zip`](dist/drawio-skill-corporate.zip)
+- [`dist/bpmn-architect-skill.zip`](dist/bpmn-architect-skill.zip)
+- [`dist/SHA256SUMS.txt`](dist/SHA256SUMS.txt)
 
-## Какие диаграммы строит
-
-- Flowchart и process diagram.
-- sequence diagram через `scripts/seqlayout.py`.
-- C4: Context / Container / Component через `scripts/c4.py`.
-- ERD из SQL DDL через `scripts/sqlerd.py`.
-- UML class / class hierarchy.
-- Architecture / system / service diagrams.
-- Git-flow и custom branch timeline через `scripts/gitflow.py`.
-- Infrastructure diagrams из Terraform, Kubernetes и docker-compose.
-- Import/dependency graphs для Python, JS/TS, Go, Rust.
-- ML/DL model diagrams, network topology, mind maps и общие визуальные схемы.
-
-## Пример запроса
-
-```text
-Мне нужно визуализировать custom git-flow работы команды с OpenSpec.
-Это release-based процесс без develop.
-Подготовь timeline-aware draw.io диаграмму: X = порядок шагов, Y = ветки.
-
-Ветки:
-- master - состояние микросервиса в пром.
-- release/{release_number} - целевая релизная ветка микросервиса.
-- spec/{jira_key} - ветка аналитика для подготовки change.md.
-- feature/{jira_key} - ветка разработчика для реализации.
-
-Процесс:
-1) Аналитик создает spec/{jira_key} от release/{release_number}.
-2) Аналитик готовит только change.md.
-3) Аналитик создает PR spec/{jira_key} -> release/{release_number}.
-4) Разработчик ревьювит и мержит PR.
-5) В release/{release_number} появляется change.md в статусе "не реализовано".
-6) Разработчик создает feature/{jira_key} от актуальной release/{release_number}.
-7) Разработчик готовит design.md, tasks.md, код, тесты и обновляет master-spec.md.
-8) Разработчик создает PR feature/{jira_key} -> release/{release_number}.
-9) Другой разработчик ревьювит PR; аналитик проверяет смысл при необходимости.
-10) PR мержится в release/{release_number}.
-11) Тестировщик коммитит архивацию OpenSpec change в release/{release_number}.
-12) После релизных проверок release/{release_number} продвигается в master.
-
-Пожелание к виду: дорожки оставить по веткам, роли выделять цветом в подписях.
-```
-
-Ожидаемый результат: skill построит intermediate JSON-модель, запустит `gitflow_validate.py`, затем `gitflow.py`, проверит `.drawio` через `validate.py` и вернет `.drawio` плюс preview PNG, если draw.io CLI доступен.
-
-## Установка в корпоративной среде
-
-Распакуйте ZIP в каталог skills агента:
+Проверка архивов:
 
 ```bash
-mkdir -p ~/.agents/skills
-unzip drawio-skill-corporate.zip -d ~/.agents/skills
+cd dist
+shasum -a 256 -c SHA256SUMS.txt
 ```
 
-draw.io Desktop в корпоративной среде macOS/Windows устанавливается через внутренний маркетплейс SberUserSoft:
-
-```text
-https://sberusersoft.sigma.sbrf.ru/#search/Draw.io
-```
-
-Проверка CLI:
+## Установка в GigaCode CLI
 
 ```bash
-drawio --version
-/Applications/draw.io.app/Contents/MacOS/draw.io --version
-"C:\Program Files\draw.io\draw.io.exe" --version
+mkdir -p ~/.gigacode/skills
+unzip dist/drawio-skill-corporate.zip -d ~/.gigacode/skills
+unzip dist/bpmn-architect-skill.zip -d ~/.gigacode/skills
 ```
 
-Если draw.io установлен нестандартно, задайте путь:
+Зависимости Draw.io extension:
 
 ```bash
-export DRAWIO_BIN="/Applications/draw.io.app/Contents/MacOS/draw.io"
+cd ~/.gigacode/skills/drawio-skill
+python3 -m pip install -r requirements.lock.txt
+python3 scripts/self_check.py
 ```
 
-или создайте config:
-
-```json
-{
-  "drawio_bin": "C:\\Program Files\\draw.io\\draw.io.exe"
-}
-```
-
-Путь config:
-
-- macOS/Linux/WSL: `~/.drawio-skill/config.json`
-- Windows: `%USERPROFILE%\.drawio-skill\config.json`
-
-## Основные компоненты
-
-- `SKILL.md` - основная инструкция агенту: когда применять extension, как выбирать путь генерации, как экспортировать.
-- `metadata.md` - карточка extension по корпоративному шаблону.
-- `references/diagram-intake.md` - правила Diagram Intake Agent и матрица вопросов.
-- `references/git-flow.md` - правила git-flow/custom branch timeline.
-- `references/xml-authoring.md`, `references/diagram-types.md`, `references/shapes.md` - правила ручного XML, типов диаграмм и shape lookup.
-- `scripts/gitflow.py` - генератор timeline-aware git-flow/custom-flow диаграмм.
-- `scripts/gitflow_validate.py` - валидатор входного JSON для git-flow/custom-flow.
-- `scripts/validate.py` - общий структурный lint для `.drawio`.
-- `scripts/seqlayout.py`, `scripts/c4.py`, `scripts/sqlerd.py`, `scripts/autolayout.py` - специализированные генераторы.
-- `tests/` - fixtures и unittest-проверки.
-
-## Валидация и проверки
-
-Проверить скрипты:
+Зависимости BPMN extension:
 
 ```bash
-python3 -m py_compile scripts/gitflow.py scripts/gitflow_validate.py
-python3 -m unittest discover -s tests -p 'test_*.py'
+cd ~/.gigacode/skills/bpmn-architect/scripts/corp-bpmn
+npm ci
+npm run self-check
 ```
 
-Проверить git-flow генерацию:
+## Схемы и валидация
+
+Draw.io extension поставляет Draft 2020-12 schemas для roadmap и git-flow, source-aware проверку `.drawio`, детерминированную генерацию и real-export smoke check.
+
+BPMN extension поставляет отдельные JSON Schema 2020-12 для v1 single-process и v2 collaboration, capability matrix, fail-closed validation и semantic round-trip через `bpmn-moddle`.
+
+## Воспроизводимая сборка
 
 ```bash
-python3 scripts/gitflow_validate.py tests/fixtures/gitflow/openspec_custom.json --strict
-python3 scripts/gitflow.py tests/fixtures/gitflow/openspec_custom.json -o /tmp/openspec.drawio --route auto
-python3 scripts/validate.py /tmp/openspec.drawio --strict
+python3 scripts/release_skills.py all --registry
 ```
 
-Если Graphviz `neato` недоступен, `--route auto` переключится на builtin routing. Это штатный режим для корпоративных ноутбуков без Graphviz.
+Команда проверяет зависимости, собирает два детерминированных ZIP, создаёт manifests и checksums, распаковывает архивы в чистые временные каталоги и запускает тесты уже из распакованной поставки.
 
-## Ограничения
-
-- Extension не использует внешние CDN для иконок.
-- Git-flow генератор в v1 не парсит реальный `git log`, а строит диаграмму по JSON-модели, которую агент формирует из текста.
-- Mermaid `gitGraph` не используется для timeline-aware git/custom flow, потому что не гарантирует стабильное размещение по timeline и branch lanes.
-- Экспорт PNG/SVG/PDF требует draw.io Desktop CLI; без CLI можно сохранить `.drawio` и открыть его вручную.
+Подробности: [`release/README.md`](release/README.md).

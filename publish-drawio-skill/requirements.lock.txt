@@ -1,0 +1,4 @@
+# Reproducible versions verified on 2026-07-09.
+# Install with: python3 -m pip install -r requirements.lock.txt
+PyYAML==6.0.3
+jsonschema==4.26.0

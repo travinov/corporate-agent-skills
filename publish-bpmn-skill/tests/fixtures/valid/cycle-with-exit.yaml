@@ -1,0 +1,42 @@
+schema_version: 1
+process:
+  id: cycle-with-exit
+  name: Cycle With Exit
+  executable: false
+  target_engine: none
+nodes:
+  - id: start
+    type: startEvent
+    name: Start
+  - id: review-request
+    type: task
+    name: Review request
+  - id: accepted
+    type: exclusiveGateway
+    name: Accepted?
+  - id: revise-request
+    type: task
+    name: Revise request
+  - id: end
+    type: endEvent
+    name: Done
+flows:
+  - id: flow1
+    from: start
+    to: review-request
+  - id: flow2
+    from: review-request
+    to: accepted
+  - id: flow3
+    from: accepted
+    to: end
+    label: "Yes"
+  - id: flow4
+    from: accepted
+    to: revise-request
+    label: "No"
+  - id: flow5
+    from: revise-request
+    to: review-request
+documentation:
+  purpose: Valid loop with explicit exit.

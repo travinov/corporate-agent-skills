@@ -1,0 +1,30 @@
+schema_version: 1
+title: Daily roadmap with baseline
+time_scale: date
+lanes:
+  - id: operations
+    title: Operations
+tasks:
+  - id: daily-task
+    title: Complete cutover
+    lane: operations
+    start: 2026-07-09
+    end: 2026-07-11
+milestones:
+  - id: daily-ready
+    title: Cutover complete
+    lane: operations
+    date: 2026-07-11
+baseline:
+  version: previous
+  tasks:
+    - id: daily-task
+      title: Complete cutover
+      lane: operations
+      start: 2026-07-09
+      end: 2026-07-10
+  milestones:
+    - id: daily-ready
+      title: Cutover complete
+      lane: operations
+      date: 2026-07-10

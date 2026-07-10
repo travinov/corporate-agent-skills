@@ -1,0 +1,77 @@
+schema_version: 2
+definitions:
+  id: collaboration-message-flow-definitions
+  name: Collaboration Message Flow
+  target_namespace: http://corp.example/bpmn
+processes:
+  - id: customer-process
+    name: Customer Process
+    executable: false
+    target_engine: none
+    lanes: []
+    nodes:
+      - id: customer-start
+        type: startEvent
+        name: Request needed
+      - id: send-request
+        type: sendTask
+        name: Send request
+      - id: customer-end
+        type: endEvent
+        name: Request sent
+    flows:
+      - id: customer-flow-1
+        from: customer-start
+        to: send-request
+      - id: customer-flow-2
+        from: send-request
+        to: customer-end
+    data: []
+    artifacts: []
+    extensions: {}
+  - id: company-process
+    name: Company Process
+    executable: false
+    target_engine: none
+    lanes: []
+    nodes:
+      - id: company-start
+        type: startEvent
+        name: Ready for requests
+      - id: receive-request
+        type: receiveTask
+        name: Receive request
+      - id: process-request
+        type: task
+        name: Process request
+      - id: company-end
+        type: endEvent
+        name: Request processed
+    flows:
+      - id: company-flow-1
+        from: company-start
+        to: receive-request
+      - id: company-flow-2
+        from: receive-request
+        to: process-request
+      - id: company-flow-3
+        from: process-request
+        to: company-end
+    data: []
+    artifacts: []
+    extensions: {}
+participants:
+  - id: customer
+    name: Customer
+    process_ref: customer-process
+  - id: company
+    name: Company
+    process_ref: company-process
+message_flows:
+  - id: message1
+    from: send-request
+    to: receive-request
+    label: Request
+extensions: {}
+documentation:
+  purpose: Collaboration fixture with message flow across participants.

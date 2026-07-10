@@ -1,0 +1,51 @@
+import json
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class ContractDocumentationTests(unittest.TestCase):
+    def read(self, path):
+        return (ROOT / path).read_text(encoding="utf-8")
+
+    def test_skill_documents_versioned_source_aware_quality_gate(self):
+        skill = self.read("SKILL.md")
+        for text in (
+            "schema_version: 1",
+            "contract.version.missing",
+            "--profile roadmap",
+            "--profile gitflow",
+            "scripts/self_check.py --check-registry",
+            "scripts/verify_determinism.py",
+            "scripts/export_smoke.py",
+            "separate\n`bpmn-architect` skill",
+        ):
+            self.assertIn(text, skill)
+
+    def test_references_match_schema_scales_and_event_variants(self):
+        roadmap = self.read("references/roadmap.md")
+        gitflow = self.read("references/git-flow.md")
+        roadmap_schema = json.loads(self.read("data/roadmap.v1.schema.json"))
+        gitflow_schema = json.loads(self.read("data/gitflow.v1.schema.json"))
+        for scale in roadmap_schema["properties"]["time_scale"]["enum"]:
+            self.assertIn(f"`{scale}`", roadmap)
+        for field in ("start_order", "end_order", "schema_version", "roadmap.v1.schema.json"):
+            self.assertIn(field, roadmap)
+        for field in ("schema_version", "gitflow.v1.schema.json", "branch use before creation", "original_index"):
+            self.assertIn(field, gitflow)
+        self.assertEqual(gitflow_schema["properties"]["schema_version"]["const"], 1)
+
+    def test_readme_declares_exact_dependency_ranges_and_commands(self):
+        readme = self.read("README.md")
+        requirements = self.read("requirements.txt")
+        for requirement in ("PyYAML>=6.0,<7", "jsonschema>=4.18,<5"):
+            self.assertIn(requirement, requirements)
+            self.assertIn(f"`{requirement}`", readme)
+        self.assertIn("--profile roadmap --source", readme)
+        self.assertIn("--profile gitflow --source", readme)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "title": "Custom workflow without develop",
+  "workflow": "custom",
+  "timeMode": "order",
+  "branches": [
+    {"id": "production", "label": "production", "kind": "custom"},
+    {"id": "delivery", "label": "delivery", "kind": "custom"}
+  ],
+  "events": [
+    {"id": "production-start", "type": "commit", "branch": "production", "order": 1},
+    {"id": "create-delivery", "type": "branch", "from": "production", "to": "delivery", "order": 2},
+    {"id": "delivery-work", "type": "commit", "branch": "delivery", "order": 3},
+    {"id": "promote", "type": "merge", "from": "delivery", "to": "production", "order": 4}
+  ]
+}
