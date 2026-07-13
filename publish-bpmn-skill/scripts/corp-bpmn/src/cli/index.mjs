@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name('corp-bpmn')
   .description('Local BPMN 2.0 generation, layout, validation, and documentation toolchain')
-  .version('0.2.0');
+  .version('0.3.0');
 
 program.command('init')
   .argument('<dir>', 'process directory to initialize')

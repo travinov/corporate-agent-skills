@@ -52,7 +52,7 @@ documentation:
   assumptions: []
 ```
 
-V1 message flows, multiple participants, non-empty data/artifacts, and arbitrary extensions are unsupported in 0.2.0. Use v2 for collaboration.
+V1 message flows, multiple participants, non-empty data/artifacts, and arbitrary extensions are unsupported in 0.3.0. Use v2 for collaboration.
 
 ## V2: Multi-Process Collaboration
 
@@ -120,7 +120,7 @@ documentation:
   purpose: Exchange an order between independent participants.
 ```
 
-Sequence flows never cross process boundaries. Message-flow node endpoints are currently limited to send tasks, receive tasks, and intermediate catch/throw events; participant ids are also valid endpoints.
+Sequence flows never cross process boundaries. Message-flow node endpoints are limited to send tasks, receive tasks, and intermediate catch/throw events. Prefer those concrete node ids whenever the interaction activity is known. Participant ids remain valid only for black-box or genuinely unspecified interactions; record that assumption. A participant endpoint produces `semantic.message_endpoint.participant_ambiguous` when its process contains a concrete direction-compatible activity.
 
 ## Conditions and Defaults
 
@@ -165,5 +165,5 @@ The default flow may omit a label or condition. Every other outgoing exclusive b
 - Do not write lanes as strings; every lane needs `id` and `name`.
 - Do not omit `id`, `from`, or `to` on a flow.
 - Do not use lanes for methods, outcomes, or scenario variants.
-- Do not put `actor`, `system`, arbitrary engine properties, or unknown fields on nodes in v1/v2 0.2.0.
+- Do not put `actor`, `system`, arbitrary engine properties, or unknown fields on nodes in v1/v2 0.3.0.
 - Do not use non-empty `data`, `artifacts`, or `extensions` until the capability matrix marks their mappings supported.

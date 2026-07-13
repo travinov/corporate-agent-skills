@@ -10,6 +10,10 @@ import { lintProcessModel } from './semantic-linter.mjs';
 import { buildReport } from './validation-report.mjs';
 import { validateSemanticRoundTrip } from './semantic-roundtrip.mjs';
 import { allFlows, allNodes, targetEngines } from './model-utils.mjs';
+import {
+  boundsOverlap, containsBounds, finiteBounds, pointOnBoundary,
+  routeIntersectsBounds, routeSignature, routesCross
+} from './spatial-geometry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, '../..');
@@ -42,7 +46,10 @@ export async function validateBpmnXml({ xml, model = null, schemaFindings = [], 
   } catch (error) {
     findings.push({ layer: 'artifact-parse', severity: 'error', code: 'artifact.parse_error', message: error.message });
   }
-  if (definitions) findings.push(...structuralFindings(definitions, model));
+  if (definitions) {
+    findings.push(...structuralFindings(definitions, model));
+    findings.push(...spatialFindings(definitions));
+  }
   findings.push(...await runBpmnLint(xml));
   if (model) {
     if (!findings.some((finding) => finding.layer === 'semantics')) findings.push(...lintProcessModel(model));
@@ -115,6 +122,106 @@ function structuralFindings(definitions, model) {
     for (const flow of [...allFlows(model), ...(model.message_flows || [])]) if (!diRefs.has(flow.id)) findings.push({ layer: 'layout', severity: 'warning', code: 'layout.missing_edge', element: flow.id, message: `missing BPMNEdge for ${flow.id}` });
   }
   return findings;
+}
+
+export function spatialFindings(definitions) {
+  const findings = [];
+  const shapes = new Map();
+  const edges = [];
+  for (const diagram of definitions.diagrams || []) {
+    for (const di of diagram.plane?.planeElement || []) {
+      const element = di.bpmnElement;
+      if (di.$type === 'bpmndi:BPMNShape' && element?.id) {
+        const bounds = finiteBounds(di.bounds);
+        if (!bounds) findings.push(layoutError('layout.shape.invalid_bounds', element.id, `${element.id} has invalid numeric bounds`));
+        else shapes.set(element.id, { element, bounds });
+      }
+      if (di.$type === 'bpmndi:BPMNEdge' && element?.id) edges.push({ element, waypoints: (di.waypoint || []).map((point) => ({ x: Number(point.x), y: Number(point.y) })) });
+    }
+  }
+
+  const participants = [...shapes.values()].filter((item) => item.element.$type === 'bpmn:Participant');
+  const lanes = [...shapes.values()].filter((item) => item.element.$type === 'bpmn:Lane');
+  const nodes = [...shapes.values()].filter((item) => isFlowNode(item.element));
+  const participantByProcess = new Map(participants.map((item) => [item.element.processRef?.id, item]));
+  const laneByNode = new Map();
+  for (const lane of lanes) for (const node of lane.element.flowNodeRef || []) laneByNode.set(node.id, lane);
+
+  for (const lane of lanes) {
+    const participant = participantByProcess.get(owningProcess(lane.element)?.id);
+    if (participant && !containsBounds(participant.bounds, lane.bounds)) {
+      findings.push(layoutError('layout.shape.outside_pool', lane.element.id, `${lane.element.id} lies outside participant ${participant.element.id}`));
+    }
+  }
+
+  for (const node of nodes) {
+    const process = owningProcess(node.element);
+    const participant = participantByProcess.get(process?.id);
+    if (participant && !containsBounds(participant.bounds, node.bounds)) {
+      findings.push(layoutError('layout.shape.outside_pool', node.element.id, `${node.element.id} lies outside participant ${participant.element.id}`));
+    }
+    const lane = laneByNode.get(node.element.id);
+    if (lane && !containsBounds(lane.bounds, node.bounds)) {
+      findings.push(layoutError('layout.shape.outside_lane', node.element.id, `${node.element.id} lies outside lane ${lane.element.id}`));
+    }
+  }
+  for (let first = 0; first < participants.length; first += 1) for (let second = first + 1; second < participants.length; second += 1) {
+    if (boundsOverlap(participants[first].bounds, participants[second].bounds)) findings.push(layoutError('layout.pool.overlap', participants[first].element.id, `participants ${participants[first].element.id} and ${participants[second].element.id} overlap`));
+  }
+  for (let first = 0; first < nodes.length; first += 1) for (let second = first + 1; second < nodes.length; second += 1) {
+    if (boundaryAttachmentPair(nodes[first].element, nodes[second].element)) continue;
+    if (boundsOverlap(nodes[first].bounds, nodes[second].bounds)) findings.push(layoutWarning('layout.shape.overlap', nodes[first].element.id, `${nodes[first].element.id} overlaps ${nodes[second].element.id}`));
+  }
+
+  const validEdges = [];
+  const signatures = new Map();
+  for (const edge of edges) {
+    if (edge.waypoints.length < 2 || edge.waypoints.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+      findings.push(layoutError('layout.edge.invalid_waypoints', edge.element.id, `${edge.element.id} requires at least two finite numeric waypoints`));
+      continue;
+    }
+    const sourceId = edge.element.sourceRef?.id; const targetId = edge.element.targetRef?.id;
+    const source = shapes.get(sourceId); const target = shapes.get(targetId);
+    if (source && !pointOnBoundary(edge.waypoints[0], source.bounds)) findings.push(layoutError('layout.endpoint.detached', edge.element.id, `${edge.element.id} source waypoint is detached from ${sourceId}`));
+    if (target && !pointOnBoundary(edge.waypoints.at(-1), target.bounds)) findings.push(layoutError('layout.endpoint.detached', edge.element.id, `${edge.element.id} target waypoint is detached from ${targetId}`));
+    for (const obstacle of nodes) {
+      if ([sourceId, targetId].includes(obstacle.element.id)) continue;
+      if (routeIntersectsBounds(edge.waypoints, obstacle.bounds)) findings.push(layoutError('layout.route.through_shape', edge.element.id, `${edge.element.id} passes through ${obstacle.element.id}`, obstacle.element.id));
+    }
+    const signature = routeSignature(edge.waypoints);
+    if (signatures.has(signature)) findings.push(layoutWarning('layout.route.duplicate', edge.element.id, `${edge.element.id} duplicates route ${signatures.get(signature)}`, signatures.get(signature)));
+    else signatures.set(signature, edge.element.id);
+    validEdges.push(edge);
+  }
+  for (let first = 0; first < validEdges.length; first += 1) for (let second = first + 1; second < validEdges.length; second += 1) {
+    const left = validEdges[first]; const right = validEdges[second];
+    const leftEnds = new Set([left.element.sourceRef?.id, left.element.targetRef?.id]);
+    if ([right.element.sourceRef?.id, right.element.targetRef?.id].some((id) => leftEnds.has(id))) continue;
+    if (routesCross(left.waypoints, right.waypoints)) findings.push(layoutWarning('layout.route.crossing', left.element.id, `${left.element.id} crosses ${right.element.id}`, right.element.id));
+  }
+  return findings;
+}
+
+function isFlowNode(element) {
+  return element?.$type?.startsWith('bpmn:') && !['bpmn:Participant', 'bpmn:Lane', 'bpmn:Process', 'bpmn:Collaboration', 'bpmn:SequenceFlow', 'bpmn:MessageFlow'].includes(element.$type);
+}
+
+function owningProcess(element) {
+  let current = element;
+  while (current && current.$type !== 'bpmn:Process') current = current.$parent;
+  return current;
+}
+
+function boundaryAttachmentPair(first, second) {
+  return first.attachedToRef?.id === second.id || second.attachedToRef?.id === first.id;
+}
+
+function layoutError(code, element, message, relatedElement) {
+  return { layer: 'layout', severity: 'error', code, element, relatedElement, message };
+}
+
+function layoutWarning(code, element, message, relatedElement) {
+  return { layer: 'layout', severity: 'warning', code, element, relatedElement, message };
 }
 
 function engineFindings(model) {

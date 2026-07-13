@@ -60,6 +60,7 @@ function normalizeFinding(finding) {
     severity: finding.severity || 'warning',
     code: finding.code || 'unknown',
     element: finding.element,
+    relatedElement: finding.relatedElement,
     path: finding.path,
     message: finding.message || String(finding)
   };
@@ -68,7 +69,7 @@ function normalizeFinding(finding) {
 function dedupe(findings) {
   const seen = new Set();
   return findings.filter((finding) => {
-    const key = [finding.layer, finding.severity, finding.code, finding.element || '', finding.path || ''].join('|');
+    const key = [finding.layer, finding.severity, finding.code, finding.element || '', finding.relatedElement || '', finding.path || ''].join('|');
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

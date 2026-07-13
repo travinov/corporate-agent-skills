@@ -1,6 +1,6 @@
 {
   "name": "bpmn-architect-skill",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Corporate BPMN Architect skill with local BPMN 2.0 generation, layout, validation, and documentation toolchain.",
   "license": "MIT",

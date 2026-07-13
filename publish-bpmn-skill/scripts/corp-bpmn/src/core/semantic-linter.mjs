@@ -5,10 +5,37 @@ const END_TYPES = new Set(['endEvent']);
 const GATEWAY_TYPES = new Set(['exclusiveGateway', 'parallelGateway', 'inclusiveGateway', 'eventBasedGateway', 'complexGateway']);
 const USER_TYPES = new Set(['userTask']);
 const SERVICE_TYPES = new Set(['serviceTask']);
+const MESSAGE_SOURCE_TYPES = new Set(['sendTask', 'intermediateThrowEvent']);
+const MESSAGE_TARGET_TYPES = new Set(['receiveTask', 'intermediateCatchEvent']);
 
 export function lintProcessModel(model = {}) {
   const findings = [];
   for (const scope of processScopes(model)) findings.push(...lintScope(scope));
+  findings.push(...messageEndpointFindings(model));
+  return findings;
+}
+
+function messageEndpointFindings(model) {
+  if (model.schema_version !== 2) return [];
+  const scopes = new Map(processScopes(model).map((scope) => [scope.process.id, scope]));
+  const participants = new Map((model.participants || []).map((participant) => [participant.id, participant]));
+  const findings = [];
+  for (const flow of model.message_flows || []) {
+    for (const [field, eligible] of [['from', MESSAGE_SOURCE_TYPES], ['to', MESSAGE_TARGET_TYPES]]) {
+      const participant = participants.get(flow[field]);
+      if (!participant) continue;
+      const concrete = (scopes.get(participant.process_ref)?.nodes || []).some((node) => eligible.has(node.type));
+      if (!concrete) continue;
+      findings.push({
+        layer: 'semantics',
+        severity: 'warning',
+        code: 'semantic.message_endpoint.participant_ambiguous',
+        path: `/message_flows/${escapePointer(flow.id)}/${field}`,
+        element: participant.id,
+        message: `participant '${participant.id}' hides a concrete ${field === 'from' ? 'sending' : 'receiving'} activity in process '${participant.process_ref}'`
+      });
+    }
+  }
   return findings;
 }
 
@@ -184,4 +211,8 @@ function warn(code, message, element) {
 
 function info(code, message, element) {
   return { layer: 'semantics', severity: 'info', code, element, message };
+}
+
+function escapePointer(value) {
+  return String(value).replaceAll('~', '~0').replaceAll('/', '~1');
 }
