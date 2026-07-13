@@ -1,10 +1,8 @@
 ---
 name: bpmn-architect
-version: 0.2.0
 description: Use when the user asks to create, review, validate, edit, or document semantic BPMN 2.0 process models; convert text, SOPs, regulations, or workflow descriptions into editable .bpmn files; work with Camunda, Zeebe, Flowable, Activiti, bpmn.io, pools, lanes, gateways, events, tasks, sequence flows, message flows, boundary events, subprocesses, or BPMN validation. Produces process.yaml, process.bpmn, process.md, and validation-report.json through a local corp-bpmn CLI. Do not use for presentation-only process diagrams unless the user explicitly wants BPMN semantics.
 license: MIT
-compatibility: Requires Node.js 22+ recommended. Run `npm ci` in `scripts/corp-bpmn` before first CLI use.
-metadata: {"category":"process-modeling","tags":["bpmn","workflow","process","camunda","zeebe","bpmn-js","validation"],"requires_tools":["node","npm"],"local_first":true}
+metadata: {"version":"0.3.0","compatibility":"Requires Node.js 22+ recommended. Run `npm ci` in `scripts/corp-bpmn` before first CLI use.","category":"process-modeling","tags":["bpmn","workflow","process","camunda","zeebe","bpmn-js","validation"],"requires_tools":["node","npm"],"local_first":true}
 ---
 
 # BPMN Architect
@@ -53,6 +51,7 @@ Start every new model from the canonical skeleton in `references/process-yaml.md
 - Use schema v1 for one process and at most one participant/pool.
 - Use schema v2 when multiple participants own distinct processes and communicate with message flows.
 - Never represent multiple pools by attaching them to one v1 process. Ask for process ownership if it is unclear.
+- In v2, use concrete `sendTask`, `receiveTask`, intermediate throw, or intermediate catch node ids for message endpoints whenever they are known. Use participant ids only for black-box or genuinely unspecified interactions and record that assumption.
 - Write conditions as `{ body, language? }` objects and gateway defaults as outgoing sequence-flow ids.
 - Treat `unsupported` capability findings as blockers. A `partial` capability is allowed only when semantic round-trip passes; it fails strict mode and requires review.
 
@@ -105,10 +104,10 @@ Read these files only when needed:
 5. Choose v1 for a single process or v2 for real collaboration, then write a versioned `process.yaml` following `references/process-yaml.md`.
 6. Run:
    ```bash
-   node <skill-dir>/scripts/corp-bpmn/src/cli/index.mjs build path/to/process.yaml
+   node <skill-dir>/scripts/corp-bpmn/src/cli/index.mjs build path/to/process.yaml --strict
    ```
-7. Read `validation-report.json`, including `schema_version`, capability, and `round-trip` findings.
-8. If error-level findings exist, fix `process.yaml` and rebuild.
+7. Read `validation-report.json`, including `schema_version`, capability, `round-trip`, and every `layout.*` finding.
+8. If any strict blocker exists, including detached endpoints, routes through unrelated shapes, duplicate routes, crossings, or shapes outside their participant/lane, fix `process.yaml` or layout and rebuild.
 9. Report artifact paths, schema version, preservation status, and warnings. Do not claim completion until build and semantic round-trip validation pass.
 
 ## Setup

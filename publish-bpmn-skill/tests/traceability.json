@@ -1,11 +1,11 @@
 {
   "traceability_version": 1,
   "scenario_coverage": [
-    { "capability": "bpmn-architect-skill", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "build.test.mjs"], "docs": ["SKILL.md", "references/process-yaml.md"] },
-    { "capability": "bpmn-collaboration-v2", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "validation.test.mjs"], "docs": ["references/process-yaml.md"] },
+    { "capability": "bpmn-architect-skill", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "build.test.mjs", "collaboration-layout.test.mjs"], "docs": ["SKILL.md", "references/process-yaml.md"] },
+    { "capability": "bpmn-collaboration-v2", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "validation.test.mjs", "collaboration-layout.test.mjs"], "docs": ["references/process-yaml.md"] },
     { "capability": "bpmn-semantic-roundtrip", "scenarios": "all", "tests": ["contracts-v2.test.mjs"], "docs": ["references/bpmn-validation.md"] },
-    { "capability": "bpmn-validation-reporting", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "schema.test.mjs", "validation.test.mjs"], "docs": ["references/bpmn-validation.md"] },
-    { "capability": "corp-bpmn-cli", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "build.test.mjs"], "docs": ["README.md", "references/troubleshooting.md"] },
+    { "capability": "bpmn-validation-reporting", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "schema.test.mjs", "validation.test.mjs", "collaboration-layout.test.mjs"], "docs": ["references/bpmn-validation.md"] },
+    { "capability": "corp-bpmn-cli", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "build.test.mjs", "collaboration-layout.test.mjs"], "docs": ["README.md", "references/troubleshooting.md"] },
     { "capability": "process-yaml-model", "scenarios": "all", "tests": ["contracts-v2.test.mjs", "schema.test.mjs", "generation.test.mjs"], "docs": ["references/process-yaml.md", "references/bpmn-authoring.md"] }
   ],
   "evidence": [
@@ -25,6 +25,9 @@
     { "id": "generation:v1-participant", "test_file": "contracts-v2.test.mjs", "test": "generation and semantic projections are deterministic" },
     { "id": "generation:v2-collaboration", "test_file": "contracts-v2.test.mjs", "test": "v2 node and participant message flows preserve distinct process ownership" },
     { "id": "generation:v2-message-flow", "test_file": "contracts-v2.test.mjs", "test": "v2 node and participant message flows preserve distinct process ownership" },
+    { "id": "layout:v2-dense-collaboration", "test_file": "collaboration-layout.test.mjs", "test": "dense collaboration layout is deterministic, multi-level, contained, anchored, and obstacle-free" },
+    { "id": "layout:spatial-findings", "test_file": "collaboration-layout.test.mjs", "test": "artifact-only and source-aware validation preserve mutated DI spatial finding identity" },
+    { "id": "semantics:message-endpoint-ambiguity", "test_file": "collaboration-layout.test.mjs", "test": "concrete, participant, ambiguous, and ineligible message endpoints retain stable semantics" },
     { "id": "references:default-flow", "test_file": "schema.test.mjs", "test": "canonical v1 rejects an outgoing target node as a default reference" },
     { "id": "references:process-ownership", "test_file": "contracts-v2.test.mjs", "test": "v2 rejects missing or shared participant process ownership" },
     { "id": "roundtrip:boundary", "test_file": "contracts-v2.test.mjs", "test": "condition language, default flow, boundary attachment, and documentation round-trip" },

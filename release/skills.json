@@ -97,7 +97,7 @@
         "examples/**/*.yaml"
       ],
       "version_sources": [
-        {"path": "SKILL.md", "pattern": "(?m)^version:\\s*(\\S+)\\s*$"},
+        {"path": "SKILL.md", "pattern": "\"version\"\\s*:\\s*\"([^\"]+)\""},
         {"path": "metadata.md", "pattern": "(?m)^- Version:\\s*`?([^`\\s]+)`?\\s*$"},
         {"path": "package.json", "json_key": "version"},
         {"path": "scripts/corp-bpmn/package.json", "json_key": "version"}

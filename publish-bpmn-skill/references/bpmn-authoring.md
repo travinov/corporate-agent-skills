@@ -10,6 +10,7 @@ Default choices:
 - All branches in parallel: `parallelGateway`.
 - Roles in one organization/process: lanes.
 - Independent organizations/processes: participants/pools with message flows.
+- Known cross-pool interaction: connect the concrete sending/throwing activity to the concrete receiving/catching activity. Reserve participant endpoints for black boxes or unknown activities.
 
 ## Variants and Responsibility Partitions
 
@@ -44,6 +45,6 @@ Advanced constructs are allowed but not default:
 - `eventBasedGateway` when branches race on external events.
 - multi-process collaboration only through schema v2 with process-scoped elements and participant `process_ref`.
 
-The installed capability matrix is authoritative. In 0.2.0, ad-hoc subprocesses, choreography, conversation, data/artifact generation, and arbitrary engine extensions are unsupported and must fail before generation. A transaction is partial because it requires manual layout/engine review and therefore fails strict mode.
+The installed capability matrix is authoritative. In 0.3.0, ad-hoc subprocesses, choreography, conversation, data/artifact generation, and arbitrary engine extensions are unsupported and must fail before generation. A transaction is partial because it requires manual layout/engine review and therefore fails strict mode.
 
 When using an advanced construct, document why in `documentation.advanced_elements` or `documentation.assumptions`.

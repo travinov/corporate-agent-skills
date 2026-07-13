@@ -1,0 +1,83 @@
+schema_version: 2
+definitions:
+  id: dense-collaboration-definitions
+  name: Dense Collaboration Layout
+  target_namespace: http://corp.example/bpmn/dense-layout
+processes:
+  - id: client-process
+    name: Client Process
+    lanes:
+      - id: client-lane
+        name: Client
+    nodes:
+      - { id: client-start, type: startEvent, name: Start request, lane: client-lane }
+      - { id: client-send, type: sendTask, name: Send request, lane: client-lane }
+      - { id: client-receive, type: receiveTask, name: Receive response, lane: client-lane }
+      - { id: client-end, type: endEvent, name: Finish request, lane: client-lane }
+    flows:
+      - { id: client-flow-start, from: client-start, to: client-send }
+      - { id: client-flow-wait, from: client-send, to: client-receive }
+      - { id: client-flow-end, from: client-receive, to: client-end }
+  - id: service-process
+    name: Service Process
+    lanes:
+      - id: intake-lane
+        name: Intake
+      - id: execution-lane
+        name: Execution
+    nodes:
+      - { id: service-start, type: startEvent, name: Start service, lane: intake-lane }
+      - { id: service-receive, type: receiveTask, name: Receive request, lane: intake-lane }
+      - { id: choose-route, type: exclusiveGateway, name: Choose route?, lane: intake-lane, default: route-normal }
+      - { id: parallel-split, type: parallelGateway, name: Split work, lane: execution-lane }
+      - { id: branch-a, type: task, name: Process primary branch, lane: execution-lane }
+      - { id: branch-b, type: task, name: Process secondary branch, lane: execution-lane }
+      - { id: branch-timeout, type: boundaryEvent, name: Branch timeout, lane: execution-lane, attachedTo: branch-b, eventDefinition: timer }
+      - { id: branch-b-route, type: exclusiveGateway, name: Branch completed?, lane: execution-lane, default: branch-b-join }
+      - { id: parallel-join, type: parallelGateway, name: Join work, lane: execution-lane }
+      - { id: alternative-task, type: task, name: Process alternative, lane: execution-lane }
+      - { id: response-join, type: exclusiveGateway, name: Response joined?, lane: execution-lane }
+      - { id: service-send, type: sendTask, name: Send response, lane: execution-lane }
+      - { id: exception-join, type: exclusiveGateway, name: Exception joined?, lane: execution-lane }
+      - { id: exception-send, type: sendTask, name: Send exception, lane: execution-lane }
+      - { id: service-end, type: endEvent, name: Finish service, lane: execution-lane }
+      - { id: exception-end, type: endEvent, name: Finish exception, lane: execution-lane }
+    flows:
+      - { id: service-flow-start, from: service-start, to: service-receive }
+      - { id: service-flow-route, from: service-receive, to: choose-route }
+      - { id: route-normal, from: choose-route, to: parallel-split, label: Normal }
+      - id: route-alternative
+        from: choose-route
+        to: alternative-task
+        label: Alternative
+        condition: { body: alternative = true, language: FEEL }
+      - { id: split-a, from: parallel-split, to: branch-a }
+      - { id: split-b, from: parallel-split, to: branch-b }
+      - { id: branch-a-join, from: branch-a, to: parallel-join }
+      - { id: branch-b-route-flow, from: branch-b, to: branch-b-route }
+      - { id: branch-b-join, from: branch-b-route, to: parallel-join, label: Completed }
+      - id: branch-b-exception
+        from: branch-b-route
+        to: exception-join
+        label: Failed
+        condition: { body: failed = true, language: FEEL }
+      - { id: join-response, from: parallel-join, to: response-join }
+      - { id: alternative-response, from: alternative-task, to: response-join }
+      - { id: response-send, from: response-join, to: service-send }
+      - { id: response-end, from: service-send, to: service-end }
+      - { id: timeout-exception, from: branch-timeout, to: exception-join }
+      - { id: exception-dispatch, from: exception-join, to: exception-send }
+      - { id: exception-end-flow, from: exception-send, to: exception-end }
+participants:
+  - { id: client, name: Client, process_ref: client-process }
+  - { id: service, name: Service, process_ref: service-process }
+message_flows:
+  - { id: request-primary, from: client-send, to: service-receive, label: Primary request }
+  - { id: request-repeat, from: client-send, to: service-receive, label: Repeated request }
+  - { id: response-message, from: service-send, to: client-receive, label: Response }
+  - { id: exception-message, from: exception-send, to: client-receive, label: Exception }
+extensions: {}
+documentation:
+  purpose: Compact dense collaboration fixture for deterministic spatial tests.
+  assumptions:
+    - Concrete message activities are known and used as endpoints.

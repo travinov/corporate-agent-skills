@@ -20,6 +20,10 @@ Important codes include:
 - `capability.unsupported`, `capability.partial`;
 - `roundtrip.condition_missing`, `roundtrip.process_ownership`, and other `roundtrip.*` mismatches;
 - `migration.ambiguous_process_ownership`.
+- `layout.edge.invalid_waypoints`, `layout.endpoint.detached`, `layout.route.through_shape`;
+- `layout.shape.outside_pool`, `layout.shape.outside_lane`, `layout.shape.overlap`;
+- `layout.route.duplicate`, `layout.route.crossing`, `layout.pool.overlap`;
+- `semantic.message_endpoint.participant_ambiguous`.
 
 Normal mode allows warnings. `--strict` treats every warning as a failure, including partial capability, layout, bpmnlint, and engine warnings.
 
