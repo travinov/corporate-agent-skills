@@ -5,11 +5,32 @@ Builds two independent installable artifacts:
 - `dist/drawio-skill-agent-extension.zip`
 - `dist/bpmn-architect-skill.zip`
 
-Install either archive independently for GigaCode CLI:
+Install the Draw.io agent package as a native GigaCode extension. Do not unpack
+it into `skills`, because the agent extension and the legacy drawio skill would
+compete for the same requests:
+
+```bash
+chmod +x scripts/gigacode/*.sh
+scripts/gigacode/install_drawio_agent_extension.sh \
+  --archive dist/drawio-skill-agent-extension.zip \
+  --checksum dist/drawio-skill-agent-extension.zip.sha256
+scripts/gigacode/verify_drawio_agent_extension.sh
+```
+
+The installer defaults to `/Users/travinov-sv/.gigacode/bin/gigacode` through
+`$HOME/.gigacode`, backs up an active legacy skill/extension, validates the ZIP
+and calls native `gigacode extensions validate/install`. All paths can be
+overridden with the environment variables printed by `--help`. Roll back the
+latest installation with:
+
+```bash
+scripts/gigacode/rollback_drawio_agent_extension.sh --latest
+```
+
+The BPMN archive remains an independent skill:
 
 ```bash
 mkdir -p ~/.gigacode/skills
-unzip dist/drawio-skill-agent-extension.zip -d ~/.gigacode/skills
 unzip dist/bpmn-architect-skill.zip -d ~/.gigacode/skills
 ```
 

@@ -1,10 +1,10 @@
 {
   "reports": [
     {
-      "archive": "bpmn-architect-skill.zip",
-      "files": 69,
-      "sha256": "8e6ea728e0fb0889631f6142173ccc0b6d47cc5d842e86ebbeadbc65b0d6014a",
-      "skill": "bpmn",
+      "archive": "drawio-skill-agent-extension.zip",
+      "files": 130,
+      "sha256": "bf7ff8b1857b5d8c9ed3819343ad7eb3e6d7ca7936e8b4b9e7b591ccbb4698bc",
+      "skill": "drawio",
       "status": "passed"
     }
   ],

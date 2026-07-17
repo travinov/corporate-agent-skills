@@ -28,18 +28,43 @@ shasum -a 256 -c SHA256SUMS.txt
 
 ## Установка в GigaCode CLI
 
+Агентная версия Draw.io устанавливается как **extension**, а не копируется в
+`~/.gigacode/skills`. Установщик использует корпоративный CLI
+`/Users/travinov-sv/.gigacode/bin/gigacode`, проверяет SHA-256 и manifest,
+переносит прежний `~/.gigacode/skills/drawio-skill` в backup вне активных
+каталогов и вызывает native `extensions validate/install`.
+
+На корпоративном ноутбуке из клона репозитория:
+
 ```bash
-mkdir -p ~/.gigacode/skills
-unzip dist/drawio-skill-agent-extension.zip -d ~/.gigacode/skills
-unzip dist/bpmn-architect-skill.zip -d ~/.gigacode/skills
+chmod +x scripts/gigacode/*.sh
+scripts/gigacode/install_drawio_agent_extension.sh \
+  --archive dist/drawio-skill-agent-extension.zip \
+  --checksum dist/drawio-skill-agent-extension.zip.sha256
 ```
 
-Зависимости Draw.io extension:
+Если GitHub доступен, достаточно перенести только каталог `scripts/gigacode` и
+запустить установщик без `--archive`: он загрузит ZIP и checksum из этой ветки.
+Для полностью офлайн-установки перенесите на корпоративный ноутбук три скрипта,
+ZIP и соседний `.zip.sha256`.
+
+Проверка и откат:
 
 ```bash
-cd ~/.gigacode/skills/drawio-skill
-python3 -m pip install -r requirements.lock.txt
-python3 scripts/self_check.py
+scripts/gigacode/verify_drawio_agent_extension.sh
+scripts/gigacode/rollback_drawio_agent_extension.sh --latest
+```
+
+После перезапуска GigaCode команда `/agents list` должна показать четыре
+`diagram-*` агента. Реальный запуск выполняется только на ноутбуке, где
+установлен GigaCode CLI; локальные тесты репозитория используют fake CLI и не
+изменяют `~/.gigacode`.
+
+BPMN-пакет остается отдельным skill и устанавливается независимо:
+
+```bash
+mkdir -p ~/.gigacode/skills
+unzip dist/bpmn-architect-skill.zip -d ~/.gigacode/skills
 ```
 
 Зависимости BPMN extension:

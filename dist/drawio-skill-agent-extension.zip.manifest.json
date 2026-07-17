@@ -1,7 +1,7 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "f14b64d1546a543159bcc985b46a9fbf419ba623b30bcc12b0b7a67a63eed3c4",
+  "archive_sha256": "bf7ff8b1857b5d8c9ed3819343ad7eb3e6d7ca7936e8b4b9e7b591ccbb4698bc",
   "files": [
     {
       "path": "DEPENDENCIES.md",
@@ -20,8 +20,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "a1ce092b8f00d89827a6c429418886eee1f2b8a4f7ff3edfdfe166bf52507809",
-      "size": 14145
+      "sha256": "5bc3052805e1fb92136456d6aef09f6138b90525e27ee9aea891c598db3eac2a",
+      "size": 15104
     },
     {
       "path": "SKILL.md",
@@ -160,8 +160,8 @@
     },
     {
       "path": "metadata.md",
-      "sha256": "b24117400c6d10b76434162ea54f6698462f39017df531c75c4eb5ef100e271b",
-      "size": 3482
+      "sha256": "751a498c19b1273e19c1bf4d8c595f3e051066618b8adf85c222ba999b4331ff",
+      "size": 3858
     },
     {
       "path": "references/autolayout.md",
