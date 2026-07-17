@@ -122,6 +122,34 @@ extensions_list_contains() {
   "$GIGACODE_BIN" extensions list 2>/dev/null | grep -Fq "$EXTENSION_NAME"
 }
 
+extensions_supports_validate() {
+  local help_text
+  help_text="$("$GIGACODE_BIN" extensions --help 2>&1 || true)"
+
+  if grep -Eq '^[[:space:]]*gigacode[[:space:]]+extensions[[:space:]]+validate([[:space:]<]|$)' <<<"$help_text"; then
+    return 0
+  fi
+
+  # A populated command listing is authoritative. Do not probe an unknown
+  # subcommand because some yargs-based CLIs return success when --help is set.
+  if grep -Eq '^[[:space:]]*(Commands:|gigacode[[:space:]]+extensions[[:space:]]+<command>)' <<<"$help_text"; then
+    return 1
+  fi
+
+  # Older/forked CLIs may not expose a parent command listing.
+  "$GIGACODE_BIN" extensions validate --help >/dev/null 2>&1
+}
+
+native_validate() {
+  local source_path="$1"
+  if extensions_supports_validate; then
+    log "Validating extension with the corporate GigaCode CLI"
+    run "$GIGACODE_BIN" extensions validate "$source_path"
+  else
+    log "Native 'extensions validate' is unavailable; continuing with package integrity, registration, and self-check validation"
+  fi
+}
+
 native_uninstall() {
   local help_text args=(extensions uninstall "$EXTENSION_NAME")
   help_text="$($GIGACODE_BIN extensions uninstall --help 2>&1 || true)"
@@ -340,6 +368,8 @@ for current, directories, files in os.walk(root, followlinks=False):
         relative = candidate.relative_to(root).as_posix()
         if candidate.is_symlink():
             raise SystemExit(f"Extracted file must not be a symlink: {relative}")
+        if filename == ".DS_Store":
+            continue
         actual_files.add(relative)
 
 missing = sorted(set(expected) - actual_files)
@@ -432,8 +462,7 @@ PY
 [[ -n "$manifest_version" ]] || die "Extension version is missing"
 [[ "$manifest_version" == "$DEFAULT_VERSION" ]] || die "Unexpected extension version: $manifest_version"
 
-log "Validating extension with the corporate GigaCode CLI"
-"$GIGACODE_BIN" extensions validate "$extension_root"
+native_validate "$extension_root"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_path="$GIGACODE_BACKUP_DIR/$timestamp"

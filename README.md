@@ -33,7 +33,8 @@ shasum -a 256 -c SHA256SUMS.txt
 `/Users/travinov-sv/.gigacode/bin/gigacode`, проверяет полный внутренний
 manifest распакованной поставки (а в режиме `--archive` также SHA-256 ZIP),
 переносит прежний `~/.gigacode/skills/drawio-skill` в backup вне активных
-каталогов и вызывает native `extensions validate/install`.
+каталогов, вызывает native `extensions install`, а `extensions validate`
+запускает только в тех версиях GigaCode, где эта команда доступна.
 
 Для корпоративного ноутбука без доступа к GitHub перенесите только ZIP,
 распакуйте его в `Downloads` и запустите вложенный установщик:

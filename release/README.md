@@ -19,7 +19,8 @@ chmod +x install/*.sh
 The installer defaults to `/Users/travinov-sv/.gigacode/bin/gigacode` through
 `$HOME/.gigacode`, backs up an active legacy skill/extension, validates the
 complete internal manifest of the extracted package, and calls native
-`gigacode extensions validate/install`. All paths can be
+`gigacode extensions install` and, when supported by the installed CLI,
+`gigacode extensions validate`. All paths can be
 overridden with the environment variables printed by `--help`. Roll back the
 latest installation with:
 

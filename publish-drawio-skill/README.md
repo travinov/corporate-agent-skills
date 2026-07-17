@@ -101,8 +101,8 @@ chmod +x install/*.sh
 ```
 
 Перед установкой он сверяет полный внутренний manifest распакованной поставки и
-обязательные файлы, запускает
-native `gigacode extensions validate`, сохраняет предыдущий skill/extension в
+обязательные файлы, запускает native `gigacode extensions validate`, если эта
+команда доступна в установленной версии CLI, сохраняет предыдущий skill/extension в
 `~/.gigacode/backups/drawio-agent-extension`, убирает конфликтующий legacy
 `drawio-skill` из активного `skills` и вызывает native `extensions install`.
 Вложенный установщик автоматически использует окружающую распакованную папку;

@@ -25,11 +25,21 @@ printf '\n' >>"$log"
 
 if [[ "${1:-}" != extensions ]]; then exit 2; fi
 case "${2:-}" in
+  --help)
+    printf 'gigacode extensions <command>\nCommands:\n'
+    printf '  gigacode extensions install <source>\n'
+    printf '  gigacode extensions list\n'
+    if [[ "${FAKE_GIGACODE_SUPPORTS_VALIDATE:-1}" == 1 ]]; then
+      printf '  gigacode extensions validate <source>\n'
+    fi
+    ;;
   list)
     [[ -f "$registry" ]] && cat "$registry"
     ;;
   validate)
+    [[ "${FAKE_GIGACODE_SUPPORTS_VALIDATE:-1}" == 1 ]] || exit 2
     [[ "${3:-}" == --help ]] && exit 0
+    [[ "${FAKE_GIGACODE_FAIL_VALIDATE:-0}" == 1 ]] && exit 43
     [[ -f "${3:?}/gemini-extension.json" ]]
     ;;
   install)
@@ -141,6 +151,70 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(1, len(backups))
         self.assertEqual("old", (backups[0] / "legacy-skill" / "legacy.txt").read_text())
         self.run_script("verify_drawio_agent_extension.sh", "--skip-self-check")
+        self.assertIn(
+            "extensions validate", (self.root / "gigacode.log").read_text()
+        )
+
+    def test_install_falls_back_when_native_validate_is_unavailable(self) -> None:
+        self.env["FAKE_GIGACODE_SUPPORTS_VALIDATE"] = "0"
+
+        result = self.install()
+
+        self.assertIn("Native 'extensions validate' is unavailable", result.stdout)
+        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.1", result.stdout)
+        self.assertTrue(
+            (self.home / "extensions" / "publish-drawio-skill" / "gemini-extension.json").is_file()
+        )
+        log = (self.root / "gigacode.log").read_text()
+        self.assertNotIn("extensions validate", log)
+
+        verify = self.run_script(
+            "verify_drawio_agent_extension.sh", "--skip-self-check"
+        )
+        self.assertIn("package integrity and registration checks remain active", verify.stdout)
+
+    def test_dry_run_falls_back_without_native_validate_or_mutation(self) -> None:
+        self.env["FAKE_GIGACODE_SUPPORTS_VALIDATE"] = "0"
+
+        result = self.run_script(
+            "install_drawio_agent_extension.sh",
+            "--archive",
+            str(self.archive),
+            "--checksum",
+            str(self.checksum),
+            "--skip-deps",
+            "--dry-run",
+        )
+
+        self.assertIn("Native 'extensions validate' is unavailable", result.stdout)
+        self.assertFalse((self.home / "extensions").exists())
+        self.assertFalse((self.home / "extension-sources").exists())
+        self.assertFalse((self.home / "backups").exists())
+
+    def test_native_validate_failure_stops_before_mutation(self) -> None:
+        legacy = self.home / "skills" / "drawio-skill"
+        legacy.mkdir(parents=True)
+        (legacy / "keep.txt").write_text("keep", encoding="utf-8")
+        self.env["FAKE_GIGACODE_FAIL_VALIDATE"] = "1"
+
+        result = self.run_script(
+            "install_drawio_agent_extension.sh",
+            "--archive",
+            str(self.archive),
+            "--checksum",
+            str(self.checksum),
+            "--skip-deps",
+            check=False,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertTrue((legacy / "keep.txt").is_file())
+        self.assertFalse((self.home / "extensions").exists())
+        self.assertFalse((self.home / "extension-sources").exists())
+        self.assertFalse((self.home / "backups").exists())
+        log = (self.root / "gigacode.log").read_text()
+        self.assertIn("extensions validate", log)
+        self.assertNotIn("extensions install", log)
 
     def test_rollback_restores_legacy_skill(self) -> None:
         legacy = self.home / "skills" / "drawio-skill"
@@ -303,6 +377,16 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Extracted inventory mismatch", result.stdout)
         self.assertIn("unexpected.txt", result.stdout)
         self.assertFalse((self.home / "extensions").exists())
+
+    def test_bundled_installer_ignores_macos_ds_store_metadata(self) -> None:
+        extension = self.extract_bundle("macos-metadata")
+        (extension / ".DS_Store").write_bytes(b"finder metadata")
+        (extension / "assets" / ".DS_Store").write_bytes(b"nested finder metadata")
+
+        result = self.run_bundled(extension, "--skip-deps")
+
+        self.assertEqual(0, result.returncode, result.stdout)
+        self.assertIn("Installed publish-drawio-skill", result.stdout)
 
     def test_bundled_installer_rejects_removed_or_duplicate_manifest_entry(self) -> None:
         for case in ("removed", "duplicate"):

@@ -27,13 +27,15 @@ chmod +x install/*.sh
 When started from `drawio-skill/install`, the installer automatically uses the
 surrounding extracted extension and performs no GitHub download. An explicit
 extracted path is also supported with `--source /path/to/drawio-skill`.
+Finder-created `.DS_Store` metadata is ignored during the strict inventory check.
 The dependency step may still contact the Python package registry already
 configured by the corporate environment.
 
 Use `--skip-deps` only if the locked Python dependencies are already installed
 or the corporate Python environment is managed separately. Use `--dry-run` to
-validate the complete internal manifest and invoke native GigaCode validation,
-then show all later filesystem/install actions without executing them.
+validate the complete internal manifest, invoke native GigaCode validation when
+the installed CLI supports it, then show all later filesystem/install actions
+without executing them.
 
 ## Verification and rollback
 

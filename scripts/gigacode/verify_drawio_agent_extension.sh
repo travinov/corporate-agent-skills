@@ -24,6 +24,21 @@ EOF
 log() { printf '[drawio-extension:verify] %s\n' "$*"; }
 die() { printf '[drawio-extension:verify] ERROR: %s\n' "$*" >&2; exit 1; }
 
+extensions_supports_validate() {
+  local help_text
+  help_text="$("$GIGACODE_BIN" extensions --help 2>&1 || true)"
+
+  if grep -Eq '^[[:space:]]*gigacode[[:space:]]+extensions[[:space:]]+validate([[:space:]<]|$)' <<<"$help_text"; then
+    return 0
+  fi
+
+  if grep -Eq '^[[:space:]]*(Commands:|gigacode[[:space:]]+extensions[[:space:]]+<command>)' <<<"$help_text"; then
+    return 1
+  fi
+
+  "$GIGACODE_BIN" extensions validate --help >/dev/null 2>&1
+}
+
 while (($#)); do
   case "$1" in
     --source) [[ $# -ge 2 ]] || die "--source requires PATH"; source_path="$2"; shift 2 ;;
@@ -69,8 +84,12 @@ fi
 list_output="$($GIGACODE_BIN extensions list 2>&1)" || die "GigaCode extensions list failed: $list_output"
 grep -Fq "$EXTENSION_NAME" <<<"$list_output" || die "$EXTENSION_NAME is absent from GigaCode extensions list"
 
-log "Running native GigaCode extension validation"
-"$GIGACODE_BIN" extensions validate "$source_path"
+if extensions_supports_validate; then
+  log "Running native GigaCode extension validation"
+  "$GIGACODE_BIN" extensions validate "$source_path"
+else
+  log "Native 'extensions validate' is unavailable; package integrity and registration checks remain active"
+fi
 
 if (( ! skip_self_check )); then
   [[ -f "$source_path/scripts/self_check.py" ]] || die "Missing scripts/self_check.py"
