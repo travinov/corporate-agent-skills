@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
 ARCHIVE_NAME="drawio-skill-agent-extension.zip"
-DEFAULT_VERSION="1.22.0-corporate.4"
-DEFAULT_BRANCH="codex/drawio-command-orchestrator-v1.22.0-corporate.4"
+DEFAULT_VERSION="1.22.0-corporate.5"
+DEFAULT_BRANCH="codex/drawio-review-runtime-fixes-v1.22.0-corporate.5"
 DEFAULT_BASE_URL="https://raw.githubusercontent.com/travinov/corporate-agent-skills/refs/heads/${DEFAULT_BRANCH}/dist"
 
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
@@ -321,7 +321,7 @@ if [[ -n "$source_dir" ]]; then
     agents/diagram-reviewer.md \
     agents/diagram-repair.md \
     agents/diagram-semantic-analyst.md \
-    commands/drawio/review.toml \
+    commands/drawio/review.md \
     scripts/diagram_host.py; do
     [[ -f "$extension_root/$required" ]] || die "Extracted extension is missing: $required"
   done
@@ -429,7 +429,7 @@ required = {
     "drawio-skill/agents/diagram-reviewer.md",
     "drawio-skill/agents/diagram-repair.md",
     "drawio-skill/agents/diagram-semantic-analyst.md",
-    "drawio-skill/commands/drawio/review.toml",
+    "drawio-skill/commands/drawio/review.md",
     "drawio-skill/scripts/diagram_host.py",
 }
 with zipfile.ZipFile(archive) as zf:
@@ -492,11 +492,11 @@ log "Installing extension through the corporate GigaCode CLI"
 native_install "$current_source"
 
 verify_script="$(cd "$(dirname "$0")" && pwd)/verify_drawio_agent_extension.sh"
-if [[ -x "$verify_script" ]]; then
+if [[ -f "$verify_script" ]]; then
   if (( skip_deps )); then
-    run "$verify_script" --skip-self-check
+    run /bin/bash "$verify_script" --skip-self-check
   else
-    run "$verify_script"
+    run /bin/bash "$verify_script"
   fi
 else
   log "Verifier script not found beside installer; checking native registration only"

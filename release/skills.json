@@ -20,7 +20,7 @@
         "ORIGIN.md",
         "LICENSE",
         "gemini-extension.json",
-        "commands/**/*.toml",
+        "commands/drawio/review.md",
         "agents/*.md",
         "requirements.txt",
         "requirements.lock.txt",

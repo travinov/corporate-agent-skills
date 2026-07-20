@@ -246,6 +246,9 @@ class ReleaseSkillsTests(unittest.TestCase):
 
     def test_production_drawio_release_has_self_contained_installer_contract(self):
         config = release.load_config(ROOT / "release" / "skills.json")
+        includes = config["skills"]["drawio"]["include"]
+        self.assertIn("commands/drawio/review.md", includes)
+        self.assertNotIn("commands/**/*.toml", includes)
         mappings = {
             item["destination"]: item["source"]
             for item in config["skills"]["drawio"]["extra_files"]

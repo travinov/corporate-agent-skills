@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.22.0-corporate.4}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.22.0-corporate.5}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -115,14 +115,18 @@ def frontmatter(path):
     return values
 
 
+COMMAND_FILE = "commands/drawio/review.md"
+
+
 def verify_tree(root, label):
     for relative in (
-        "commands/drawio/review.toml",
         "scripts/diagram_host.py",
         "data/reviewer-audit-input.v1.schema.json",
     ):
         if not (root / relative).is_file():
             fail(f"Missing {label} command host file: {relative}")
+    if not (root / COMMAND_FILE).is_file():
+        fail(f"Missing {label} command host file: {COMMAND_FILE}")
     manifest = load_json(root / "gemini-extension.json")
     if manifest.get("name") != "publish-drawio-skill":
         fail(f"Unexpected {label} manifest name: {manifest.get('name')!r}")
@@ -227,8 +231,9 @@ if source:
         fail("Active/source mismatch: MANIFEST.sha256")
 for root, label in ((reference, "source" if source else "active"), (active, "active")):
     actual = payload_inventory(root)
-    missing = sorted(set(entries) - actual)
-    extra = sorted(actual - set(entries))
+    expected = set(entries)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
     if missing or extra:
         fail(f"{label.capitalize()} inventory mismatch: missing={missing}, extra={extra}")
     for relative, digest in entries.items():

@@ -67,6 +67,12 @@ The command creates `.diagram-runs/<run-id>` itself. Do not create that
 directory manually and do not ask the chat model to execute the workflow step
 by step.
 
+The package uses Qwen Code's canonical Markdown command format at
+`commands/drawio/review.md`. The active command therefore remains covered by
+the package manifest's exact checksum instead of relying on a TOML migration.
+The installer invokes the bundled verifier through `/bin/bash`, so Finder/ZIP
+executable-bit loss does not skip verification.
+
 For a real diagram task, the main interactive GigaChat session owns execution;
 it does not send the whole workflow to native `diagram-supervisor`. A successful
 run creates `.diagram-runs/<run-id>/host-preflight.json`,

@@ -79,6 +79,12 @@ Use a bounded timeout, explicit working directory, captured stdout/stderr, and a
 
 Publish role output atomically only after the process exits successfully and its JSON conforms to the role schema: Reviewer uses `reviewer-verdict.v1.schema.json`, Repair uses `diagram-patch.v1.schema.json`, and Supervisor/Semantic Analyst use `agent-role-output.v1.schema.json`. GigaCode JSON output is an event array: require one consistent primary model in the `system` init event, every assistant message, and `result.stats.models`; extract and JSON-decode the final result payload. Stock Gemini JSON output is an outer envelope: reject non-empty `error`/`errors`, extract and JSON-decode `response`, then validate only that inner role payload. Preserve redacted runtime stats/errors as evidence, not as the verdict. Direct top-level role JSON may be parsed for compatibility but cannot publish a successful isolated role because it lacks model proof. On timeout, non-zero exit, invalid output, missing proof, or model mismatch, append `role_failed`; do not create the output file, `model_resolved`, `review_verdict`, or `patch_proposed` success events.
 
+Some approved models wrap an otherwise valid role object in exactly one
+Markdown `json` fence. The adapter may unwrap that single fence only when the
+entire payload consists of the fence and one JSON object. Prose outside the
+fence, multiple fences, an unterminated fence, schema-invalid JSON, or missing
+model proof still fails closed.
+
 ### Inherited-model degradation
 
 If neither native override nor isolated invocation is available, or the requested isolated model is explicitly reported unavailable, run the role with the current session model without changing it. Set `resolution_mode` to `inherited_current`, set `fallback_used` to `true`, and record why the requested model was unavailable. Record the actual current model and provider; use provider `unknown` when the runtime cannot report it, never the requested provider.

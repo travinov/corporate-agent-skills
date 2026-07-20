@@ -1,7 +1,7 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "680fdb62c7265e0abe4bc1f08f0d20a30628d14d92a7280934bfb1f42f4f4c16",
+  "archive_sha256": "1ccb6d883975997fbc16b2bfa74067bcd7c47304f0f8bf20e05515681a3b91b1",
   "files": [
     {
       "path": "DEPENDENCIES.md",
@@ -25,8 +25,8 @@
     },
     {
       "path": "SKILL.md",
-      "sha256": "dd47ad78ff030a27735bfe43d36963bed99c272895b231333262729029fafa59",
-      "size": 43881
+      "sha256": "dd4070fd2739144ad2726eaf6ed55865daddac5ffc73279b80733eefe20a3b5c",
+      "size": 43877
     },
     {
       "path": "agents/diagram-repair.md",
@@ -59,9 +59,9 @@
       "size": 126730
     },
     {
-      "path": "commands/drawio/review.toml",
-      "sha256": "6c49ccb3859859fc0e3704c75a017ab413352398cb4c63e3693eb9b380145936",
-      "size": 1107
+      "path": "commands/drawio/review.md",
+      "sha256": "b08486f75b40d954cc49523f80576b3dfd897fe8341cf78bbe764682aba9dbc3",
+      "size": 1025
     },
     {
       "path": "config.example.json",
@@ -165,18 +165,18 @@
     },
     {
       "path": "gemini-extension.json",
-      "sha256": "24abe9a07b9d39796a3052b241ac29b8281e264eea6e092b2214b2deb9912294",
+      "sha256": "c2eb3f6c2bf3bbf613538edbe5bf08458b525f0d03c3f201a580ff364ca0a9a3",
       "size": 284
     },
     {
       "path": "install/README.md",
-      "sha256": "4b2dc5b847ea43199ee4c6abfb2e1c1187b7f848e5111f5dc968b66c540a8e89",
-      "size": 3066
+      "sha256": "64ab7a53a3a16c7811372459b3102d85f7e98db0a93b137acf28ab1e83b0d417",
+      "size": 3414
     },
     {
       "path": "install/install_drawio_agent_extension.sh",
-      "sha256": "120736693c3b3026e7ffbed61d985d00d5ed44ca8d621e3b07f76c4b252f4a58",
-      "size": 19219
+      "sha256": "3a8237fd56f0b03c7160560adc9e42088c0c562f209d284cab0959a1f0b713c6",
+      "size": 19235
     },
     {
       "path": "install/rollback_drawio_agent_extension.sh",
@@ -185,12 +185,12 @@
     },
     {
       "path": "install/verify_drawio_agent_extension.sh",
-      "sha256": "31933dfd868a0cd3db1d0989cbcbadde642c583838fadf390190e6955aacdb23",
-      "size": 11124
+      "sha256": "6d81d7c611064d19ab8f56a225dc4b03ec2232bd3a69c815a80390e137972699",
+      "size": 11261
     },
     {
       "path": "metadata.md",
-      "sha256": "8f894a5debff2f7bb598504f108db6d2dc77c71410ae6c1357f925af1c41a4e2",
+      "sha256": "c0c7dd32eff012825eff76ffa751c85ea7c93d6d32e92fe41075b096d6ea6f0e",
       "size": 3987
     },
     {
@@ -225,8 +225,8 @@
     },
     {
       "path": "references/model-routing.md",
-      "sha256": "4022a35750ed562793cb0c624b2a2a71cf53e109ac3e1d57ca5f8d45c18fba25",
-      "size": 9321
+      "sha256": "7876263982db03266c091155203e83d508cf981b34a9523d915a5a3a05a6fb79",
+      "size": 9659
     },
     {
       "path": "references/roadmap.md",
@@ -270,8 +270,8 @@
     },
     {
       "path": "scripts/agent_runtime.py",
-      "sha256": "5dcca568ddf21fb64e4b488d3f02d22a334f39254224a12108b47c549e02c7f7",
-      "size": 19626
+      "sha256": "99702d00b28678476c76cdc353278e8ffa4a9ee949fb236c1166d17cce278f68",
+      "size": 20250
     },
     {
       "path": "scripts/aiicons.py",
@@ -640,8 +640,8 @@
     },
     {
       "path": "tests/test_contract_docs.py",
-      "sha256": "4106f843e57353b5eafd0928f92acd9a71dbbdd9b16f8ad36d8f3db31fd76f02",
-      "size": 3372
+      "sha256": "3b2343942df46fb8015777fd24a4635ec1bdebed2b8d62422a9308a36c45b168",
+      "size": 3370
     },
     {
       "path": "tests/test_contracts.py",
@@ -650,13 +650,13 @@
     },
     {
       "path": "tests/test_diagram_host.py",
-      "sha256": "a5bafd80a7a19a0eb18c4917bf7314a77e318bb79f72793fd2a8d21fbe80b9e6",
-      "size": 8991
+      "sha256": "0cf5f8a91c8fdd33d8e7e0f8a8bc49840fa0b523ddef48ed8d147f4b8753d22d",
+      "size": 8987
     },
     {
       "path": "tests/test_diagram_supervisor.py",
-      "sha256": "be9f550b37f700e6055051c6c2e18d97e50eec9a7525765801238719310b5cfd",
-      "size": 114932
+      "sha256": "5be5cadab3efe11c10be0e97b477a90a23b96aa309b32e62047fecbb32537cee",
+      "size": 116226
     },
     {
       "path": "tests/test_finding_fixtures.py",
@@ -696,19 +696,19 @@
   ],
   "format_version": 1,
   "skill": "drawio",
-  "version": "1.22.0-corporate.4",
+  "version": "1.22.0-corporate.5",
   "version_sources": [
     {
       "path": "SKILL.md",
-      "value": "1.22.0-corporate.4"
+      "value": "1.22.0-corporate.5"
     },
     {
       "path": "metadata.md",
-      "value": "1.22.0-corporate.4"
+      "value": "1.22.0-corporate.5"
     },
     {
       "path": "gemini-extension.json",
-      "value": "1.22.0-corporate.4"
+      "value": "1.22.0-corporate.5"
     }
   ]
 }

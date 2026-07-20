@@ -3,7 +3,6 @@ import json
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -123,8 +122,8 @@ class DiagramHostTests(unittest.TestCase):
             self.assertFalse((workspace / ".diagram-runs").exists())
 
     def test_qwen_extension_command_executes_host_before_model_prompt(self):
-        command = tomllib.loads((ROOT / "commands" / "drawio" / "review.toml").read_text(encoding="utf-8"))
-        prompt = command["prompt"]
+        prompt = (ROOT / "commands" / "drawio" / "review.md").read_text(encoding="utf-8")
+        self.assertTrue(prompt.startswith("---\ndescription:"))
         self.assertIn("!{PYTHON=python3", prompt)
         self.assertIn("scripts/diagram_host.py", prompt)
         self.assertIn("--artifact {{args}}", prompt)

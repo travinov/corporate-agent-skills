@@ -101,8 +101,24 @@ def _parse_json_role_text(role, value, source):
         return value
     if not isinstance(value, str):
         raise SupervisorError(f"isolated {role} {source} must be a JSON object or encoded JSON string")
+    stripped = value.strip()
+    if stripped.startswith("```") or stripped.endswith("```"):
+        fenced = re.fullmatch(
+            r"```(?:json)?[ \t]*\r?\n(?P<payload>[\s\S]*?)\r?\n```",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if not fenced:
+            raise SupervisorError(
+                f"isolated {role} {source} has an ambiguous Markdown JSON fence"
+            )
+        stripped = fenced.group("payload").strip()
+        if "```" in stripped:
+            raise SupervisorError(
+                f"isolated {role} {source} has an ambiguous Markdown JSON fence"
+            )
     try:
-        parsed = json.loads(value)
+        parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise SupervisorError(f"isolated {role} {source} is not role JSON: {exc}") from exc
     if not isinstance(parsed, dict):

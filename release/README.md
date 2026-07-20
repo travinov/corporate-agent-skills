@@ -43,7 +43,7 @@ extension host. It performs deterministic `host-preflight` and invokes isolated
 Reviewer/Repair/Semantic Analyst roles itself; native `diagram-supervisor` is
 planning-only and is not validation evidence.
 
-The packaged `commands/drawio/review.toml` exposes the deterministic entry point:
+The packaged `commands/drawio/review.md` exposes the deterministic entry point:
 
 ```text
 /drawio:review "/absolute/path/to/diagram.drawio"

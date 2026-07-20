@@ -69,7 +69,7 @@ class ContractDocumentationTests(unittest.TestCase):
         workflow = self.read("references/diagram-supervisor.md")
         for text in (skill, readme, workflow):
             self.assertIn("/drawio:review", text)
-        self.assertIn("commands/drawio/review.toml", skill)
+        self.assertIn("commands/drawio/review.md", skill)
         self.assertIn("scripts/diagram_host.py", skill)
 
 

@@ -1623,6 +1623,34 @@ class AgentRuntimeTests(unittest.TestCase):
             fallback_metadata["reported_model"], "vllm/DeepSeek-V4-Flash-262k"
         )
 
+    def test_gigacode_event_parser_accepts_one_markdown_fenced_json_object(self):
+        verdict = self.reviewer_verdict("fenced-proof")
+        events = self.gigacode_events(verdict)
+        events[-1]["result"] = "\n\n```json\n" + json.dumps(verdict) + "\n```\n"
+
+        parsed, metadata = agent_runtime.parse_runtime_output(
+            "reviewer", json.dumps(events)
+        )
+
+        self.assertEqual(parsed, verdict)
+        self.assertTrue(metadata["model_proof"]["verified"])
+
+    def test_gigacode_event_parser_rejects_ambiguous_markdown_payloads(self):
+        verdict = self.reviewer_verdict("ambiguous-proof")
+        encoded = json.dumps(verdict)
+        cases = {
+            "prose-before-fence": f"Here is the result:\n```json\n{encoded}\n```",
+            "multiple-fences": f"```json\n{encoded}\n```\n```json\n{encoded}\n```",
+            "unterminated-fence": f"```json\n{encoded}",
+        }
+        for name, payload in cases.items():
+            events = self.gigacode_events(verdict)
+            events[-1]["result"] = payload
+            with self.subTest(case=name), self.assertRaisesRegex(
+                supervisor.SupervisorError, "ambiguous Markdown JSON fence"
+            ):
+                agent_runtime.parse_runtime_output("reviewer", json.dumps(events))
+
     def test_gigacode_event_parser_rejects_incomplete_or_ambiguous_model_proof(self):
         verdict = self.reviewer_verdict()
         base = self.gigacode_events(verdict)
