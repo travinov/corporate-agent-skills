@@ -42,6 +42,7 @@
         "scripts/diagram_supervisor.py",
         "scripts/diagram_host.py",
         "scripts/diagram_orchestrator.py",
+        "scripts/command_ux.py",
         "scripts/encode_drawio_url.py",
         "scripts/export_smoke.py",
         "scripts/gitflow.py",

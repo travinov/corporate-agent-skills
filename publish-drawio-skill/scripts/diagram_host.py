@@ -13,6 +13,7 @@ from pathlib import Path
 import jsonschema
 
 import agent_runtime
+import command_ux
 import diagram_supervisor as supervisor
 
 
@@ -201,7 +202,8 @@ def main():
     parser = argparse.ArgumentParser(description="Deterministic Draw.io extension command host")
     sub = parser.add_subparsers(dest="command", required=True)
     review = sub.add_parser("review", help="run strict validation and isolated independent review")
-    review.add_argument("--artifact", required=True)
+    review.add_argument("artifact_positional", nargs="?")
+    review.add_argument("--artifact")
     review.add_argument("--workspace", default=str(Path.cwd()))
     review.add_argument("--cli", default=str(Path.home() / ".gigacode/bin/gigacode"))
     review.add_argument("--run-id")
@@ -210,8 +212,11 @@ def main():
     review.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     try:
+        artifact, selection = command_ux.select_diagram(
+            args.workspace, args.artifact or args.artifact_positional,
+        )
         result = run_review(
-            args.artifact,
+            artifact,
             args.workspace,
             args.cli,
             run_id=args.run_id,
@@ -219,10 +224,20 @@ def main():
             source=args.source,
             timeout=args.timeout,
         )
+        result["command_resolution"] = {
+            "workspace": str(command_ux.workspace_path(args.workspace)),
+            "diagram": str(artifact),
+            "diagram_selection": selection,
+        }
+        result["next_commands"] = {
+            "improve": '/drawio:improve "Исправь найденные валидатором и Reviewer замечания"',
+            "trace": f'/drawio:trace --run "{result["run_id"]}"',
+        }
+        supervisor.write_json(Path(result["run_dir"]) / "host-result.json", result)
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     except (OSError, ValueError, json.JSONDecodeError, supervisor.SupervisorError) as exc:
         print(
-            json.dumps({"schema_version": 1, "status": "error", "message": str(exc)}, ensure_ascii=False),
+            json.dumps(command_ux.error_result(exc), ensure_ascii=False),
             file=sys.stderr,
         )
         raise SystemExit(2)

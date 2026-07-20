@@ -163,7 +163,8 @@ class DiagramHostTests(unittest.TestCase):
         self.assertTrue(prompt.startswith("---\ndescription:"))
         self.assertIn("!{PYTHON=python3", prompt)
         self.assertIn("scripts/diagram_host.py", prompt)
-        self.assertIn("--artifact {{args}}", prompt)
+        self.assertIn("{{args}}", prompt)
+        self.assertNotIn("--artifact {{args}}", prompt)
         self.assertIn("Do not call any tools", prompt)
         self.assertIn("GIGACODE_EXTENSIONS_DIR", prompt)
         self.assertIn("GIGACODE_BIN", prompt)
@@ -219,8 +220,6 @@ print(json.dumps(events))
                     "review",
                     "--workspace",
                     str(workspace),
-                    "--artifact",
-                    str(artifact),
                     "--cli",
                     str(cli),
                     "--run-id",
@@ -234,6 +233,8 @@ print(json.dumps(events))
             self.assertEqual(completed.returncode, 0, completed.stderr)
             result = json.loads(completed.stdout)
             self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["artifact"]["path"], str(artifact.resolve()))
+            self.assertEqual(result["command_resolution"]["diagram_selection"], "only_drawio_in_workspace")
             self.assertEqual(result["reviewer"]["resolution_mode"], "isolated_cli")
             self.assertTrue(result["reviewer"]["model_proof"]["verified"])
             manifest = [

@@ -46,11 +46,12 @@ execution evidence.
 The package exposes these deterministic entry points:
 
 ```text
-/drawio:review "/absolute/path/to/diagram.drawio"
-/drawio:create --diagram "/absolute/path/to/new.drawio" --request "process description"
-/drawio:improve --diagram "/absolute/path/to/existing.drawio" --request "required changes"
-/drawio:resume --run "<run-id>" --decision continue --feedback "correction"
-/drawio:trace --run "<run-id>"
+/drawio:review
+/drawio:create "process description"
+/drawio:improve "required changes"
+/drawio:resume continue "correction"
+/drawio:resume approve
+/drawio:trace
 ```
 
 Run from the repository root:

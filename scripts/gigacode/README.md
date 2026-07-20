@@ -60,11 +60,12 @@ After verification, restart GigaCode and run `/agents manage`. Expected extensio
 Then open the diagram project as the GigaCode working directory and run:
 
 ```text
-/drawio:review "/absolute/path/to/project/diagram.drawio"
-/drawio:create --diagram "/absolute/path/to/project/new.drawio" --request "what to show"
-/drawio:improve --diagram "/absolute/path/to/project/diagram.drawio" --request "what to change"
-/drawio:resume --run "<run-id>" --decision continue --feedback "additional requirement"
-/drawio:trace --run "<run-id>"
+/drawio:review
+/drawio:create "what to show"
+/drawio:improve "what to change"
+/drawio:resume continue "additional requirement"
+/drawio:resume approve
+/drawio:trace
 ```
 
 The command creates `.diagram-runs/<run-id>` itself. Do not create that

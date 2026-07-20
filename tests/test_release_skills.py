@@ -259,6 +259,7 @@ class ReleaseSkillsTests(unittest.TestCase):
         self.assertNotIn("commands/**/*.toml", includes)
         self.assertIn("scripts/diagram_orchestrator.py", includes)
         self.assertIn("scripts/diagram_host.py", includes)
+        self.assertIn("scripts/command_ux.py", includes)
         mappings = {
             item["destination"]: item["source"]
             for item in config["skills"]["drawio"]["extra_files"]

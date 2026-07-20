@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -163,6 +164,121 @@ class DiagramOrchestratorTests(unittest.TestCase):
 
     def read_events(self, run_dir: Path):
         return [json.loads(line) for line in (run_dir / "run-manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+
+    def run_host(self, *args):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "diagram_orchestrator.py"), *map(str, args)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(SCRIPTS)},
+        )
+
+    def test_conversational_create_generates_safe_name_and_short_next_commands(self):
+        root, workspace, cli = self.create_workspace()
+        (workspace / "обработки-заказа.drawio").write_text(clean_diagram(), encoding="utf-8")
+        completed = self.run_host(
+            "create", "--workspace", workspace, "--cli", cli,
+            "Создай диаграмму обработки заказа",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["command_resolution"]["request_source"], "conversational_text")
+        self.assertEqual(result["command_resolution"]["diagram_selection"], "generated_from_request")
+        self.assertTrue(result["command_resolution"]["diagram"].endswith("обработки-заказа-2.drawio"))
+        self.assertEqual(result["next_commands"]["short"]["approve"], "/drawio:resume approve")
+        self.assertFalse(Path(result["command_resolution"]["diagram"]).exists())
+
+    def test_conversational_improve_fails_before_preflight_when_diagram_is_ambiguous(self):
+        root, workspace, cli = self.create_workspace()
+        (workspace / "one.drawio").write_text(clean_diagram(), encoding="utf-8")
+        (workspace / "two.drawio").write_text(clean_diagram(), encoding="utf-8")
+        completed = self.run_host(
+            "improve", "--workspace", workspace, "--cli", cli,
+            "Исправь маршруты стрелок",
+        )
+        self.assertEqual(completed.returncode, 2)
+        result = json.loads(completed.stderr)
+        self.assertEqual(result["status"], "selection_required")
+        self.assertEqual(result["code"], "diagram_selection_ambiguous")
+        self.assertEqual(len(result["candidates"]), 2)
+        self.assertFalse((workspace / ".diagram-runs").exists())
+
+    def test_short_resume_selects_only_pending_run_and_trace_selects_latest(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "short-resume.drawio"
+        created = orchestrator.start_run(
+            "create", target, "Create a short resume diagram.", workspace, cli,
+            run_id="short-resume-run", max_iterations=1,
+        )
+        self.assertEqual(created["checkpoint"]["kind"], "final_acceptance")
+        resumed = self.run_host("resume", "--workspace", workspace, "--cli", cli, "approve")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        resume_result = json.loads(resumed.stdout)
+        self.assertEqual(resume_result["status"], "completed")
+        self.assertEqual(resume_result["command_resolution"]["run_selection"], "only_pending_run")
+        traced = self.run_host("trace", "--workspace", workspace)
+        self.assertEqual(traced.returncode, 0, traced.stderr)
+        trace_result = json.loads(traced.stdout)
+        self.assertTrue(trace_result["valid"])
+        self.assertEqual(trace_result["command_resolution"]["run_selection"], "latest_updated_run")
+
+    def test_explicit_flags_remain_supported(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "explicit.drawio"
+        completed = self.run_host(
+            "create", "--workspace", workspace, "--cli", cli,
+            "--diagram", target, "--request", "Create an explicit compatibility diagram.",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["command_resolution"]["diagram_selection"], "explicit")
+        self.assertEqual(result["command_resolution"]["request_source"], "explicit_flag")
+
+    def test_create_publication_refuses_target_that_appeared_after_start(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "late-collision.drawio"
+        result = orchestrator.start_run(
+            "create", target, "Create a late collision diagram.", workspace, cli,
+            run_id="late-collision-run", max_iterations=1,
+        )
+        self.assertEqual(result["checkpoint"]["kind"], "final_acceptance")
+        target.write_text("user file", encoding="utf-8")
+        with self.assertRaisesRegex(orchestrator.supervisor.SupervisorError, "will not be overwritten"):
+            orchestrator.resume_run(
+                workspace / ".diagram-runs" / "late-collision-run",
+                "approve", "", workspace, cli,
+            )
+        self.assertEqual(target.read_text(encoding="utf-8"), "user file")
+
+    def test_create_refuses_existing_explicit_target_before_preflight(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "existing-target.drawio"
+        target.write_text(clean_diagram(), encoding="utf-8")
+        completed = self.run_host(
+            "create", "--workspace", workspace, "--cli", cli,
+            "--diagram", target, "--request", "Do not overwrite this file.",
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("will not be overwritten", json.loads(completed.stderr)["message"])
+        self.assertFalse((workspace / ".diagram-runs").exists())
+
+    def test_short_resume_refuses_ambiguous_pending_runs_without_mutation(self):
+        root, workspace, cli = self.create_workspace()
+        runs = workspace / ".diagram-runs"
+        for run_id in ("pending-one", "pending-two"):
+            run_dir = runs / run_id
+            run_dir.mkdir(parents=True)
+            (run_dir / "workflow.json").write_text(
+                json.dumps({"run_id": run_id, "checkpoint": {"kind": "final_acceptance"}}),
+                encoding="utf-8",
+            )
+        completed = self.run_host("resume", "--workspace", workspace, "--cli", cli, "approve")
+        self.assertEqual(completed.returncode, 2)
+        result = json.loads(completed.stderr)
+        self.assertEqual(result["code"], "pending_run_selection_ambiguous")
+        self.assertEqual(result["candidates"], ["pending-one", "pending-two"])
+        self.assertFalse(any((runs / run_id / "decisions").exists() for run_id in result["candidates"]))
 
     def test_create_reaches_final_checkpoint_without_repair_and_resume_publishes(self):
         root, workspace, cli = self.create_workspace()

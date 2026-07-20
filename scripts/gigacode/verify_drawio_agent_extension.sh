@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.1}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.2}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -128,6 +128,7 @@ def verify_tree(root, label):
     for relative in (
         "scripts/diagram_host.py",
         "scripts/diagram_orchestrator.py",
+        "scripts/command_ux.py",
         "data/reviewer-audit-input.v1.schema.json",
         "data/supervisor-decision.v1.schema.json",
         "data/semantic-plan.v1.schema.json",

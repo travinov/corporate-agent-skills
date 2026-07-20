@@ -22,6 +22,7 @@ from pathlib import Path
 import jsonschema
 
 import agent_runtime
+import command_ux
 import diagram_host
 import diagram_supervisor as supervisor
 
@@ -66,8 +67,8 @@ def normalize_drawio(path, workspace, *, must_exist):
         raise supervisor.SupervisorError("diagram path must be inside the current workspace")
     if must_exist and not path.is_file():
         raise supervisor.SupervisorError(f"diagram artifact is not a file: {path}")
-    if not must_exist and path.exists() and not path.is_file():
-        raise supervisor.SupervisorError(f"target exists and is not a file: {path}")
+    if not must_exist and path.exists():
+        raise supervisor.SupervisorError(f"create target already exists and will not be overwritten: {path}")
     return path
 
 
@@ -396,6 +397,41 @@ def host_result(run_dir, workflow, *, error=None):
     return result
 
 
+def add_command_guidance(result, resolution, *, persist=True):
+    result["command_resolution"] = resolution
+    run_id = result.get("run_id")
+    commands = {}
+    checkpoint_value = result.get("checkpoint")
+    if run_id and checkpoint_value:
+        commands["explicit"] = {}
+        short_allowed = False
+        try:
+            selected, _ = command_ux.select_pending_run(resolution["workspace"])
+            short_allowed = Path(selected).resolve() == Path(result["run_dir"]).resolve()
+        except command_ux.CommandUXError:
+            short_allowed = False
+        if short_allowed:
+            commands["short"] = {}
+        for decision in checkpoint_value.get("allowed_decisions", []):
+            short = f"/drawio:resume {decision}"
+            if decision == "continue":
+                short += ' "необязательные замечания"'
+            if short_allowed:
+                commands["short"][decision] = short
+            commands["explicit"][decision] = f'/drawio:resume --run "{run_id}" --decision {decision}'
+        result["short_resume_available"] = short_allowed
+    if run_id:
+        commands["trace"] = "/drawio:trace"
+        commands["trace_explicit"] = f'/drawio:trace --run "{run_id}"'
+    if commands:
+        result["next_commands"] = commands
+    if persist and result.get("run_dir"):
+        path = Path(result["run_dir"]) / "host-result.json"
+        if path.parent.is_dir():
+            supervisor.write_json(path, result)
+    return result
+
+
 def baseline_review(run_dir, workflow, cli, timeout):
     accepted = Path(workflow["accepted_artifact"]["path"])
     report = Path(workflow["accepted_validation"]["report"])
@@ -720,6 +756,10 @@ def start_run(mode, diagram, request, workspace, cli, *, run_id=None, timeout=60
 def publish(run_dir, workflow, decision):
     accepted = Path(workflow["accepted_artifact"]["path"])
     target = Path(workflow["target"])
+    if workflow.get("mode") == "create" and target.exists():
+        raise supervisor.SupervisorError(
+            f"create target appeared after the run started and will not be overwritten: {target}"
+        )
     atomic_copy(accepted, target)
     supervisor.append_event(
         run_dir, "artifact_published",
@@ -990,34 +1030,71 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("create", "improve"):
         cmd = sub.add_parser(name)
-        cmd.add_argument("--diagram", required=True)
-        cmd.add_argument("--request", required=True)
+        cmd.add_argument("input", nargs="*")
+        cmd.add_argument("--diagram")
+        cmd.add_argument("--request")
         cmd.add_argument("--workspace", default=str(Path.cwd()))
         cmd.add_argument("--cli", default=str(Path.home() / ".gigacode/bin/gigacode"))
         cmd.add_argument("--run-id")
         cmd.add_argument("--timeout", type=int, default=600)
         cmd.add_argument("--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS)
     resume = sub.add_parser("resume")
-    resume.add_argument("--run", required=True)
-    resume.add_argument("--decision", required=True, choices=("continue", "approve", "approve_with_findings", "pause", "stop", "manual_handoff"))
-    resume.add_argument("--feedback", default="")
+    resume.add_argument("input", nargs="*")
+    resume.add_argument("--run")
+    resume.add_argument("--decision", choices=command_ux.DECISIONS)
+    resume.add_argument("--feedback")
     resume.add_argument("--workspace", default=str(Path.cwd()))
     resume.add_argument("--cli", default=str(Path.home() / ".gigacode/bin/gigacode"))
     resume.add_argument("--timeout", type=int, default=600)
     trace = sub.add_parser("trace")
-    trace.add_argument("--run", required=True)
+    trace.add_argument("run_positional", nargs="?")
+    trace.add_argument("--run")
     trace.add_argument("--workspace", default=str(Path.cwd()))
     args = parser.parse_args()
     try:
         if args.command in {"create", "improve"}:
-            result = start_run(args.command, args.diagram, args.request, args.workspace, args.cli, run_id=args.run_id, timeout=args.timeout, max_iterations=args.max_iterations)
+            diagram, request = command_ux.split_diagram_request(
+                args.input, diagram=args.diagram, request=args.request,
+            )
+            if args.command == "create":
+                if diagram:
+                    resolved_diagram, selection = command_ux.select_diagram(args.workspace, diagram)
+                else:
+                    resolved_diagram, selection = command_ux.generated_target(args.workspace, request)
+            else:
+                resolved_diagram, selection = command_ux.select_diagram(args.workspace, diagram)
+            resolution = {
+                "workspace": str(command_ux.workspace_path(args.workspace)),
+                "diagram": str(resolved_diagram), "diagram_selection": selection,
+                "request": request, "request_source": "explicit_flag" if args.request is not None else "conversational_text",
+            }
+            result = start_run(
+                args.command, resolved_diagram, request, args.workspace, args.cli,
+                run_id=args.run_id, timeout=args.timeout, max_iterations=args.max_iterations,
+            )
+            result = add_command_guidance(result, resolution)
         elif args.command == "resume":
-            result = resume_run(args.run, args.decision, args.feedback, args.workspace, args.cli, timeout=args.timeout)
+            run, decision, feedback = command_ux.parse_resume(
+                args.input, run=args.run, decision=args.decision, feedback=args.feedback,
+            )
+            resolved_run, selection = command_ux.select_pending_run(args.workspace, run)
+            result = resume_run(resolved_run, decision, feedback, args.workspace, args.cli, timeout=args.timeout)
+            result = add_command_guidance(result, {
+                "workspace": str(command_ux.workspace_path(args.workspace)),
+                "run": str(resolved_run), "run_selection": selection,
+                "decision": decision, "feedback": feedback,
+            })
         else:
-            result = trace_run(args.run, args.workspace)
+            explicit_run = args.run or args.run_positional
+            resolved_run, selection = command_ux.select_latest_run(args.workspace, explicit_run)
+            result = trace_run(resolved_run, args.workspace)
+            result = add_command_guidance(result, {
+                "workspace": str(command_ux.workspace_path(args.workspace)),
+                "run": str(resolved_run), "run_selection": selection,
+            }, persist=False)
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     except (OSError, ValueError, json.JSONDecodeError, jsonschema.ValidationError, supervisor.SupervisorError) as exc:
-        print(json.dumps({"schema_version": 1, "status": "error", "message": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps(command_ux.error_result(exc), ensure_ascii=False), file=sys.stderr)
         raise SystemExit(2)
 
 

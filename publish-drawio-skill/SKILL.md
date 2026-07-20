@@ -2,7 +2,7 @@
 name: drawio-skill
 description: Use when the user requests diagrams, flowcharts, roadmap diagrams, git-flow / branching strategy timelines, architecture diagrams, ER diagrams, UML / sequence / class diagrams, network topology, cloud architecture from Terraform or Kubernetes manifests, ML/DL model figures (Transformer/CNN/LSTM), mind maps, or any visualization. Also use proactively when explaining systems with 3+ components, complex data flows, or relationships that benefit from visual representation. Best suited when the diagram needs custom styling, rich shape vocabulary, swimlanes, precise timeline/lane placement, intake clarification, canonical XLSX/CSV roadmap intake, full milestone revision history, baseline comparison, milestone shift markers, or exportable images (PNG/SVG/PDF/JPG). Generates .drawio XML and exports locally via the native draw.io desktop CLI.
 license: MIT
-metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.23.0-corporate.1"}
+metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.23.0-corporate.2"}
 ---
 
 # Draw.io Diagrams
@@ -125,7 +125,7 @@ On corporate GigaCode, normal read-only review MUST start through the extension
 command, not through a free-form chat prompt:
 
 ```text
-/drawio:review "/absolute/path/to/diagram.drawio"
+/drawio:review
 ```
 
 `commands/drawio/review.md` runs `scripts/diagram_host.py` before the
@@ -139,11 +139,18 @@ Creation and iterative improvement MUST use the executable lifecycle commands,
 not conversational requests to list directories or call native agents:
 
 ```text
-/drawio:create --diagram "/absolute/path/to/new.drawio" --request "what to show"
-/drawio:improve --diagram "/absolute/path/to/existing.drawio" --request "requirements"
-/drawio:resume --run "<run-id>" --decision continue --feedback "correction"
-/drawio:trace --run "<run-id>"
+/drawio:create "what the diagram must show"
+/drawio:improve "requirements or corrections"
+/drawio:resume continue "optional correction"
+/drawio:resume approve
+/drawio:trace
 ```
+
+These conversational forms use the current workspace. Create generates a
+collision-safe target; improve/review auto-select only one root-level `.drawio`;
+resume auto-selects only one pending checkpoint; trace selects the latest run.
+Ambiguity fails before role or validator execution. Explicit flags remain
+supported for automation.
 
 `diagram_orchestrator.py` creates `.diagram-runs/<run-id>`, invokes isolated
 Supervisor and Semantic Analyst, renders or imports a baseline, validates it,

@@ -8,7 +8,9 @@ Present the JSON result below without hiding its run id, state, model evidence, 
 status, findings, checkpoint, or resume contract. Never describe `awaiting_human`,
 `approved_with_findings`, `manual_handoff`, `stopped`, or `error` as strict success.
 
-Arguments: `--diagram "path/to/result.drawio" --request "what the diagram must show"`.
+Normal use: `/drawio:create "what the diagram must show"`. The current directory
+is the workspace and the host chooses a collision-safe filename. Advanced form:
+`--diagram "path/to/result.drawio" --request "what the diagram must show"`.
 
 ```json
 !{PYTHON=python3; if [ -n "$PYTHON_BIN" ]; then PYTHON="$PYTHON_BIN"; fi; GC_HOME="$HOME/.gigacode"; if [ -n "$GIGACODE_HOME" ]; then GC_HOME="$GIGACODE_HOME"; fi; EXTENSIONS="$GC_HOME/extensions"; if [ -n "$GIGACODE_EXTENSIONS_DIR" ]; then EXTENSIONS="$GIGACODE_EXTENSIONS_DIR"; fi; CLI="$GC_HOME/bin/gigacode"; if [ -n "$GIGACODE_BIN" ]; then CLI="$GIGACODE_BIN"; fi; "$PYTHON" "$EXTENSIONS/publish-drawio-skill/scripts/diagram_orchestrator.py" create --workspace "$PWD" --cli "$CLI" {{args}} 2>&1}

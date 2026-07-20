@@ -21,7 +21,7 @@ For a normal read-only audit, use the extension command as the only supported
 entry point:
 
 ```text
-/drawio:review "/absolute/path/to/diagram.drawio"
+/drawio:review
 ```
 
 The custom command executes `scripts/diagram_host.py` before the interactive
@@ -35,11 +35,18 @@ shell tool, or the native supervisor agent.
 For stateful work, use the lifecycle commands:
 
 ```text
-/drawio:create --diagram "/absolute/path/to/new.drawio" --request "description"
-/drawio:improve --diagram "/absolute/path/to/existing.drawio" --request "requirements"
-/drawio:resume --run "<run-id>" --decision continue --feedback "correction"
-/drawio:trace --run "<run-id>"
+/drawio:create "description"
+/drawio:improve "requirements"
+/drawio:resume continue "correction"
+/drawio:resume approve
+/drawio:trace
 ```
+
+The current directory is the workspace. Short forms are resolved by
+`command_ux.py` before preflight: create allocates a safe filename,
+improve/review require exactly one root-level `.drawio`, resume requires exactly
+one pending checkpoint, and trace chooses the latest workflow. Explicit flags
+remain available. No model is invoked to guess an ambiguous file or run.
 
 Create and improve invoke isolated Supervisor and Semantic Analyst, then
 deterministic rendering/import and strict validation. Repair is invoked only
