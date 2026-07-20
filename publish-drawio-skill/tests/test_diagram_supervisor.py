@@ -243,10 +243,16 @@ def reviewer_verdict(run_dir, candidate, report_path, receipt_path, *, verdict="
     return write_json(path, value)
 
 
+def preflight_run(run_dir):
+    run_dir = Path(run_dir)
+    return supervisor.host_preflight(run_dir.parent, run_dir, sys.executable)
+
+
 def prepare_routed_candidate(temp):
     temp = Path(temp)
     run_dir = temp / "run"
     baseline = write_text(temp / "baseline.drawio", diagram_xml(obstacle=True))
+    preflight_run(run_dir)
     supervisor.transition(run_dir, "analyzed", artifact=baseline)
     supervisor.run_validation(baseline, run_dir, attempt_id="baseline")
     patch = supervisor.route_patch(baseline, "edge", ["route-through"])
@@ -272,6 +278,7 @@ def prepare_semantic_candidate(temp):
     temp = Path(temp)
     run_dir = temp / "run"
     baseline = write_text(temp / "baseline.drawio", diagram_xml(obstacle=True))
+    preflight_run(run_dir)
     supervisor.transition(run_dir, "analyzed", artifact=baseline)
     supervisor.run_validation(baseline, run_dir, attempt_id="baseline")
     operation = {
@@ -296,6 +303,96 @@ def prepare_semantic_candidate(temp):
         "candidate_report": candidate_report, "candidate_receipt": candidate_receipt,
         "reviewer": reviewer_verdict(run_dir, candidate, candidate_report, candidate_receipt),
     }
+
+
+class MainExtensionHostTests(unittest.TestCase):
+    def test_host_preflight_creates_auditable_main_host_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "project"
+            workspace.mkdir()
+            run_dir = workspace / ".diagram-runs" / "preflight-test"
+
+            result = supervisor.host_preflight(workspace, run_dir, sys.executable)
+
+            self.assertEqual(result["execution_owner"], "main_extension_host")
+            self.assertFalse(result["native_supervisor_execution"])
+            self.assertTrue(result["run_id"])
+            self.assertEqual(Path(result["run_dir"]), run_dir.resolve())
+            evidence = json.loads((run_dir / "host-preflight.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence, result)
+            events = [
+                json.loads(line)
+                for line in (run_dir / "run-manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(events[0]["event_type"], "host_preflight")
+            self.assertEqual(events[0]["actor"]["id"], "main-extension-host")
+            self.assertEqual(
+                events[0]["payload"]["evidence_sha256"],
+                hashlib.sha256((run_dir / "host-preflight.json").read_bytes()).hexdigest(),
+            )
+            assert_schema(self, events[0], "run-event.v1.schema.json")
+            self.assertEqual(
+                set(result["required_tools"]),
+                {"diagram_supervisor.py", "agent_runtime.py", "validate.py"},
+            )
+            self.assertTrue(supervisor.verify_host_preflight(run_dir)["valid"])
+
+    def test_state_machine_rejects_analysis_without_host_preflight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            artifact = write_text(temp / "diagram.drawio", clean_diagram_xml())
+            with self.assertRaisesRegex(supervisor.SupervisorError, "main-host preflight"):
+                supervisor.transition(temp / "run", "analyzed", artifact=artifact)
+
+    def test_completion_rejects_tampered_host_preflight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            artifact = write_text(temp / "diagram.drawio", clean_diagram_xml())
+            run_dir = temp / "run"
+            preflight_run(run_dir)
+            supervisor.transition(run_dir, "analyzed", artifact=artifact)
+            supervisor.run_validation(artifact, run_dir)
+            supervisor.transition(run_dir, "final_review", artifact=artifact)
+            evidence_path = run_dir / "host-preflight.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["execution_owner"] = "native_supervisor"
+            supervisor.write_json(evidence_path, evidence)
+
+            with self.assertRaisesRegex(supervisor.SupervisorError, "main-host preflight"):
+                supervisor.transition(
+                    run_dir, "completed", artifact=artifact,
+                    receipt=run_dir / "validation-receipt.json", decision="approve",
+                )
+
+    def test_host_preflight_rejects_run_directory_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "project"
+            workspace.mkdir()
+            outside = root / "outside-run"
+
+            with self.assertRaisesRegex(supervisor.SupervisorError, "inside the workspace"):
+                supervisor.host_preflight(workspace, outside, sys.executable)
+
+            self.assertFalse((outside / "host-preflight.json").exists())
+
+    def test_host_preflight_rejects_a_cli_that_cannot_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "project"
+            workspace.mkdir()
+            cli = write_text(root / "broken-cli", "#!/bin/sh\nexit 3\n")
+            cli.chmod(0o700)
+            run_dir = workspace / ".diagram-runs" / "failed"
+
+            with self.assertRaisesRegex(supervisor.SupervisorError, "version probe exited with 3"):
+                supervisor.host_preflight(workspace, run_dir, cli)
+
+            self.assertFalse((run_dir / "host-preflight.json").exists())
+
+    def test_host_preflight_rejects_writes_inside_extension(self):
+        with self.assertRaisesRegex(supervisor.SupervisorError, "installed extension"):
+            supervisor.host_preflight(ROOT, ROOT / ".diagram-runs" / "forbidden", sys.executable)
 
 
 class DiagramWorkingModelTests(unittest.TestCase):
@@ -945,6 +1042,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             artifact = write_text(temp / "clean.drawio", clean_diagram_xml())
             run_dir = temp / "run"
+            preflight_run(run_dir)
             supervisor.transition(run_dir, "analyzed", artifact=artifact)
             supervisor.transition(run_dir, "final_review", artifact=artifact)
             with self.assertRaisesRegex(supervisor.SupervisorError, "approve_with_findings"):
@@ -1026,6 +1124,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             run_dir = temp / "run"
             baseline = write_text(temp / "baseline.drawio", diagram_xml())
+            preflight_run(run_dir)
             supervisor.transition(run_dir, "analyzed", artifact=baseline)
             supervisor.run_validation(baseline, run_dir, attempt_id="baseline")
             original = canonical_route_operation(baseline, {"x": 150, "y": 30})
@@ -1188,6 +1287,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             artifact = write_text(temp / "clean.drawio", clean_diagram_xml())
             run_dir = temp / "run"
+            preflight_run(run_dir)
             supervisor.transition(run_dir, "analyzed", artifact=artifact)
             supervisor.run_validation(artifact, run_dir)
             receipt = run_dir / "validation-receipt.json"
@@ -1211,6 +1311,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             artifact = write_text(temp / "clean.drawio", clean_diagram_xml())
             run_dir = temp / "run"
+            preflight_run(run_dir)
             supervisor.transition(run_dir, "analyzed", artifact=artifact)
             supervisor.run_validation(artifact, run_dir)
             receipt = run_dir / "validation-receipt.json"
@@ -1240,6 +1341,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             run_dir = temp / "run"
             baseline = write_text(temp / "baseline.drawio", clean_diagram_xml())
+            preflight_run(run_dir)
             supervisor.transition(
                 run_dir, "analyzed", artifact=baseline, max_attempts=1
             )
@@ -1277,6 +1379,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             temp = Path(temp)
             run_dir = temp / "run"
             baseline = write_text(temp / "baseline.drawio", clean_diagram_xml())
+            preflight_run(run_dir)
             supervisor.transition(
                 run_dir, "analyzed", artifact=baseline, max_attempts=10
             )
@@ -1331,6 +1434,7 @@ class EvidenceAndStateTests(unittest.TestCase):
             )
             baseline = write_text(temp / "baseline.drawio", baseline_xml)
             run_dir = temp / "run"
+            preflight_run(run_dir)
             supervisor.transition(run_dir, "analyzed", artifact=baseline)
             supervisor.run_validation(baseline, run_dir, attempt_id="baseline")
             baseline_report = run_dir / "attempts" / "baseline" / "validation-report.json"
@@ -1394,6 +1498,9 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertNotIn("max_turns:", agent_definition)
             self.assertNotIn("kind:", agent_definition)
             self.assertNotIn("temperature:", agent_definition)
+        supervisor_definition = (ROOT / "agents" / "diagram-supervisor.md").read_text(encoding="utf-8")
+        self.assertNotIn("  - run_shell_command\n", supervisor_definition)
+        self.assertIn("extension host owns execution", supervisor_definition)
         for role in ("reviewer", "repair", "semantic_analyst"):
             agent_definition = (ROOT / "agents" / agent_files[role]).read_text(encoding="utf-8")
             self.assertIn("approvalMode: plan\n", agent_definition)
@@ -1930,6 +2037,10 @@ class AgentRuntimeTests(unittest.TestCase):
                     check=True, cwd=ROOT,
                 )
 
+            run(
+                supervisor_cli, "host-preflight", "--workspace", temp,
+                "--run-dir", run_dir, "--cli", sys.executable,
+            )
             run(supervisor_cli, "inspect", source, "--output", run_dir / "diagram-spec.json")
             run(supervisor_cli, "state", run_dir, "analyzed", "--artifact", source)
             run(supervisor_cli, "validate", source, "--run-dir", run_dir, "--attempt-id", "baseline")

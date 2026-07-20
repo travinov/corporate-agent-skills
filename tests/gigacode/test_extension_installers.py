@@ -172,7 +172,7 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
 
         result = self.install()
 
-        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.2", result.stdout)
+        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.3", result.stdout)
         self.assertIn("Self-check skipped by request", result.stdout)
         self.assertFalse(legacy.exists())
         installed = self.home / "extensions" / "publish-drawio-skill"
@@ -195,7 +195,7 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
         self.assertIn("Installing pinned Python dependencies", result.stdout)
         self.assertIn("Running extension self-check", result.stdout)
         self.assertIn("fake self-check passed", result.stdout)
-        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.2", result.stdout)
+        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.3", result.stdout)
         self.assertNotIn("unbound variable", result.stdout)
         self.assertNotIn("restoring backup", result.stdout)
         self.assertEqual(
@@ -208,7 +208,7 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
         result = self.install()
 
         self.assertIn("Native 'extensions validate' is unavailable", result.stdout)
-        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.2", result.stdout)
+        self.assertIn("Installed publish-drawio-skill 1.22.0-corporate.3", result.stdout)
         self.assertTrue(
             (self.home / "extensions" / "publish-drawio-skill" / "gemini-extension.json").is_file()
         )
@@ -359,7 +359,7 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
             "verify_drawio_agent_extension.sh", "--skip-self-check"
         )
 
-        self.assertIn("Verified publish-drawio-skill 1.22.0-corporate.2", result.stdout)
+        self.assertIn("Verified publish-drawio-skill 1.22.0-corporate.3", result.stdout)
 
     def test_verifier_rejects_active_source_content_mismatch(self) -> None:
         self.install()
@@ -476,7 +476,7 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
             self.home
             / "extension-sources"
             / "publish-drawio-skill"
-            / "1.22.0-corporate.2"
+            / "1.22.0-corporate.3"
         )
         self.assertFalse(version_dir.exists())
 

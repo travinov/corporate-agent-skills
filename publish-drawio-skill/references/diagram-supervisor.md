@@ -11,6 +11,28 @@ Use this workflow when the user asks to improve, repair, validate, iterate on, o
 
 Model output is advisory. `scripts/diagram_supervisor.py` and `scripts/validate.py` own parsing, mutation, comparison, evidence, and state transitions.
 
+## Main-host ownership on corporate GigaCode
+
+On GigaCode 26.5.17 / Qwen Code 0.13.1, the main interactive GigaChat session is
+the extension host and Supervisor executor. Do not send the whole request to
+native `diagram-supervisor` through the `agent` tool. That native role is
+planning-only because its successful status neither proves shell execution nor
+model isolation.
+
+The main host starts every run with the absolute installed extension path:
+
+```bash
+EXT="$HOME/.gigacode/extensions/publish-drawio-skill"
+RUN_DIR="$PWD/.diagram-runs/<run-id>"
+python3 "$EXT/scripts/diagram_supervisor.py" host-preflight \
+  --workspace "$PWD" --run-dir "$RUN_DIR" \
+  --cli "$HOME/.gigacode/bin/gigacode"
+```
+
+Stop before analysis if preflight fails. Later commands must use the same
+`EXT` and `RUN_DIR`. The main host invokes isolated Reviewer, Repair, and
+Semantic Analyst processes itself; it never changes the interactive `/model`.
+
 ## Source reconciliation
 
 Before changing an existing diagram:

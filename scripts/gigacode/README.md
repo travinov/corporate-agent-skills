@@ -57,6 +57,13 @@ After verification, restart GigaCode and run `/agents manage`. Expected extensio
 - `diagram-repair`
 - `diagram-semantic-analyst`
 
+For a real diagram task, the main interactive GigaChat session owns execution;
+it does not send the whole workflow to native `diagram-supervisor`. A successful
+run creates `.diagram-runs/<run-id>/host-preflight.json`,
+`run-manifest.jsonl`, validation receipts, and isolated-role model evidence in
+the user's project. The native supervisor entry remains visible for advisory
+planning compatibility only.
+
 `./install/rollback_drawio_agent_extension.sh --backup PATH` selects a specific backup.
 Backups are stored under
 `~/.gigacode/backups/drawio-agent-extension/<UTC timestamp>`.

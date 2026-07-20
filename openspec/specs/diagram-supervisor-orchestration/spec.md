@@ -6,6 +6,14 @@ TBD - created by archiving change add-diagram-supervisor-extension. Update Purpo
 ### Requirement: Persist an explicit supervisor state machine
 The extension SHALL persist each run state and SHALL support `analyzed`, `awaiting_decision`, `patching`, `validating`, `retrying`, `plateau`, `awaiting_feedback`, `final_review`, `completed`, `manual_handoff`, and `stopped` outcomes without losing the last accepted candidate.
 
+#### Scenario: Corporate main host starts a run
+- **WHEN** the workflow runs on corporate GigaCode 26.5.17
+- **THEN** the main extension host completes a deterministic preflight and records `host-preflight.json` plus a `host_preflight` manifest event before diagram analysis
+
+#### Scenario: Host evidence is absent
+- **WHEN** the run lacks main-host preflight evidence
+- **THEN** the workflow fails closed and does not claim that its agent, tools, or validation executed
+
 #### Scenario: Validation finds repairable defects
 - **WHEN** an analyzed diagram has deterministic repairable findings
 - **THEN** the supervisor transitions through patching and validating from the last accepted candidate
@@ -34,4 +42,3 @@ The supervisor MUST NOT enter `completed` unless strict validation succeeded and
 #### Scenario: Artifact changes after validation
 - **WHEN** the final file hash differs from the receipt artifact hash
 - **THEN** completion is refused and validation must run again
-

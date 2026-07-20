@@ -24,6 +24,7 @@
     "event_type": {
       "enum": [
         "run_created",
+        "host_preflight",
         "source_selected",
         "source_conflict",
         "model_resolved",

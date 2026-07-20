@@ -15,6 +15,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1233,6 +1234,175 @@ def append_event(run_dir, event_type, payload, state=None, actor=None):
     return event
 
 
+def _is_within(path, parent):
+    path = str(Path(path).resolve())
+    parent = str(Path(parent).resolve())
+    try:
+        return os.path.commonpath((path, parent)) == parent
+    except ValueError:
+        return False
+
+
+def _resolve_executable(value):
+    expanded = Path(value).expanduser()
+    if expanded.is_absolute() or os.sep in value or (os.altsep and os.altsep in value):
+        candidate = expanded.resolve()
+    else:
+        located = shutil.which(value, path=os.environ.get("PATH"))
+        if not located:
+            raise SupervisorError(f"host CLI executable was not found: {value}")
+        candidate = Path(located).resolve()
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise SupervisorError(f"host CLI is not an executable file: {candidate}")
+    return candidate
+
+
+def host_preflight(workspace, run_dir, cli):
+    """Prove that the interactive extension host can own a run.
+
+    The check intentionally runs in the parent session. A successful native
+    agent call is not equivalent evidence because corporate Qwen agents may
+    inherit the parent model and may not be able to execute extension tools.
+    """
+    extension_root = Path(__file__).resolve().parent.parent
+    workspace = Path(workspace).expanduser().resolve()
+    run_dir = Path(run_dir).expanduser().resolve()
+    if not workspace.is_dir():
+        raise SupervisorError(f"host workspace is not a directory: {workspace}")
+    if not _is_within(run_dir, workspace):
+        raise SupervisorError("host run directory must be inside the workspace")
+    if _is_within(run_dir, extension_root):
+        raise SupervisorError("host run directory must not be inside the installed extension")
+
+    required = {
+        name: extension_root / "scripts" / name
+        for name in ("diagram_supervisor.py", "agent_runtime.py", "validate.py")
+    }
+    missing = [str(path) for path in required.values() if not path.is_file()]
+    if missing:
+        raise SupervisorError(f"host extension prerequisites are missing: {', '.join(missing)}")
+    cli_path = _resolve_executable(cli)
+    try:
+        cli_probe = subprocess.run(
+            [str(cli_path), "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+            env={
+                key: value for key, value in os.environ.items()
+                if key in {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "PATH", "TMPDIR"}
+            },
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SupervisorError(f"host CLI version probe failed: {exc}") from exc
+    if cli_probe.returncode != 0:
+        raise SupervisorError(
+            f"host CLI version probe exited with {cli_probe.returncode}: "
+            f"{(cli_probe.stderr or cli_probe.stdout).strip()[:512]}"
+        )
+    cli_version = (cli_probe.stdout or cli_probe.stderr).strip().splitlines()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_id = ensure_run_id(run_dir)
+
+    result = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "checked_at": utc_now(),
+        "execution_owner": "main_extension_host",
+        "native_supervisor_execution": False,
+        "extension_root": str(extension_root),
+        "workspace": str(workspace),
+        "run_dir": str(run_dir),
+        "cli": str(cli_path),
+        "cli_version": cli_version[0][:512] if cli_version else "unknown",
+        "required_tools": {
+            name: {"path": str(path), "sha256": sha256_file(path)}
+            for name, path in required.items()
+        },
+    }
+    write_json(run_dir / "host-preflight.json", result)
+    evidence_sha256 = sha256_file(run_dir / "host-preflight.json")
+    append_event(
+        run_dir,
+        "host_preflight",
+        {
+            "execution_owner": result["execution_owner"],
+            "native_supervisor_execution": False,
+            "evidence": str((run_dir / "host-preflight.json").resolve()),
+            "evidence_sha256": evidence_sha256,
+            "cli": str(cli_path),
+        },
+        actor={"kind": "system", "id": "main-extension-host", "model": None},
+    )
+    return result
+
+
+def verify_host_preflight(run_dir):
+    run_dir = Path(run_dir).expanduser().resolve()
+    evidence_path = run_dir / "host-preflight.json"
+    manifest_path = run_dir / "run-manifest.jsonl"
+    marker_path = run_dir / ".run-id"
+    checks = {
+        "evidence_exists": evidence_path.is_file(),
+        "manifest_exists": manifest_path.is_file(),
+        "run_id_exists": marker_path.is_file(),
+    }
+    if not all(checks.values()):
+        return {"valid": False, "checks": checks}
+    try:
+        evidence = load_json(evidence_path)
+        run_id = marker_path.read_text(encoding="utf-8").strip()
+        events = [
+            json.loads(line)
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        checks["evidence_parse"] = False
+        return {"valid": False, "checks": checks}
+
+    extension_root = Path(__file__).resolve().parent.parent
+    required = {
+        name: extension_root / "scripts" / name
+        for name in ("diagram_supervisor.py", "agent_runtime.py", "validate.py")
+    }
+    evidence_sha256 = sha256_file(evidence_path)
+    checks.update({
+        "schema_version": evidence.get("schema_version") == 1,
+        "execution_owner": evidence.get("execution_owner") == "main_extension_host",
+        "native_supervisor_disabled": evidence.get("native_supervisor_execution") is False,
+        "run_id_match": bool(run_id) and evidence.get("run_id") == run_id,
+        "run_dir_match": evidence.get("run_dir") == str(run_dir),
+        "workspace_contains_run": bool(evidence.get("workspace"))
+        and _is_within(run_dir, evidence["workspace"]),
+        "extension_root_match": evidence.get("extension_root") == str(extension_root),
+        "cli_executable": bool(evidence.get("cli"))
+        and Path(evidence["cli"]).is_file()
+        and os.access(evidence["cli"], os.X_OK),
+        "cli_version_recorded": bool(evidence.get("cli_version")),
+        "required_tool_set": set(evidence.get("required_tools", {})) == set(required),
+    })
+    for name, path in required.items():
+        descriptor = evidence.get("required_tools", {}).get(name, {})
+        checks[f"tool_{name}"] = (
+            path.is_file()
+            and descriptor.get("path") == str(path)
+            and descriptor.get("sha256") == sha256_file(path)
+        )
+    checks["manifest_event"] = any(
+        event.get("run_id") == run_id
+        and event.get("event_type") == "host_preflight"
+        and event.get("actor", {}).get("id") == "main-extension-host"
+        and event.get("payload", {}).get("execution_owner") == "main_extension_host"
+        and event.get("payload", {}).get("native_supervisor_execution") is False
+        and event.get("payload", {}).get("evidence") == str(evidence_path)
+        and event.get("payload", {}).get("evidence_sha256") == evidence_sha256
+        for event in events
+    )
+    return {"valid": all(checks.values()), "checks": checks, "run_id": run_id}
+
+
 def state_lock_is_live(lock_path):
     try:
         pid = int(Path(lock_path).read_text(encoding="ascii").strip())
@@ -1444,6 +1614,10 @@ def transition(run_dir, target, artifact=None, receipt=None, decision=None, reas
     if target not in STATES:
         raise SupervisorError(f"unknown state {target!r}")
     current = load_state(run_dir)
+    if (current is None and target == "analyzed") or target == "completed":
+        preflight = verify_host_preflight(run_dir)
+        if not preflight["valid"]:
+            raise SupervisorError(f"main-host preflight evidence failed: {preflight['checks']}")
     if current is None:
         if target != "analyzed":
             raise SupervisorError("new run must start in analyzed")
@@ -1897,6 +2071,11 @@ def main():
     inspect_cmd.add_argument("--output", required=True)
     inspect_cmd.add_argument("--source-ref", action="append", default=[], help="JSON file containing one source_ref")
 
+    preflight_cmd = sub.add_parser("host-preflight", help="prove that the main extension host can own a run")
+    preflight_cmd.add_argument("--workspace", required=True)
+    preflight_cmd.add_argument("--run-dir", required=True)
+    preflight_cmd.add_argument("--cli", required=True)
+
     patch_cmd = sub.add_parser("patch", help="apply a transactional patch to a new candidate")
     patch_cmd.add_argument("artifact")
     patch_cmd.add_argument("patch")
@@ -1984,7 +2163,9 @@ def main():
 
     args = parser.parse_args()
     try:
-        if args.command == "inspect":
+        if args.command == "host-preflight":
+            result = host_preflight(args.workspace, args.run_dir, args.cli)
+        elif args.command == "inspect":
             result = make_spec(args.artifact, parse_source_refs(args.source_ref))
             write_json(args.output, result)
         elif args.command == "patch":

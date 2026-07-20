@@ -16,6 +16,14 @@ The extension SHALL resolve Supervisor, Reviewer, Repair, and Semantic Analyst m
 - **WHEN** GigaCode 26.5.17 / Qwen Code 0.13.1 exposes native agents without a model selector
 - **THEN** the extension uses an isolated headless CLI with an explicit model before considering native or inherited routing
 
+#### Scenario: Main host owns corporate execution
+- **WHEN** the corporate runtime starts a diagram workflow from the interactive session
+- **THEN** the main session executes deterministic commands and isolated child roles itself and does not delegate the whole workflow to native `diagram-supervisor`
+
+#### Scenario: Native supervisor reports completion
+- **WHEN** the native agent tool reports that `diagram-supervisor` completed
+- **THEN** the extension does not treat that status as validation or model-routing evidence
+
 ### Requirement: Use the approved default role mapping
 The default routing policy SHALL request `GigaChat-3-Ultra` for Supervisor, `vllm/DeepSeek-V4-Flash-262k` for Reviewer, `vllm/MiniMax-M3-113k` for Repair, and `vllm/Qwen3.6-35B-262k` for Semantic Analyst/Arbiter.
 

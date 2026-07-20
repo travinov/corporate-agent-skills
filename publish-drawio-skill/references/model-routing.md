@@ -88,10 +88,18 @@ The user-visible result must state that model diversity was degraded. This is es
 ## Host and recursion boundary
 
 Corporate Qwen Code 0.13.1 cannot be trusted to provide nested native agents or
-native model diversity. The main extension host or `diagram-supervisor` invokes
-Reviewer, Repair, and Semantic Analyst through `agent_runtime.py` using the
-trusted absolute extension path. Stock Gemini uses the same host boundary.
-Unsupported models must resolve to an explicit fallback/degradation record.
+native model diversity. On corporate GigaCode 26.5.17, the main interactive
+session is the extension host and Supervisor executor. It must not delegate the
+whole workflow to native `diagram-supervisor`; that role is planning-only. The
+main host invokes Reviewer, Repair, and Semantic Analyst through
+`agent_runtime.py` using the trusted absolute extension path. Stock Gemini uses
+the same host boundary. Unsupported models must resolve to an explicit
+fallback/degradation record.
+
+The main host must run `diagram_supervisor.py host-preflight` before analysis.
+The resulting `host-preflight.json` and `host_preflight` manifest event prove
+that the parent session could access the installed scripts and corporate CLI.
+A successful native `agent` tool status does not provide that proof.
 
 ## Resolution record
 

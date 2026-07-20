@@ -94,6 +94,13 @@ agents, но наследует модель основной сессии. По
 запускаются через isolated `gigacode --model ...`; глобальный `/model` не
 переключается. Подробности и доказательство модели: `references/model-routing.md`.
 
+В этой корпоративной сборке основной интерактивный GigaChat является хостом и
+исполнителем Supervisor-процесса. Он не передаёт весь цикл native
+`diagram-supervisor`: сначала сам выполняет `host-preflight`, затем запускает
+детерминированные проверки и только отдельные Reviewer/Repair/Semantic Analyst
+через isolated CLI. Доказательства находятся в проекте в
+`.diagram-runs/<run-id>/host-preflight.json` и `run-manifest.jsonl`.
+
 Установщик по умолчанию использует следующие пути корпоративного ноутбука:
 
 ```text
@@ -164,7 +171,7 @@ export DRAWIO_BIN="/Applications/draw.io.app/Contents/MacOS/draw.io"
 - `scripts/roadmap_template.py`, `scripts/roadmap_table.py` - копирование шаблона и импорт рабочей копии в v2 YAML.
 - `scripts/roadmap_validate.py` - валидатор `roadmap.yaml`, refs, дат и baseline milestone deltas.
 - `scripts/validate.py` - общий structural/layout lint для `.drawio`; relaxed-режим возвращает layout warnings, а `--strict` делает их блокирующими. Auto-routed orthogonal/ELK bends не угадываются: для связанных hub-узлов требуются уникальные распределённые `entryX/exitX`, после XML-проверки обязателен PNG export smoke.
-- `references/diagram-supervisor.md`, `scripts/diagram_supervisor.py` - resumable agent/tool loop для существующих диаграмм: `DiagramSpec`, patch-only repair, orthogonal waypoints, monotonic comparison, receipts, human review и manual handoff.
+- `references/diagram-supervisor.md`, `scripts/diagram_supervisor.py` - host-owned resumable agent/tool loop для существующих диаграмм: preflight, `DiagramSpec`, patch-only repair, orthogonal waypoints, monotonic comparison, receipts, human review и manual handoff.
 - `references/model-routing.md`, `scripts/agent_runtime.py`, `agents/*.md` - native и isolated per-role model routing; stock Gemini orchestration выполняет main host, потому что subagent recursion запрещён.
 - `scripts/seqlayout.py`, `scripts/c4.py`, `scripts/sqlerd.py`, `scripts/autolayout.py` - специализированные генераторы.
 - `tests/` - fixtures и unittest-проверки.

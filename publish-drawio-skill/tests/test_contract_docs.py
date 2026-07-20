@@ -46,6 +46,23 @@ class ContractDocumentationTests(unittest.TestCase):
         self.assertIn("--profile roadmap --source", readme)
         self.assertIn("--profile gitflow --source", readme)
 
+    def test_corporate_main_host_contract_is_explicit_and_fail_closed(self):
+        skill = self.read("SKILL.md")
+        routing = self.read("references/model-routing.md")
+        workflow = self.read("references/diagram-supervisor.md")
+        for text in (
+            "main interactive session is the extension",
+            "MUST NOT delegate the whole workflow",
+            "host-preflight",
+            "host-preflight.json",
+            "run-manifest.jsonl",
+        ):
+            self.assertIn(text, skill)
+        self.assertIn("whole workflow to native `diagram-supervisor`", routing)
+        self.assertIn("successful native `agent` tool status does not provide that proof", routing)
+        self.assertIn("main interactive GigaChat session", workflow)
+        self.assertIn("Stop before analysis if preflight fails", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

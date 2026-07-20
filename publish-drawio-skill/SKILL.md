@@ -2,7 +2,7 @@
 name: drawio-skill
 description: Use when the user requests diagrams, flowcharts, roadmap diagrams, git-flow / branching strategy timelines, architecture diagrams, ER diagrams, UML / sequence / class diagrams, network topology, cloud architecture from Terraform or Kubernetes manifests, ML/DL model figures (Transformer/CNN/LSTM), mind maps, or any visualization. Also use proactively when explaining systems with 3+ components, complex data flows, or relationships that benefit from visual representation. Best suited when the diagram needs custom styling, rich shape vocabulary, swimlanes, precise timeline/lane placement, intake clarification, canonical XLSX/CSV roadmap intake, full milestone revision history, baseline comparison, milestone shift markers, or exportable images (PNG/SVG/PDF/JPG). Generates .drawio XML and exports locally via the native draw.io desktop CLI.
 license: MIT
-metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.22.0-corporate.2"}
+metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.22.0-corporate.3"}
 ---
 
 # Draw.io Diagrams
@@ -118,6 +118,31 @@ unchanged. Search for a relevant OpenSpec and compare it with both the user's
 process description and the current diagram. Tell the user when that comparison
 implies semantic changes; a user/OpenSpec conflict requires one consolidated
 decision. Absence of a relevant spec is not a blocker.
+
+On corporate GigaCode 26.5.17, the **main interactive session is the extension
+host and Supervisor executor**. It MUST NOT delegate the whole workflow to the
+native `diagram-supervisor` through the `agent` tool. That native agent is an
+advisory/planning compatibility role only. The main session runs deterministic
+commands itself with the absolute installed extension path and invokes only
+Reviewer, Repair, and Semantic Analyst as isolated roles through
+`scripts/agent_runtime.py`. A native agent result such as `completed` is not
+evidence that validation or model isolation occurred.
+
+Before inspecting the diagram, run this from the main session and keep its
+evidence under the user's project, never under the installed extension:
+
+```bash
+EXT="$HOME/.gigacode/extensions/publish-drawio-skill"
+RUN_DIR="$PWD/.diagram-runs/<run-id>"
+python3 "$EXT/scripts/diagram_supervisor.py" host-preflight \
+  --workspace "$PWD" --run-dir "$RUN_DIR" \
+  --cli "$HOME/.gigacode/bin/gigacode"
+```
+
+If `host-preflight.json`, `run-manifest.jsonl`, a hash-bound validation receipt,
+or required isolated-role model proof is absent, fail closed and report the
+missing evidence. Do not turn a child-agent status or prose assertion into a
+successful run.
 
 Use patch-only candidates with stable `mxCell` IDs and preconditions. Validate
 each candidate strictly, compare it with the last accepted report, and accept it
