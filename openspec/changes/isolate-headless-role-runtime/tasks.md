@@ -62,3 +62,10 @@
 - [x] 9.3 Add regression coverage for global MCP configuration, missing CLI capability, exact command arguments, and defense-in-depth event rejection
 - [x] 9.4 Extend installer verification and operator documentation with the MCP-discovery isolation contract
 - [x] 9.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.9` ZIP
+
+## 10. Supervisor downstream-role normalization
+
+- [x] 10.1 Specify `required_roles` as downstream sibling selection while retaining Supervisor in host-owned bookkeeping
+- [x] 10.2 Normalize only the already executed Supervisor role and preserve every sibling/action fail-closed invariant
+- [x] 10.3 Add regression coverage and operator diagnostics for the captured schema-valid self-omitting Supervisor decision
+- [x] 10.4 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.10` ZIP

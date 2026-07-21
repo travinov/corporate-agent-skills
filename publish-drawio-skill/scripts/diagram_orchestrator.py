@@ -281,9 +281,11 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
     """Apply the typed Supervisor plan or fail closed before invoking sibling roles."""
     result = decision["result"]
     action = result["action"]
+    # required_roles selects downstream siblings. The already completed,
+    # model-proven Supervisor remains host-owned workflow bookkeeping and does
+    # not need to repeat its own identity in the model's sibling list.
     roles = set(result["required_roles"])
-    if "supervisor" not in roles:
-        raise supervisor.SupervisorError("Supervisor decision must retain the supervisor role")
+    roles.add("supervisor")
     if phase == "initial":
         allowed_actions = {"create", "analyze"} if workflow["mode"] == "create" else {"analyze", "repair", "review"}
         missing = {"semantic_analyst", "reviewer"} - roles

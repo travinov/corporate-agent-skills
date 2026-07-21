@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.9}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.10}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -168,6 +168,11 @@ def verify_tree(root, label):
     review_host = (root / "scripts" / "diagram_host.py").read_text(encoding="utf-8")
     if '"improve": "/drawio:improve"' not in review_host:
         fail(f"Missing {label} zero-argument review-to-improve handoff")
+    orchestrator = (root / "scripts" / "diagram_orchestrator.py").read_text(encoding="utf-8")
+    if 'roles.add("supervisor")' not in orchestrator:
+        fail(f"Missing {label} Supervisor role normalization")
+    if "Supervisor decision must retain the supervisor role" in orchestrator:
+        fail(f"Obsolete {label} Supervisor self-membership rejection remains active")
     agent_runtime = (root / "scripts" / "agent_runtime.py").read_text(encoding="utf-8")
     for marker in (
         '"--allowed-mcp-server-names", ""',

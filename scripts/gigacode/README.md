@@ -98,6 +98,11 @@ run creates `.diagram-runs/<run-id>/host-preflight.json`,
 the user's project. The native supervisor entry remains visible for advisory
 planning compatibility only.
 
+In `1.23.0-corporate.10` and newer, Supervisor `required_roles` is a downstream
+sibling list. The host retains the already executed Supervisor itself; it does
+not reject a valid plan merely because the model omitted its own name. Missing
+mandatory sibling roles and incompatible actions still fail closed.
+
 `./install/rollback_drawio_agent_extension.sh --backup PATH` selects a specific backup.
 Backups are stored under
 `~/.gigacode/backups/drawio-agent-extension/<UTC timestamp>`.

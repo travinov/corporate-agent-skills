@@ -74,6 +74,20 @@ class ContractDocumentationTests(unittest.TestCase):
         self.assertIn("commands/drawio/review.md", skill)
         self.assertIn("scripts/diagram_host.py", skill)
 
+    def test_supervisor_required_roles_are_documented_as_downstream_siblings(self):
+        skill = self.read("SKILL.md")
+        workflow = self.read("references/diagram-supervisor.md")
+        prompt = self.read("agents/diagram-supervisor.md")
+        schema = json.loads(self.read("data/supervisor-decision.v1.schema.json"))
+
+        self.assertIn("downstream sibling selection", skill)
+        self.assertIn("does not synthesize any omitted", workflow)
+        self.assertIn("You may omit\n`supervisor`", prompt)
+        self.assertIn(
+            "already executed supervisor role",
+            schema["properties"]["result"]["properties"]["required_roles"]["description"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

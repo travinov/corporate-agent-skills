@@ -15,6 +15,14 @@ The lifecycle host SHALL treat every isolated Supervisor, Semantic Analyst, Repa
 - **WHEN** the isolated role emits no tool calls, uses the configured model, and returns exactly one schema-valid JSON object
 - **THEN** the host records the role result and continues from the existing persisted workflow state
 
+#### Scenario: Supervisor omits itself from downstream required roles
+- **WHEN** a model-proven schema-valid Supervisor decision contains every mandatory sibling role for the phase but does not repeat `supervisor` in `result.required_roles`
+- **THEN** the host preserves the original decision, retains `supervisor` in host-owned workflow bookkeeping, and continues without treating the omission as a role failure
+
+#### Scenario: Supervisor omits a mandatory sibling role
+- **WHEN** a Supervisor decision omits Semantic Analyst or Reviewer during the initial phase, or omits Repair or Reviewer during continuation
+- **THEN** the host fails closed before invoking an unrequested sibling and does not use Supervisor self-normalization to add that sibling
+
 #### Scenario: Denied tools consume the bounded turn budget
 - **WHEN** a corporate model would repeatedly select denied tools instead of returning its JSON decision
 - **THEN** the role invocation advertises no core tools or globally configured MCP servers, remains bounded, and preserves the failed runtime if the model still exhausts the limit

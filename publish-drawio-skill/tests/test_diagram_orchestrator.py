@@ -262,6 +262,64 @@ class DiagramOrchestratorTests(unittest.TestCase):
         )
         self.assertNotIn("review_handoff", resolution)
 
+    def test_improve_accepts_supervisor_downstream_roles_without_repeating_self(self):
+        root, workspace, _ = self.create_workspace()
+        target = workspace / "self-omitting-supervisor.drawio"
+        target.write_text(clean_diagram(), encoding="utf-8")
+        cli = root / "self-omitting-supervisor-cli.py"
+        cli.write_text(
+            FAKE_GIGACODE.replace(
+                '"required_roles": ["supervisor", "semantic_analyst", "reviewer"],',
+                '"required_roles": ["semantic_analyst", "reviewer"],',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        cli.chmod(0o755)
+
+        completed = self.run_host(
+            "improve", "--workspace", workspace, "--cli", cli, qwen_args=""
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertNotEqual(result["status"], "error")
+        workflow = json.loads(Path(result["evidence"]["workflow"]).read_text())
+        self.assertEqual(
+            workflow["supervisor_decision"]["result"]["required_roles"],
+            ["semantic_analyst", "reviewer"],
+        )
+        self.assertEqual(
+            workflow["required_roles"],
+            ["reviewer", "semantic_analyst", "supervisor"],
+        )
+
+    def test_supervisor_self_normalization_does_not_add_missing_siblings(self):
+        workflow = {"mode": "improve"}
+        decision = {
+            "schema_version": 1,
+            "role": "supervisor",
+            "status": "ok",
+            "result": {
+                "action": "analyze",
+                "reason": "Reviewer was omitted deliberately for the regression",
+                "required_roles": ["semantic_analyst"],
+            },
+        }
+
+        with self.assertRaisesRegex(
+            orchestrator.supervisor.SupervisorError,
+            "omitted mandatory initial roles: reviewer",
+        ):
+            orchestrator.consume_supervisor_decision(
+                workflow,
+                decision,
+                phase="initial",
+                requested_max_iterations=3,
+            )
+
+        self.assertNotIn("required_roles", workflow)
+
     def test_bare_improve_rejects_stale_review_in_ambiguous_workspace(self):
         root, workspace, cli = self.create_workspace()
         reviewed = workspace / "reviewed.drawio"

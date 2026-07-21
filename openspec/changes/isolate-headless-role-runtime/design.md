@@ -36,6 +36,7 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 13. **Keep generated commands executable.** `next_commands` uses the same documented grammar as the bridge. A review result carries its selected diagram into the improve command, and explicit resume/trace commands remain valid even when multiple diagrams or runs exist.
 14. **Persist a zero-argument review handoff.** A bare improve command first selects the latest completed read-only review whose artifact is still inside the workspace and whose current SHA-256 matches the reviewed hash. If no eligible handoff exists, the only root-level `.drawio` is deterministic; otherwise the host returns selection-required without starting a run. The host supplies the stable default request `Исправь найденные валидатором и Reviewer замечания`, records how both values were resolved, and retains explicit arguments as overrides.
 15. **Remove global MCP servers before discovery.** Pass `--allowed-mcp-server-names` with one empty string on every isolated role invocation. Qwen Code 0.13.1 interprets the present-but-empty CLI allowlist as allowing no MCP servers, so globally configured Jira, Bitbucket, and other MCP tool schemas never enter the child role registry. Require the flag in capability detection and installer verification; retain `mcp__*` exclusion plus event auditing as defense in depth.
+16. **Do not make a Supervisor repeat its own identity in sibling routing.** The top-level schema, runtime model proof, and `role_finished` evidence already prove that Supervisor executed. Interpret `result.required_roles` as the requested downstream role set, preserve that original decision unchanged, and add `supervisor` only to the host-owned workflow bookkeeping set. Continue to reject missing mandatory sibling roles, unauthorized Repair, and phase-incompatible actions; never synthesize another sibling role.
 
 ## Risks / Trade-offs
 
@@ -53,11 +54,12 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 - **A previous review points at stale or moved content** -> verify workspace containment, run binding, reviewer completion, and current artifact hash before accepting the handoff; otherwise fall back only when one workspace diagram is unambiguous.
 - **The GigaCode fork omits or changes the empty MCP allowlist flag** -> require the exact option in CLI capability detection and installation verification, fail before invoking a role, and require a corporate runtime retest before acceptance.
 - **A fork exposes an MCP tool despite the empty allowlist** -> retain wildcard MCP exclusion and reject every observed role tool call through the existing event audit.
+- **Host normalization could hide a malformed role plan** -> normalize only the already completed `supervisor` bookkeeping member; preserve the raw decision and keep every sibling/action invariant fail closed.
 
 ## Migration Plan
 
-1. Ship the follow-up as a new side-by-side `1.23.0-corporate.9` release ZIP and preserve
-   `1.23.0-corporate.8` plus the earlier packages for rollback.
+1. Ship the follow-up as a new side-by-side `1.23.0-corporate.10` release ZIP and preserve
+   `1.23.0-corporate.9` plus the earlier packages for rollback.
 2. Reinstall from the approved local archive on the corporate Mac.
 3. Re-run the captured review/improve argument cases, then the same `/drawio:create` smoke test, and inspect the per-attempt `runtime-output.jsonl` captures plus `/drawio:trace`.
 4. Roll back by reinstalling the previous ZIP if capability detection reports that the corporate fork lacks a required flag.
