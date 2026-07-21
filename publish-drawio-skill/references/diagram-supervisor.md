@@ -44,17 +44,20 @@ For stateful work, use the lifecycle commands:
 
 ```text
 /drawio:create "description"
-/drawio:improve "requirements"
+/drawio:improve
+/drawio:improve "optional additional requirements"
 /drawio:resume continue "correction"
 /drawio:resume approve
 /drawio:trace
 ```
 
 The current directory is the workspace. Short forms are resolved by
-`command_ux.py` before preflight: create allocates a safe filename,
-improve/review require exactly one root-level `.drawio`, resume requires exactly
-one pending checkpoint, and trace chooses the latest workflow. Explicit flags
-remain available. No model is invoked to guess an ambiguous file or run.
+`command_ux.py` before preflight: create allocates a safe filename; bare improve
+uses the latest completed hash-matching review handoff, then the only root-level
+`.drawio`, and supplies the standard repair intent; review requires exactly one
+root-level `.drawio`; resume requires exactly one pending checkpoint; and trace
+chooses the latest workflow. Explicit flags remain available. No model is invoked
+to guess an ambiguous file or run.
 
 Create and improve invoke isolated Supervisor and Semantic Analyst, then
 deterministic rendering/import and strict validation. Repair is invoked only

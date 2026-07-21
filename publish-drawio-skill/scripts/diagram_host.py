@@ -170,6 +170,7 @@ def run_review(artifact, workspace, cli, *, run_id=None, profile=None, source=No
     reviewer_passed = reviewer.get("status") == "completed" and reviewer.get("verdict") == "approve"
     result = {
         "schema_version": 1,
+        "mode": "review",
         "status": "passed" if validation_passed and reviewer_passed else "findings",
         "run_id": preflight["run_id"],
         "run_dir": str(run_dir),
@@ -193,6 +194,11 @@ def run_review(artifact, workspace, cli, *, run_id=None, profile=None, source=No
             if validation_passed and reviewer_passed
             else "inspect_findings_before_any_repair"
         ),
+        "improve_handoff": {
+            "diagram": str(artifact),
+            "artifact_sha256": original_sha256,
+            "default_request": command_ux.DEFAULT_IMPROVE_REQUEST,
+        },
     }
     supervisor.write_json(run_dir / "host-result.json", result)
     return result
@@ -230,10 +236,11 @@ def main():
             "diagram_selection": selection,
         }
         result["next_commands"] = {
-            "improve": (
+            "improve": "/drawio:improve",
+            "improve_explicit": (
                 "/drawio:improve --diagram "
                 f"{command_ux.quote_command_value(artifact)} --request "
-                f"{command_ux.quote_command_value('Исправь найденные валидатором и Reviewer замечания')}"
+                f"{command_ux.quote_command_value(command_ux.DEFAULT_IMPROVE_REQUEST)}"
             ),
             "trace": (
                 "/drawio:trace --run "

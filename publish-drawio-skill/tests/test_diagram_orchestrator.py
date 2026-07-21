@@ -209,6 +209,76 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(result["candidates"]), 2)
         self.assertFalse((workspace / ".diagram-runs").exists())
 
+    def test_bare_improve_uses_latest_hash_matching_completed_review(self):
+        root, workspace, cli = self.create_workspace()
+        reviewed = workspace / "reviewed.drawio"
+        reviewed.write_text(clean_diagram(), encoding="utf-8")
+        (workspace / "other.drawio").write_text(clean_diagram(), encoding="utf-8")
+        review = orchestrator.diagram_host.run_review(
+            reviewed, workspace, cli, run_id="review-handoff"
+        )
+        self.assertEqual(review["status"], "passed")
+
+        completed = self.run_host(
+            "improve", "--workspace", workspace, "--cli", cli, qwen_args=""
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        resolution = result["command_resolution"]
+        self.assertEqual(resolution["diagram"], str(reviewed.resolve()))
+        self.assertEqual(resolution["diagram_selection"], "latest_completed_review")
+        self.assertEqual(
+            resolution["request"], orchestrator.command_ux.DEFAULT_IMPROVE_REQUEST
+        )
+        self.assertEqual(
+            resolution["request_source"], "default_review_findings_request"
+        )
+        self.assertEqual(resolution["review_handoff"]["run_id"], review["run_id"])
+        self.assertEqual(
+            resolution["review_handoff"]["artifact_sha256"],
+            hashlib.sha256(reviewed.read_bytes()).hexdigest(),
+        )
+
+    def test_bare_improve_falls_back_to_only_workspace_diagram(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "only.drawio"
+        target.write_text(clean_diagram(), encoding="utf-8")
+
+        completed = self.run_host(
+            "improve", "--workspace", workspace, "--cli", cli, qwen_args=""
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        resolution = result["command_resolution"]
+        self.assertEqual(resolution["diagram"], str(target.resolve()))
+        self.assertEqual(resolution["diagram_selection"], "only_drawio_in_workspace")
+        self.assertEqual(
+            resolution["request_source"], "default_review_findings_request"
+        )
+        self.assertNotIn("review_handoff", resolution)
+
+    def test_bare_improve_rejects_stale_review_in_ambiguous_workspace(self):
+        root, workspace, cli = self.create_workspace()
+        reviewed = workspace / "reviewed.drawio"
+        reviewed.write_text(clean_diagram(), encoding="utf-8")
+        (workspace / "other.drawio").write_text(clean_diagram(), encoding="utf-8")
+        orchestrator.diagram_host.run_review(
+            reviewed, workspace, cli, run_id="stale-review"
+        )
+        reviewed.write_text(clean_diagram().replace("Step", "Changed"), encoding="utf-8")
+
+        completed = self.run_host(
+            "improve", "--workspace", workspace, "--cli", cli, qwen_args=""
+        )
+        self.assertEqual(completed.returncode, 2)
+        result = json.loads(completed.stderr)
+        self.assertEqual(result["status"], "selection_required")
+        self.assertEqual(result["code"], "diagram_selection_ambiguous")
+        self.assertEqual(
+            sorted(path.name for path in (workspace / ".diagram-runs").iterdir()),
+            ["stale-review"],
+        )
+
     def test_short_resume_selects_only_pending_run_and_trace_selects_latest(self):
         root, workspace, cli = self.create_workspace()
         target = workspace / "short-resume.drawio"

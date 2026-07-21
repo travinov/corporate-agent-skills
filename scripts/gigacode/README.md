@@ -62,7 +62,8 @@ Then open the diagram project as the GigaCode working directory and run:
 ```text
 /drawio:review
 /drawio:create "what to show"
-/drawio:improve "what to change"
+/drawio:improve
+/drawio:improve "optional additional change"
 /drawio:resume continue "additional requirement"
 /drawio:resume approve
 /drawio:trace
@@ -71,6 +72,12 @@ Then open the diagram project as the GigaCode working directory and run:
 The command creates `.diagram-runs/<run-id>` itself. Do not create that
 directory manually and do not ask the chat model to execute the workflow step
 by step.
+
+After a completed `/drawio:review`, the normal continuation is the bare
+`/drawio:improve`. It reuses the reviewed diagram only while its SHA-256 still
+matches. With no eligible review it can select one root-level `.drawio`; with
+multiple candidates it stops before model execution and asks for an explicit
+selection.
 
 The package uses Qwen Code's canonical Markdown command format under
 `commands/drawio/`. Every active command therefore remains covered by

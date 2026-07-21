@@ -1229,19 +1229,34 @@ def main():
         if args.command in {"create", "improve"}:
             diagram, request = command_ux.split_diagram_request(
                 args.input, diagram=args.diagram, request=args.request,
+                request_required=args.command == "create",
             )
+            request_was_supplied = request is not None
             if args.command == "create":
                 if diagram:
                     resolved_diagram, selection = command_ux.select_diagram(args.workspace, diagram)
                 else:
                     resolved_diagram, selection = command_ux.generated_target(args.workspace, request)
+                handoff = None
             else:
-                resolved_diagram, selection = command_ux.select_diagram(args.workspace, diagram)
+                resolved_diagram, selection, request, handoff = command_ux.resolve_improve_inputs(
+                    args.workspace, diagram=diagram, request=request,
+                )
+            if args.request is not None:
+                request_source = "explicit_flag"
+            elif request_was_supplied:
+                request_source = "conversational_text"
+            elif args.command == "improve":
+                request_source = "default_review_findings_request"
+            else:
+                request_source = "conversational_text"
             resolution = {
                 "workspace": str(command_ux.workspace_path(args.workspace)),
                 "diagram": str(resolved_diagram), "diagram_selection": selection,
-                "request": request, "request_source": "explicit_flag" if args.request is not None else "conversational_text",
+                "request": request, "request_source": request_source,
             }
+            if handoff:
+                resolution["review_handoff"] = handoff
             result = start_run(
                 args.command, resolved_diagram, request, args.workspace, args.cli,
                 run_id=args.run_id, timeout=args.timeout, max_iterations=args.max_iterations,

@@ -2,6 +2,7 @@
 """Natural-language-first argument normalization for Draw.io commands."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ DECISIONS = (
 )
 QWEN_COMMAND_ARGS_ENV = "DRAWIO_COMMAND_ARGS"
 HOST_OWNED_OPTIONS = ("--workspace", "--cli")
+DEFAULT_IMPROVE_REQUEST = "Исправь найденные валидатором и Reviewer замечания"
 
 
 class CommandUXError(ValueError):
@@ -92,7 +94,7 @@ def workspace_path(workspace):
     return path
 
 
-def positional_request(parts, explicit=None):
+def positional_request(parts, explicit=None, *, required=True):
     if explicit is not None:
         if parts:
             raise CommandUXError(
@@ -103,17 +105,19 @@ def positional_request(parts, explicit=None):
     else:
         value = " ".join(parts)
     value = (value or "").strip()
-    if not value:
+    if not value and (required or explicit is not None):
         raise CommandUXError("request_required", "diagram request must not be empty")
-    return value
+    return value or None
 
 
-def split_diagram_request(parts, *, diagram=None, request=None):
+def split_diagram_request(parts, *, diagram=None, request=None, request_required=True):
     parts = list(parts or [])
     short_diagram = None
     if diagram is None and parts and parts[0].lower().endswith(".drawio"):
         short_diagram = parts.pop(0)
-    return diagram or short_diagram, positional_request(parts, request)
+    return diagram or short_diagram, positional_request(
+        parts, request, required=request_required
+    )
 
 
 def _slug_words(request):
@@ -148,6 +152,115 @@ def workspace_diagrams(workspace):
         for path in workspace.glob("*.drawio")
         if path.is_file() and not path.name.startswith(".")
     )
+
+
+def _inside(path, parent):
+    try:
+        Path(path).resolve().relative_to(Path(parent).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def latest_review_handoff(workspace):
+    """Return the latest completed, hash-matching read-only review handoff."""
+    workspace = workspace_path(workspace)
+    runs_root = workspace / ".diagram-runs"
+    if not runs_root.is_dir():
+        return None
+    eligible = []
+    for result_path in runs_root.glob("*/host-result.json"):
+        run_dir = result_path.parent.resolve()
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            artifact = result["artifact"]
+            reviewer = result["reviewer"]
+            evidence = result["evidence"]
+            result_run_dir = Path(result["run_dir"]).expanduser().resolve()
+            reviewed_path = Path(artifact["path"]).expanduser().resolve()
+            reviewed_sha256 = artifact["sha256"]
+            reviewer_input_path = Path(evidence["reviewer_input"]).expanduser().resolve()
+            reviewer_input = json.loads(
+                reviewer_input_path.read_text(encoding="utf-8")
+            )
+            audit_artifact = reviewer_input["artifact"]
+            audit_path = Path(audit_artifact["path"]).expanduser().resolve()
+            audit_sha256 = audit_artifact["sha256"]
+            result_mtime_ns = result_path.stat().st_mtime_ns
+        except (KeyError, TypeError, OSError, json.JSONDecodeError):
+            continue
+        if not _inside(run_dir, runs_root):
+            continue
+        if result.get("mode") not in (None, "review"):
+            continue
+        if result.get("status") not in {"passed", "findings"}:
+            continue
+        if result_run_dir != run_dir:
+            continue
+        if artifact.get("modified") is not False:
+            continue
+        if reviewer.get("status") != "completed":
+            continue
+        if reviewer.get("verdict") not in {"approve", "reject"}:
+            continue
+        if reviewer.get("model_proof", {}).get("verified") is not True:
+            continue
+        if not _inside(reviewed_path, workspace) or reviewed_path.suffix.lower() != ".drawio":
+            continue
+        if not reviewed_path.is_file() or not _inside(reviewer_input_path, run_dir):
+            continue
+        if reviewer_input.get("run_id") != result["run_id"]:
+            continue
+        if audit_path != reviewed_path or audit_sha256 != reviewed_sha256:
+            continue
+        handoff = result.get("improve_handoff")
+        if handoff is not None and (
+            not isinstance(handoff, dict)
+            or handoff.get("diagram") != str(reviewed_path)
+            or handoff.get("artifact_sha256") != reviewed_sha256
+        ):
+            continue
+        if not isinstance(reviewed_sha256, str) or _sha256_file(reviewed_path) != reviewed_sha256:
+            continue
+        eligible.append((result_mtime_ns, run_dir.name, {
+            "run_id": result["run_id"],
+            "run_dir": str(run_dir),
+            "host_result": str(result_path.resolve()),
+            "diagram": str(reviewed_path),
+            "artifact_sha256": reviewed_sha256,
+            "review_status": result["status"],
+            "reviewer_verdict": reviewer.get("verdict"),
+        }))
+    if not eligible:
+        return None
+    return max(eligible, key=lambda item: (item[0], item[1]))[2]
+
+
+def resolve_improve_inputs(workspace, *, diagram=None, request=None):
+    """Resolve omitted improve inputs without invoking a model or mutating a run."""
+    handoff = None
+    if diagram:
+        resolved_diagram, diagram_selection = select_diagram(workspace, diagram)
+    else:
+        handoff = latest_review_handoff(workspace)
+        if handoff:
+            resolved_diagram = Path(handoff["diagram"])
+            diagram_selection = "latest_completed_review"
+        else:
+            resolved_diagram, diagram_selection = select_diagram(workspace)
+    if request:
+        resolved_request = request
+    else:
+        resolved_request = DEFAULT_IMPROVE_REQUEST
+    return resolved_diagram, diagram_selection, resolved_request, handoff
 
 
 def select_diagram(workspace, explicit=None):

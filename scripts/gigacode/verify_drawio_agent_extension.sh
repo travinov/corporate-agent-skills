@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.7}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.8}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -156,11 +156,17 @@ def verify_tree(root, label):
         if "DRAWIO_COMMAND_ARGS={{args}}" not in command_text:
             fail(f"{label} {command_file} does not use the safe DRAWIO_COMMAND_ARGS bridge")
     command_ux = (root / "scripts" / "command_ux.py").read_text(encoding="utf-8")
-    for marker in ("shlex.split", "HOST_OWNED_OPTIONS", "DRAWIO_COMMAND_ARGS"):
+    for marker in (
+        "shlex.split", "HOST_OWNED_OPTIONS", "DRAWIO_COMMAND_ARGS",
+        "DEFAULT_IMPROVE_REQUEST", "latest_review_handoff",
+    ):
         if marker not in command_ux:
             fail(f"Missing {label} command argument bridge marker: {marker}")
     if "eval(" in command_ux or "shell=True" in command_ux:
         fail(f"Unsafe {label} command argument bridge implementation")
+    review_host = (root / "scripts" / "diagram_host.py").read_text(encoding="utf-8")
+    if '"improve": "/drawio:improve"' not in review_host:
+        fail(f"Missing {label} zero-argument review-to-improve handoff")
     manifest = load_json(root / "gemini-extension.json")
     if manifest.get("name") != "publish-drawio-skill":
         fail(f"Unexpected {label} manifest name: {manifest.get('name')!r}")

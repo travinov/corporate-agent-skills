@@ -85,6 +85,10 @@ class DiagramHostTests(unittest.TestCase):
             self.assertEqual(result["reviewer"]["status"], "completed")
             self.assertEqual(result["reviewer"]["resolved_model"], "vllm/DeepSeek-V4-Flash-262k")
             self.assertTrue(result["reviewer"]["model_proof"]["verified"])
+            self.assertEqual(result["mode"], "review")
+            self.assertEqual(
+                result["improve_handoff"]["artifact_sha256"], original
+            )
             self.assertFalse(result["artifact"]["modified"])
             self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), original)
             self.assertTrue(supervisor.verify_host_preflight(run_dir)["valid"])
@@ -244,9 +248,11 @@ print(json.dumps(events))
             self.assertEqual(result["reviewer"]["resolution_mode"], "isolated_cli")
             self.assertTrue(result["reviewer"]["model_proof"]["verified"])
             improve = result["next_commands"]["improve"]
-            self.assertTrue(improve.startswith("/drawio:improve --diagram "))
+            self.assertEqual(improve, "/drawio:improve")
+            explicit = result["next_commands"]["improve_explicit"]
+            self.assertTrue(explicit.startswith("/drawio:improve --diagram "))
             improve_tokens = diagram_host.command_ux.qwen_command_tokens(
-                improve.removeprefix("/drawio:improve ")
+                explicit.removeprefix("/drawio:improve ")
             )
             self.assertEqual(improve_tokens[0], "--diagram")
             self.assertEqual(improve_tokens[1], str(artifact.resolve()))

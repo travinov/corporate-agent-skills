@@ -46,3 +46,11 @@
 - [x] 7.3 Add regression coverage for the exact quoted, `@`-prefixed, advanced-flag, resume-feedback, and explicit-trace cases captured on corporate GigaCode
 - [x] 7.4 Extend installer verification and operator documentation with the command-transport contract
 - [x] 7.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.7` ZIP
+
+## 8. Zero-argument review-to-improve handoff
+
+- [x] 8.1 Specify deterministic, hash-bound review handoff selection, one-diagram fallback, default repair intent, and explicit override precedence
+- [x] 8.2 Implement bare `/drawio:improve`, persist its resolution evidence, and publish it as the primary review continuation
+- [x] 8.3 Add regression coverage for fresh, stale, missing, ambiguous, and explicitly overridden improve inputs
+- [x] 8.4 Update command, operator, installer, and verifier contracts for the zero-argument workflow
+- [ ] 8.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.8` ZIP

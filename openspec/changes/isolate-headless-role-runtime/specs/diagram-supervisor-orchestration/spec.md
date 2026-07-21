@@ -53,3 +53,26 @@ The extension SHALL transport the complete Qwen `{{args}}` expansion as one shel
 #### Scenario: Host publishes a follow-up command
 - **WHEN** review or orchestration returns `next_commands`
 - **THEN** each published short or explicit command conforms to the same bridge contract and identifies the selected diagram or run whenever automatic selection would be ambiguous
+
+### Requirement: Continue read-only review without repeated improve arguments
+The extension SHALL support a bare `/drawio:improve` as the normal continuation of a completed read-only review and SHALL resolve its inputs deterministically before any agent or validator work starts.
+
+#### Scenario: Latest completed review still matches its diagram
+- **WHEN** the user invokes `/drawio:improve` without arguments and the workspace contains a completed read-only review whose artifact path is inside the workspace and whose recorded SHA-256 matches the current file
+- **THEN** the host selects the latest eligible review artifact, supplies the default repair request, records the source review run, and starts the normal monotonic improve lifecycle
+
+#### Scenario: No eligible review and one diagram exists
+- **WHEN** the user invokes `/drawio:improve` without arguments, no eligible review handoff exists, and exactly one root-level `.drawio` file exists
+- **THEN** the host selects that diagram, supplies the default repair request, and records both automatic resolution sources
+
+#### Scenario: Review context is stale or diagram selection is ambiguous
+- **WHEN** no hash-matching completed review can identify a diagram and the workspace has zero or multiple root-level `.drawio` files
+- **THEN** the host returns an actionable selection-required result without creating a run or invoking any model
+
+#### Scenario: User overrides an automatic improve input
+- **WHEN** the user supplies conversational text, `--request`, or `--diagram`
+- **THEN** each explicit value overrides its automatic counterpart while omitted values still use the deterministic handoff or default
+
+#### Scenario: Review publishes its normal continuation
+- **WHEN** a read-only review completes
+- **THEN** its primary next command is exactly `/drawio:improve`, with an explicit equivalent retained only as advanced evidence and recovery guidance

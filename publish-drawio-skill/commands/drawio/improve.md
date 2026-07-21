@@ -11,8 +11,10 @@ If a role exhausts its command-line turn budget, report the saved runtime eviden
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
 If `model_diversity_degraded` is true, identify the configured Supervisor fallback.
 
-Normal use when the workspace contains one `.drawio`:
-`/drawio:improve "requirements or corrections"`. Advanced form:
+Normal use after `/drawio:review`, or when the workspace contains one `.drawio`:
+`/drawio:improve`. The host reuses only a completed review whose artifact hash still
+matches; otherwise it selects the only root-level diagram. Optional conversational
+corrections remain supported: `/drawio:improve "requirements or corrections"`. Advanced form:
 `--diagram "path/to/existing.drawio" --request "requirements or corrections"`.
 
 ```json

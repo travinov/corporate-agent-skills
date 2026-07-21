@@ -15,6 +15,7 @@ Corporate GigaCode 26.5.17 loaded the installed extension and recursively invoke
 - Permit one policy-declared Supervisor fallback model only after a proven `turn_limit`; record the primary failure as recovered evidence and expose the loss of model diversity.
 - Treat Qwen custom-command `{{args}}` as one shell-escaped transport value, parse it inside Python without `eval`, and apply the same argument contract to all five `/drawio:*` entry points.
 - Generate only commands that the installed custom-command bridge can execute, including explicit diagram, run, decision, request, and feedback values.
+- Let a bare `/drawio:improve` continue from the latest completed, hash-matching read-only review, or from the only workspace diagram when no review handoff is available, without making the user repeat the diagram path or a generic repair request.
 - Add a regression fixture based on the captured corporate runtime failure and report actionable isolation diagnostics.
 
 ## Capabilities
@@ -35,4 +36,5 @@ Corporate GigaCode 26.5.17 loaded the installed extension and recursively invoke
 - Corporate installation/release package version and verification expectations.
 - `/drawio:trace` output for both successful and failed role invocations.
 - `/drawio:create`, `/drawio:improve`, `/drawio:review`, `/drawio:resume`, and `/drawio:trace` argument transport plus generated `next_commands`.
+- Deterministic read-only review handoff discovery and bare improve command resolution.
 - No change to interactive `/model`; each role retains its explicit primary model mapping and only Supervisor gains a bounded, explicit recovery model.
