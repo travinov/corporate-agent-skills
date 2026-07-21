@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.12}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.13}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -136,6 +136,15 @@ COMMAND_FILES = (
 
 
 def verify_tree(root, label):
+    operator_guide = root / "docs" / "drawio-agent-extension-corporate-test-commands.md"
+    if not operator_guide.is_file():
+        fail(f"Missing {label} corporate operator guide: docs/drawio-agent-extension-corporate-test-commands.md")
+    guide_text = operator_guide.read_text(encoding="utf-8")
+    for marker in ("/drawio:review", "/drawio:trace", "/drawio:improve", "drawio-skill-agent-extension.zip.sha256"):
+        if marker not in guide_text:
+            fail(f"Missing {label} corporate operator guide marker: {marker}")
+    if re.search(r"(?m)^SHA-256:\s*`[0-9a-f]{64}`", guide_text):
+        fail(f"Self-referential ZIP checksum in {label} corporate operator guide")
     for relative in (
         "scripts/diagram_host.py",
         "scripts/diagram_orchestrator.py",

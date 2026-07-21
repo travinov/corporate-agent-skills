@@ -84,3 +84,9 @@
 - [x] 12.3 Persist review workflow state and resolve trace references by directory or persisted run ID
 - [x] 12.4 Add corporate-export regressions, verifier markers, and operator documentation
 - [x] 12.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.12` ZIP
+
+## 13. Offline corporate operator guide
+
+- [x] 13.1 Add the complete Russian installation and test guide under the packaged extension tree without a self-referential ZIP checksum
+- [x] 13.2 Require the guide in release, archive, and installed-tree verification tests
+- [ ] 13.3 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.13` ZIP with the guide included

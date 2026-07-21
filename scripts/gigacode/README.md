@@ -1,5 +1,8 @@
 # GigaCode Draw.io extension installers
 
+Полная русская пошаговая инструкция включена в офлайновый ZIP:
+[`../docs/drawio-agent-extension-corporate-test-commands.md`](../docs/drawio-agent-extension-corporate-test-commands.md).
+
 These scripts are prepared on a machine without GigaCode and are intended to
 run on the corporate macOS laptop where the CLI is installed at:
 

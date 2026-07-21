@@ -40,6 +40,7 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 17. **Make lifecycle topology host-owned.** The deterministic host, not one stochastic model response, authorizes every role required by the current phase. Initial create/improve authorizes Supervisor, Semantic Analyst, Repair, and Reviewer; continuation authorizes Supervisor, Repair, and Reviewer. Repair remains conditional on deterministic validation or independent-review findings, and Semantic Analyst is not rerun after its approved initial plan. Record `supervisor_declared_roles`, `host_mandatory_roles`, and their effective `required_roles` union separately. Keep phase-incompatible actions, unknown schema roles, semantic mutations without approval, isolation failures, and model-proof failures fail closed.
 18. **Bind Reviewer evidence in the deterministic host.** The model returns a schema-valid analytical decision containing verdict metadata and findings. It is not required to copy `run_id`, candidate, report, or receipt hashes. The host derives those fields only from the validated role input, constructs the final `reviewer-verdict.v1` envelope, records a binding proof, and preserves the raw model response in the hashed runtime capture. Optional legacy model-declared binding fields are diagnostic only and cannot override host values.
 19. **Make read-only review a first-class trace workflow.** Persist its source artifact and accepted validation receipt in `workflow.json`. Resolve an explicit reference by directory name or the persisted `run_id`, and let bare trace select the newest workflow regardless of whether it came from review, create, or improve. Generated explicit trace commands must resolve to the same run.
+20. **Ship the operator guide as release content.** Keep the complete Russian corporate installation and test procedure under `docs/drawio-agent-extension-corporate-test-commands.md` inside the extension source, require it in release and installer verification, and include it in the deterministic manifest. The packaged guide references the externally distributed checksum instead of embedding the archive's own SHA-256, which would make the archive self-referential and non-reproducible.
 
 ## Risks / Trade-offs
 
@@ -60,11 +61,12 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 - **Host-owned role authorization could hide the model's incomplete plan** -> preserve the raw Supervisor decision and its declared roles separately, publish the host-mandatory set explicitly, and keep action/schema/isolation/model-proof invariants fail closed.
 - **Host binding could disguise a Reviewer that evaluated different evidence** -> retain the exact role input hash and raw runtime capture, record any legacy declared-binding mismatch, validate the final envelope independently, and never let model-supplied hashes override the input-derived values.
 - **A review workflow could displace an unrelated trace target** -> select by persisted workflow modification time for bare trace, expose `command_resolution`, and make an explicit run UUID resolve deterministically across directory names.
+- **The packaged guide's checksum becomes stale after packaging** -> never embed the ZIP's own hash inside its payload; distribute the authoritative checksum alongside the archive and verify the guide itself through the release manifest.
 
 ## Migration Plan
 
-1. Ship the follow-up as a new side-by-side `1.23.0-corporate.12` release ZIP and preserve
-   `1.23.0-corporate.11` plus the earlier packages for rollback.
+1. Ship the packaged-guide follow-up as a new side-by-side `1.23.0-corporate.13`
+   release ZIP and preserve `1.23.0-corporate.12` plus the earlier packages for rollback.
 2. Reinstall from the approved local archive on the corporate Mac.
 3. Re-run the captured review/improve argument cases, then the same `/drawio:create` smoke test, and inspect the per-attempt `runtime-output.jsonl` captures plus `/drawio:trace`.
 4. Roll back by reinstalling the previous ZIP if capability detection reports that the corporate fork lacks a required flag.

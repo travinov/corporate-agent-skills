@@ -1,7 +1,7 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "8ae7dc0906bb7288c289f849abb34c31b89fe41e75a6d8a2052ef456946f07e5",
+  "archive_sha256": "7606387e6d82a9f4e6afc95df1d3001bf8d695c3166eafc6b553c39e0d33f4c2",
   "files": [
     {
       "path": "DEPENDENCIES.md",
@@ -20,12 +20,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "21e9a938ba8dea6888874056071faa5677002cb758a626c312d89c07223b3b9d",
-      "size": 25114
+      "sha256": "7205e0dc44139d0a6e1f48fbe2c077ae386672ee783dd6e71d8186fa808aa821",
+      "size": 25416
     },
     {
       "path": "SKILL.md",
-      "sha256": "99ef1ab8627c2486ad2794769a78d6c763784140d35f06e47bac2667d4f4ba68",
+      "sha256": "c71af882de64cdc9a00d8fb47b0ef6622a2ddcba626d9f576c21ae3f4222c275",
       "size": 48538
     },
     {
@@ -189,6 +189,11 @@
       "size": 3308
     },
     {
+      "path": "docs/drawio-agent-extension-corporate-test-commands.md",
+      "sha256": "3cd795be7cc9b6212faf734e3b8572bec829bc6f4ed8db1d64b8443dc426c91d",
+      "size": 10460
+    },
+    {
       "path": "examples/roadmap/table-source.md",
       "sha256": "77ffedb42478a128102eb486b1d832ca66775733f25a16e233ac28c0f7f7f1d6",
       "size": 729
@@ -200,18 +205,18 @@
     },
     {
       "path": "gemini-extension.json",
-      "sha256": "4e151557a4b4a2e9f377c6a812ac9bb4ff423859a5d798e5a3fc780bb9134229",
+      "sha256": "65b4ad6b72eb9b5d90d15651c3aaeae109e66d012381b180144dffd827447af6",
       "size": 285
     },
     {
       "path": "install/README.md",
-      "sha256": "035d38a00270379eca089f1fe4e0e22b11dc7d0237942b250e157b509dccc8c2",
-      "size": 5125
+      "sha256": "df6a5d152aeac3a0e929c1a64199c6f39ca7a54c2ad865e4cb03627bb7daefdb",
+      "size": 5362
     },
     {
       "path": "install/install_drawio_agent_extension.sh",
-      "sha256": "315655d364fda36f870bbf065e1230a531a79f4184d038756f5370c58d4954e0",
-      "size": 20294
+      "sha256": "e520c120f7cdb7ada3162684c2ae025a7bc4db6fe5adeeca9ea0f8ca37109a5b",
+      "size": 20346
     },
     {
       "path": "install/rollback_drawio_agent_extension.sh",
@@ -220,12 +225,12 @@
     },
     {
       "path": "install/verify_drawio_agent_extension.sh",
-      "sha256": "0a2dc1c31d2dd953f0dfc18e5168245aa5c42ca7e04ca0f43ca3e8588de50073",
-      "size": 15523
+      "sha256": "5a9ce576b8d98166387ee71895d4f7dfd5eaf7787da8e3fd0278dc2bee1d6c4d",
+      "size": 16204
     },
     {
       "path": "metadata.md",
-      "sha256": "057b9dd92b2147ab6fa14a1e2ad6b1a71b1c7fce121fc8ebcad506382c43ff51",
+      "sha256": "928e7472b33f54058865a08379d6b4cb2d4784e879ca5f5cff1a78bb7932a213",
       "size": 3988
     },
     {
@@ -751,19 +756,19 @@
   ],
   "format_version": 1,
   "skill": "drawio",
-  "version": "1.23.0-corporate.12",
+  "version": "1.23.0-corporate.13",
   "version_sources": [
     {
       "path": "SKILL.md",
-      "value": "1.23.0-corporate.12"
+      "value": "1.23.0-corporate.13"
     },
     {
       "path": "metadata.md",
-      "value": "1.23.0-corporate.12"
+      "value": "1.23.0-corporate.13"
     },
     {
       "path": "gemini-extension.json",
-      "value": "1.23.0-corporate.12"
+      "value": "1.23.0-corporate.13"
     }
   ]
 }

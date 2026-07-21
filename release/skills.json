@@ -32,6 +32,7 @@
         "config.example.json",
         "assets/roadmap/*",
         "data/*",
+        "docs/*.md",
         "examples/**/*.*",
         "references/*.md",
         "scripts/aiicons.py",

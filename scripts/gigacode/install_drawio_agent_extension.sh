@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
 ARCHIVE_NAME="drawio-skill-agent-extension.zip"
-DEFAULT_VERSION="1.23.0-corporate.12"
-DEFAULT_BRANCH="codex/drawio-host-bound-review-trace-v1.23.0-corporate.12"
+DEFAULT_VERSION="1.23.0-corporate.13"
+DEFAULT_BRANCH="codex/drawio-packaged-guide-v1.23.0-corporate.13"
 DEFAULT_BASE_URL="https://raw.githubusercontent.com/travinov/corporate-agent-skills/refs/heads/${DEFAULT_BRANCH}/dist"
 
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
@@ -336,6 +336,7 @@ if [[ -n "$source_dir" ]]; then
     commands/drawio/review.md \
     commands/drawio/resume.md \
     commands/drawio/trace.md \
+    docs/drawio-agent-extension-corporate-test-commands.md \
     scripts/diagram_host.py \
     scripts/diagram_orchestrator.py \
     scripts/agent_runtime.py \

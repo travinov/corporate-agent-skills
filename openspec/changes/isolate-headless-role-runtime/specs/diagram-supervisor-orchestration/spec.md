@@ -108,3 +108,14 @@ The extension SHALL support a bare `/drawio:improve` as the normal continuation 
 #### Scenario: Review publishes its normal continuation
 - **WHEN** a read-only review completes
 - **THEN** its primary next command is exactly `/drawio:improve`, with an explicit equivalent retained only as advanced evidence and recovery guidance
+
+### Requirement: Package the corporate operator guide
+The offline extension release SHALL include the complete Russian corporate installation and test guide at `docs/drawio-agent-extension-corporate-test-commands.md`, and installation verification SHALL fail when that guide is missing.
+
+#### Scenario: Operator transfers only the approved ZIP
+- **WHEN** the user downloads, transfers, and extracts `drawio-skill-agent-extension.zip` on the corporate Mac
+- **THEN** the extracted extension contains the versioned installation, verification, review, trace, improve, and evidence-collection instructions without requiring a separate file transfer
+
+#### Scenario: Packaged guide describes checksum verification
+- **WHEN** the operator reads the guide from inside the archive
+- **THEN** it directs the operator to compare the ZIP against the externally published checksum and does not embed a self-referential archive checksum that would invalidate reproducible packaging

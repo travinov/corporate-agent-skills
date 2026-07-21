@@ -260,6 +260,21 @@ class ReleaseSkillsTests(unittest.TestCase):
         self.assertIn("scripts/diagram_orchestrator.py", includes)
         self.assertIn("scripts/diagram_host.py", includes)
         self.assertIn("scripts/command_ux.py", includes)
+        self.assertIn("docs/*.md", includes)
+        operator_guide = (
+            ROOT / "publish-drawio-skill" / "docs"
+            / "drawio-agent-extension-corporate-test-commands.md"
+        )
+        self.assertTrue(operator_guide.is_file())
+        guide_text = operator_guide.read_text(encoding="utf-8")
+        self.assertIn("drawio-skill-agent-extension.zip.sha256", guide_text)
+        self.assertNotRegex(guide_text, r"(?m)^SHA-256:\s*`[0-9a-f]{64}`")
+        with zipfile.ZipFile(ROOT / "dist" / "drawio-skill-agent-extension.zip") as bundle:
+            self.assertIn(
+                "drawio-skill/docs/"
+                "drawio-agent-extension-corporate-test-commands.md",
+                bundle.namelist(),
+            )
         mappings = {
             item["destination"]: item["source"]
             for item in config["skills"]["drawio"]["extra_files"]
