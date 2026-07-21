@@ -76,5 +76,5 @@
 - [x] 9.2 Run the complete locally available test suite, recording environment-only skips or dependency gaps separately from product failures.
 - [x] 9.3 Update all extension/package metadata consistently to `1.24.0-corporate.1` and include the corporate one-line test guide in the ZIP.
 - [x] 9.4 Build the side-by-side ZIP, checksum, and manifest; verify deterministic rebuild, archive/source parity, self-check, installer/verifier behavior, and rollback artifact preservation.
-- [ ] 9.5 Perform an independent final contract and regression review, commit the verified branch, push it, and publish the exact GitHub/archive/checksum handoff.
+- [x] 9.5 Perform an independent final contract and regression review, commit the verified branch, push it, and publish the exact GitHub/archive/checksum handoff.
 - [x] 9.6 Provide corporate-Mac acceptance commands for create and improve loops, all four runtime model proofs, Repair iteration, human decisions, publication, trace, and rollback; record live GigaCode execution as pending until the user runs it.
