@@ -89,4 +89,4 @@
 
 - [x] 13.1 Add the complete Russian installation and test guide under the packaged extension tree without a self-referential ZIP checksum
 - [x] 13.2 Require the guide in release, archive, and installed-tree verification tests
-- [ ] 13.3 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.13` ZIP with the guide included
+- [x] 13.3 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.13` ZIP with the guide included
