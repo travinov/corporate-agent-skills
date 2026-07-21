@@ -1680,6 +1680,59 @@ def transition(run_dir, target, artifact=None, receipt=None, decision=None, reas
     return state
 
 
+def record_initial_candidate(run_dir, artifact, report_path, receipt_path):
+    """Adopt the first rendered create artifact after a pre-render checkpoint.
+
+    This is the create-only counterpart of the normal candidate gate: there is
+    no earlier artifact to compare or replay, but strict validation evidence is
+    still required before the new baseline becomes accepted.
+    """
+    state = load_state(run_dir)
+    if state is None or state.get("state") != "validating":
+        raise SupervisorError("initial candidate adoption requires validating state")
+    if state.get("accepted_artifact"):
+        raise SupervisorError("initial candidate adoption cannot replace an accepted artifact")
+    artifact = Path(artifact).resolve()
+    report_path = Path(report_path).resolve()
+    receipt_path = Path(receipt_path).resolve()
+    artifact_hash = sha256_file(artifact)
+    report = load_json(report_path)
+    verification = verify_receipt(receipt_path, artifact)
+    receipt = load_json(receipt_path)
+    if not verification["valid"]:
+        raise SupervisorError(f"initial candidate receipt failed: {verification['checks']}")
+    if receipt.get("run_id") != state.get("run_id"):
+        raise SupervisorError("initial candidate receipt belongs to another run")
+    if report.get("artifact_sha256") != artifact_hash:
+        raise SupervisorError("initial candidate report is not bound to the rendered artifact")
+    if receipt["outputs"]["report"]["sha256"] != sha256_file(report_path):
+        raise SupervisorError("initial candidate report hash differs from its receipt")
+    state["state"] = "accepted_candidate"
+    state["accepted_artifact"] = {"path": str(artifact), "sha256": artifact_hash}
+    state["accepted_validation"] = {
+        "report": str(report_path),
+        "report_sha256": sha256_file(report_path),
+        "receipt": str(receipt_path),
+        "receipt_sha256": sha256_file(receipt_path),
+        "strict_passed": verification["passed"],
+    }
+    state.setdefault("seen_hashes", []).append(artifact_hash)
+    state["updated_at"] = utc_now()
+    commit_state_event(
+        run_dir,
+        state,
+        "candidate_accepted",
+        {
+            "reason": "first_render_after_semantic_checkpoint",
+            "candidate_sha256": artifact_hash,
+            "report_sha256": sha256_file(report_path),
+            "receipt_sha256": sha256_file(receipt_path),
+        },
+        event_state="accepted_candidate",
+    )
+    return state
+
+
 def load_reviewer_verdict(path, run_id, candidate_sha256, report_path, receipt_path):
     verdict = load_json(path)
     schema = load_json(Path(__file__).resolve().parent.parent / "data" / "reviewer-verdict.v1.schema.json")
@@ -1698,6 +1751,10 @@ def load_reviewer_verdict(path, run_id, candidate_sha256, report_path, receipt_p
     mismatches = [key for key, value in expected.items() if verdict.get(key) != value]
     if mismatches:
         raise SupervisorError(f"reviewer verdict evidence mismatch: {', '.join(mismatches)}")
+    if verdict.get("verdict") == "approve" and any(
+        finding.get("severity") == "error" for finding in verdict.get("findings", [])
+    ):
+        raise SupervisorError("reviewer verdict is contradictory: approve cannot retain error-level findings")
     return verdict
 
 
@@ -1777,8 +1834,83 @@ def make_reviewer_input(run_dir, candidate, report_path, receipt_path, patch_pat
     return result
 
 
+def _semantic_delta_element(page_id, item):
+    """Project a v1 spec cell to the semantic fields used by delta v2."""
+    def identity(cell_id):
+        return None if not cell_id or cell_id in {"0", "1"} else {
+            "page_id": page_id, "cell_id": cell_id,
+        }
+
+    return {
+        "stable_identity": {"page_id": page_id, "cell_id": item["id"]},
+        "kind": item.get("kind"),
+        "semantic_type": item.get("semantic_type"),
+        "label": item.get("label", ""),
+        "parent": identity(item.get("parent_id")),
+        "source": identity(item.get("source_id")),
+        "target": identity(item.get("target_id")),
+        "relationship": item.get("relationship"),
+        "style_hint": item.get("style") or None,
+    }
+
+
 def semantic_diff_value(baseline, candidate):
-    return spec_diff(make_spec(baseline), make_spec(candidate))["semantic"]
+    """Return a value-level semantic diff suitable for v2 approval checks."""
+    before = make_spec(baseline)
+    after = make_spec(candidate)
+    left = {
+        (page["id"], item["id"]): item
+        for page in before["pages"] for item in page["cells"]
+        if item["id"] not in {"0", "1"}
+    }
+    right = {
+        (page["id"], item["id"]): item
+        for page in after["pages"] for item in page["cells"]
+        if item["id"] not in {"0", "1"}
+    }
+    result = {"added": [], "removed": [], "changed": []}
+    field_map = {
+        "semantic_type": "semantic_type", "label": "label",
+        "parent_id": "parent", "source_id": "source",
+        "target_id": "target", "relationship": "relationship",
+    }
+    for page_id, cell_id in sorted(set(left) | set(right)):
+        identity = {"page_id": page_id, "cell_id": cell_id}
+        key = (page_id, cell_id)
+        if key not in left:
+            result["added"].append({
+                **identity, "element": _semantic_delta_element(page_id, right[key]),
+            })
+            continue
+        if key not in right:
+            result["removed"].append({
+                **identity, "element": _semantic_delta_element(page_id, left[key]),
+            })
+            continue
+        changes = {}
+        if left[key].get("kind") != right[key].get("kind"):
+            changes["element"] = [
+                _semantic_delta_element(page_id, left[key]),
+                _semantic_delta_element(page_id, right[key]),
+            ]
+        else:
+            for source_field, delta_field in field_map.items():
+                before_value = left[key].get(source_field)
+                after_value = right[key].get(source_field)
+                if source_field in {"parent_id", "source_id", "target_id"}:
+                    before_value = (
+                        None if not before_value or before_value in {"0", "1"}
+                        else {"page_id": page_id, "cell_id": before_value}
+                    )
+                    after_value = (
+                        None if not after_value or after_value in {"0", "1"}
+                        else {"page_id": page_id, "cell_id": after_value}
+                    )
+                if before_value != after_value:
+                    changes[delta_field] = [before_value, after_value]
+        if changes:
+            result["changed"].append({**identity, "changes": changes})
+    return result
 
 
 def create_semantic_approval(run_dir, baseline, candidate, patch_path, decision, approver="user"):
@@ -1827,11 +1959,97 @@ def load_semantic_approval(path, run_id, patch_sha256, candidate_sha256, semanti
     return approval
 
 
+def load_semantic_approval_v2(path, run_id, approved_delta, semantic_diff):
+    approval = load_json(path)
+    schema = load_json(Path(__file__).resolve().parent.parent / "data" / "semantic-approval.v2.schema.json")
+    errors = sorted(
+        jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).iter_errors(approval),
+        key=lambda error: (list(error.path), error.message),
+    )
+    if errors:
+        raise SupervisorError(f"semantic approval v2 schema validation failed: {errors[0].message}")
+    delta_schema = load_json(Path(__file__).resolve().parent.parent / "data" / "semantic-delta.v2.schema.json")
+    delta_errors = sorted(
+        jsonschema.Draft202012Validator(delta_schema).iter_errors(approved_delta),
+        key=lambda error: (list(error.path), error.message),
+    )
+    if delta_errors:
+        raise SupervisorError(f"approved semantic delta schema validation failed: {delta_errors[0].message}")
+    if approval.get("run_id") != run_id or approval.get("decision") != "approve":
+        raise SupervisorError("semantic approval v2 does not approve this run")
+    if approval.get("baseline_semantic_digest") != approved_delta.get("baseline_semantic_digest"):
+        raise SupervisorError("semantic approval baseline differs from the approved delta")
+    if approval.get("source_bundle_sha256") != approved_delta.get("source_bundle_sha256"):
+        raise SupervisorError("semantic approval source bundle differs from the approved delta")
+    if approval.get("semantic_delta_sha256") != canonical_hash(approved_delta):
+        raise SupervisorError("semantic approval hash differs from the approved delta")
+    approved = {
+        (operation["target"]["page_id"], operation["target"]["cell_id"]): operation
+        for operation in approved_delta["operations"]
+    }
+
+    def contains(expected, actual):
+        if isinstance(expected, dict):
+            # A declared v2 element may intentionally omit host-derived fields
+            # (for example ``kind`` on a semantic-plan node).  Every field the
+            # human approved must nevertheless be present with the exact value.
+            return isinstance(actual, dict) and all(
+                key in actual and contains(value, actual[key])
+                for key, value in expected.items()
+            )
+        if isinstance(expected, list):
+            return isinstance(actual, list) and len(expected) == len(actual) and all(
+                contains(left, right) for left, right in zip(expected, actual)
+            )
+        return expected == actual
+
+    def require_operation(item, actual_type):
+        key = (item["page_id"], item["cell_id"])
+        operation = approved.get(key)
+        compatible = {actual_type}
+        if actual_type == "update":
+            compatible.update({"relationship", "parent"})
+        if operation is None or operation["operation_type"] not in compatible:
+            raise SupervisorError(
+                f"candidate semantic diff exceeds approval at {key[0]}/{key[1]} ({actual_type})"
+            )
+        return operation
+
+    for item in semantic_diff.get("added", []):
+        operation = require_operation(item, "add")
+        declared = [change for change in operation["changes"] if change["field"] == "element"]
+        if len(declared) != 1 or not contains(declared[0]["after"], item.get("element")):
+            raise SupervisorError(
+                f"candidate added element values exceed approval at {item['page_id']}/{item['cell_id']}"
+            )
+    for item in semantic_diff.get("removed", []):
+        operation = require_operation(item, "remove")
+        declared = [change for change in operation["changes"] if change["field"] == "element"]
+        if len(declared) != 1 or not contains(declared[0]["before"], item.get("element")):
+            raise SupervisorError(
+                f"candidate removed element values exceed approval at {item['page_id']}/{item['cell_id']}"
+            )
+    for item in semantic_diff.get("changed", []):
+        operation = require_operation(item, "update")
+        declared = {
+            change["field"]: [change["before"], change["after"]]
+            for change in operation["changes"]
+        }
+        for field, values in item.get("changes", {}).items():
+            if field not in declared or not contains(declared[field], values):
+                raise SupervisorError(
+                    f"candidate field {field!r} values exceed approval at "
+                    f"{item['page_id']}/{item['cell_id']}"
+                )
+    return approval
+
+
 def record_candidate(
     run_dir, artifact, baseline_report_path, candidate_report_path, patch_path,
     baseline_receipt_path, receipt_path,
     semantic_equal=True, untouched_equal=True, repair_class=None,
     reviewer_verdict_path=None, review_exception=None, semantic_approval_path=None,
+    semantic_approval_v2_path=None, approved_semantic_delta=None,
 ):
     state = load_state(run_dir)
     if state is None or state.get("state") != "validating":
@@ -1954,19 +2172,24 @@ def record_candidate(
     semantic_approval = None
     if semantic_patch:
         semantic_diff = semantic_diff_value(baseline_path, artifact)
-        if not semantic_approval_path:
+        if semantic_approval_v2_path and approved_semantic_delta:
+            semantic_approval = load_semantic_approval_v2(
+                semantic_approval_v2_path, state["run_id"], approved_semantic_delta, semantic_diff,
+            )
+        elif semantic_approval_path:
+            semantic_approval = load_semantic_approval(
+                semantic_approval_path, state["run_id"], patch_sha256, artifact_hash, semantic_diff,
+            )
+        else:
             raise SupervisorError("semantic candidate requires hash-bound human semantic approval")
-        semantic_approval = load_semantic_approval(
-            semantic_approval_path, state["run_id"], patch_sha256, artifact_hash, semantic_diff,
-        )
         append_event(
             run_dir, "user_decision",
             {
                 "decision": semantic_approval["decision"],
-                "approval_sha256": sha256_file(semantic_approval_path),
+                "approval_sha256": sha256_file(semantic_approval_v2_path or semantic_approval_path),
                 "patch_sha256": patch_sha256,
                 "candidate_sha256": artifact_hash,
-                "semantic_diff_sha256": semantic_approval["semantic_diff_sha256"],
+                "semantic_diff_sha256": semantic_approval.get("semantic_diff_sha256") or canonical_hash(semantic_diff),
             },
             state="validating", actor={"kind": "human", "id": semantic_approval["approver"]["id"], "model": None},
         )
@@ -2018,7 +2241,7 @@ def record_candidate(
         "patch_sha256": patch_sha256,
         "verified_candidate_sha256": replay_sha256,
         "reviewer_verdict_sha256": sha256_file(reviewer_verdict_path) if reviewer_verdict_path else None,
-        "semantic_approval_sha256": sha256_file(semantic_approval_path) if semantic_approval_path else None,
+        "semantic_approval_sha256": sha256_file(semantic_approval_v2_path or semantic_approval_path) if (semantic_approval_v2_path or semantic_approval_path) else None,
         "quality_vector": vector,
         "comparison": comparison,
     }

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/decision.v2.schema.json",
+  "title": "Idempotent human checkpoint decision v2",
+  "type": "object",
+  "required": ["schema_version", "decision_id", "run_id", "checkpoint_id", "decision", "decided_at", "actor", "bindings", "transaction_id", "previous_snapshot_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "decision_id": {"$ref": "#/$defs/nonEmpty"},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "checkpoint_id": {"$ref": "#/$defs/nonEmpty"},
+    "decision": {"enum": ["continue", "approve", "approve_with_findings", "reject", "pause", "stop", "manual_handoff", "retry", "keep_target", "publish_candidate"]},
+    "feedback": {"type": ["string", "null"]},
+    "decided_at": {"type": "string", "format": "date-time"},
+    "actor": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "human"},
+        "id": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "required": ["checkpoint_sha256", "state_sha256", "source_bundle_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_sha256": {"$ref": "#/$defs/sha"},
+        "state_sha256": {"$ref": "#/$defs/sha"},
+        "source_bundle_sha256": {"$ref": "#/$defs/sha"},
+        "baseline_semantic_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "semantic_plan_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "semantic_delta_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "transaction_id": {"$ref": "#/$defs/nonEmpty"},
+    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableSha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+  }
+}

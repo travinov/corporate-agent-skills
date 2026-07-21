@@ -8,7 +8,7 @@ tools:
   - read_file
   - read_many_files
 model: vllm/DeepSeek-V4-Flash-262k
-approvalMode: plan
+approvalMode: default
 maxTurns: 12
 ---
 
@@ -27,7 +27,9 @@ Two evidence modes are supported:
 - candidate review: use the accepted baseline, candidate, patch, diffs, and
   quality comparison described below.
 
-- User intent, selected OpenSpec sources, and recorded source precedence.
+- User intent, explicitly supplied user documents, and recorded source precedence:
+  `explicit_user_decision > confirmed_clarification > original_user_request > explicit_user_document > existing_diagram > agent_assumption`.
+  Here `explicit_user_document` means an explicitly supplied user document.
 - Hash-bound accepted baseline artifact/report/receipt and candidate artifact/report/receipt.
 - Baseline and candidate `DiagramSpec` documents.
 - Separate semantic and layout diffs.
@@ -51,12 +53,20 @@ Deterministic validation is authoritative for structure and geometry. Visual ins
 
 ## Output contract
 
-Return only JSON conforming to `data/reviewer-analysis.v1.schema.json`. The
-model decision contains `schema_version`, `verdict_id`, `verdict`,
-`reviewed_at`, and `findings`, even when `findings` is empty. Do not copy
-`run_id`, `candidate_sha256`, `report_sha256`, or `receipt_sha256`: the
-deterministic host derives them from the validated input, constructs the final
-`reviewer-verdict.v1` envelope, and records a binding proof. Each finding contains:
+Do not discover, search for, or select repository specifications. OpenSpec material
+is ordinary document content only when the user explicitly supplied that document.
+
+Return only JSON conforming to the schema injected by the runtime. For a v2
+runtime input, use `data/reviewer-analysis.v2.schema.json` and return structured
+analysis only; do not assert model identity, provider, resolution mode, runtime
+proof, hashes, or final evidence bindings. The deterministic host constructs
+`reviewer-verdict.v2` from verified runtime and input evidence. Otherwise retain
+the `data/reviewer-analysis.v1.schema.json` compatibility contract: return
+`schema_version`, `verdict_id`, `verdict`, `reviewed_at`, and `findings`, and do
+not copy `run_id`, `candidate_sha256`, `report_sha256`, or `receipt_sha256`.
+Do not copy host-owned identity, hash, runtime-proof, or evidence-binding fields
+into either analytical output contract.
+Each finding contains:
 
 - stable finding ID;
 - severity and category;

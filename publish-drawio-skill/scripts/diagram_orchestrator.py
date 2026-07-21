@@ -7,6 +7,7 @@ rendering, patch application, validation, comparison, state, and publication.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -25,6 +26,30 @@ import agent_runtime
 import command_ux
 import diagram_host
 import diagram_supervisor as supervisor
+import lifecycle_host_v2 as lifecycle_v2
+import renderer_adapters
+from diagram_model_v2 import (
+    normalize_semantic_delta,
+    semantic_analysis_to_plan,
+    semantic_delta_sha256,
+    semantic_digest,
+    SOURCE_PRIORITY,
+    validate_diagramspec,
+    validate_semantic_analysis,
+    validate_semantic_analysis_input,
+    validate_semantic_plan,
+    with_model_view,
+)
+from lifecycle_contracts import (
+    ContractError,
+    atomic_write_bytes,
+    canonical_json_bytes,
+    canonical_json_sha256,
+    require_valid_contract,
+)
+from implementation_snapshot_v2 import verify_implementation_snapshot
+from run_lock_v2 import RunAlreadyLocked, RunLock
+from source_bundle_v2 import source_record
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -135,6 +160,554 @@ def load_workflow(run_dir):
     return supervisor.load_json(Path(run_dir) / WORKFLOW_FILE)
 
 
+def _relative_file(run_dir, path):
+    return lifecycle_v2.make_file_descriptor(path, root=run_dir)
+
+
+def _v1_spec_to_v2(run_dir, spec, source_bundle_hash):
+    """Build the lossless/model-view split without exposing technical cells."""
+    pages = []
+    for page in spec["pages"]:
+        cells = []
+        page_id = page["id"]
+        for cell in page["cells"]:
+            cell_id = cell["id"]
+            kind = cell["kind"]
+            technical = cell_id in {"0", "1"} or kind in {"layer"}
+            def identity(value):
+                return None if value is None else {"page_id": page_id, "cell_id": value}
+            preserved = {
+                "id": cell_id,
+                "stable_identity": {"page_id": page_id, "cell_id": cell_id},
+                "kind": "root" if cell_id == "0" else kind,
+                "semantic_type": cell["semantic_type"],
+                "label": cell["label"],
+                "technical": technical,
+                "parent": identity(cell.get("parent_id")),
+                "source": identity(cell.get("source_id")),
+                "target": identity(cell.get("target_id")),
+                "relationship": cell.get("relationship"),
+                "style": cell.get("style", ""),
+                "raw_attributes": {},
+            }
+            if "geometry" in cell:
+                geometry = cell["geometry"]
+                converted = {}
+                if "bounds" in geometry:
+                    converted.update(geometry["bounds"])
+                if "waypoints" in geometry:
+                    converted["waypoints"] = geometry["waypoints"]
+                if "relative" in geometry:
+                    converted["relative"] = geometry["relative"]
+                preserved["geometry"] = converted
+            cells.append(preserved)
+        pages.append({"id": page_id, "name": page.get("name", ""), "cells": cells})
+    artifact_path = Path(spec["artifact"]["uri"]).resolve()
+    result = {
+        "schema_version": 2,
+        "diagram_id": spec["diagram_id"],
+        "title": spec.get("title", spec["diagram_id"]),
+        "artifact": {
+            "path": artifact_path.relative_to(Path(run_dir).resolve()).as_posix(),
+            "sha256": spec["artifact"]["sha256"],
+            "byte_length": spec["artifact"]["byte_length"],
+            "format": spec["artifact"]["format"],
+            "imported_at": spec["artifact"]["imported_at"],
+            "preservation_policy": "patch-original-xml",
+        },
+        "source_bundle_sha256": None,
+        "pages": pages,
+        "model_view": {"technical_cells_excluded": True, "pages": []},
+        "semantic_digest": {"algorithm": "sha256", "canonicalization": "diagramspec-model-view-v2", "value": "0" * 64},
+    }
+    result = with_model_view(result)
+    diagnostics = validate_diagramspec(result)
+    if diagnostics:
+        raise supervisor.SupervisorError(f"DiagramSpec v2 cross-field validation failed: {diagnostics[0]}")
+    return result
+
+
+def _plan_element_map(plan_pages):
+    result = {}
+    for page in plan_pages:
+        for kind in ("nodes", "edges"):
+            for element in page[kind]:
+                identity = element["stable_identity"]
+                result[(identity["page_id"], identity["cell_id"])] = (kind, element)
+    return result
+
+
+def _semantic_input_v2(run_dir, workflow, baseline_spec_v2, *, feedback=None):
+    """Build the exact immutable input shown to Semantic Analyst v2."""
+    source_bundle, source_descriptor = lifecycle_v2.latest_document(
+        run_dir, "source-bundle"
+    )
+    source_hash = canonical_json_sha256(source_bundle)
+    if source_hash != source_descriptor["canonical_sha256"]:
+        raise supervisor.SupervisorError(
+            "active source bundle differs from its lifecycle descriptor"
+        )
+    if baseline_spec_v2 is None:
+        model_view = {"technical_cells_excluded": True, "pages": []}
+        baseline_digest = semantic_digest(model_view)
+    else:
+        diagnostics = validate_diagramspec(baseline_spec_v2)
+        if diagnostics:
+            raise supervisor.SupervisorError(
+                f"Semantic Analyst baseline DiagramSpec v2 is invalid: {diagnostics[0]}"
+            )
+        model_view = copy.deepcopy(baseline_spec_v2["model_view"])
+        baseline_digest = baseline_spec_v2["semantic_digest"]["value"]
+    payload = {
+        "schema_version": 2,
+        "run_id": workflow["run_id"],
+        "mode": workflow["mode"],
+        "request": workflow["request"],
+        "feedback": feedback,
+        "source_bundle": {
+            "sha256": source_hash,
+            "content": source_bundle,
+        },
+        "baseline": {
+            "semantic_digest": baseline_digest,
+            "model_view": model_view,
+            "evidence": copy.deepcopy(source_bundle["evidence"]),
+        },
+        "source_priority": list(SOURCE_PRIORITY),
+        "requirements": {
+            "complete_desired_graph": True,
+            "compare_request_to_existing": workflow["mode"] == "improve",
+            "return_complete_plan_for_create": workflow["mode"] == "create",
+            "preserve_page_scoped_ids": True,
+        },
+    }
+    diagnostics = validate_semantic_analysis_input(payload)
+    if diagnostics:
+        raise supervisor.SupervisorError(
+            f"Semantic Analyst v2 input binding failed: {diagnostics[0]}"
+        )
+    return payload
+
+
+def _semantic_analysis_to_v2(run_dir, workflow, analysis, baseline_spec_v2):
+    """Turn analysis-only model output into a host-bound canonical plan."""
+    diagnostics = validate_semantic_analysis(analysis)
+    if diagnostics:
+        raise supervisor.SupervisorError(
+            f"semantic analysis v2 cross-field validation failed: {diagnostics[0]}"
+        )
+    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    assumption_texts = list(analysis["result"].get("assumptions", []))
+    assumption_sources = [
+        source_record(
+            source_id=(
+                f"agent-assumption-r{source_bundle['revision'] + 1}-{index + 1}-"
+                f"{canonical_json_sha256(text)[:12]}"
+            ),
+            kind="agent_assumption",
+            uri=(
+                f"urn:diagram-run:{workflow['run_id']}:semantic-assumption:"
+                f"{source_bundle['revision'] + 1}:{index + 1}"
+            ),
+            content=text,
+            confidence=0.5,
+        )
+        for index, text in enumerate(assumption_texts)
+    ]
+    if assumption_sources:
+        source_bundle = lifecycle_v2.revise_sources(
+            run_dir,
+            new_sources=assumption_sources,
+            event_payload={
+                "kind": "semantic_assumptions",
+                "assumption_count": len(assumption_sources),
+            },
+        )
+    source_bundle_hash = canonical_json_sha256(source_bundle)
+    baseline_model_view = (
+        copy.deepcopy(baseline_spec_v2["model_view"])
+        if baseline_spec_v2 is not None
+        else {"technical_cells_excluded": True, "pages": []}
+    )
+    baseline_digest = (
+        baseline_spec_v2["semantic_digest"]["value"]
+        if baseline_spec_v2 is not None else semantic_digest(baseline_model_view)
+    )
+    try:
+        plan = semantic_analysis_to_plan(
+            analysis,
+            run_id=workflow["run_id"],
+            mode=workflow["mode"],
+            source_bundle_sha256=source_bundle_hash,
+            baseline_semantic_digest=baseline_digest,
+            baseline_model_view=baseline_model_view,
+            assumption_source_ids=[item["source_id"] for item in assumption_sources],
+        )
+    except ValueError as exc:
+        raise supervisor.SupervisorError(
+            f"host semantic-plan v2 normalization failed: {exc}"
+        ) from exc
+    output = (
+        Path(run_dir) / "semantic-plans"
+        / f"{canonical_json_sha256(plan)}.semantic-plan.v2.json"
+    )
+    atomic_write_bytes(output, canonical_json_bytes(plan) + b"\n")
+    return plan, output
+
+
+def _legacy_plan_to_v2(run_dir, workflow, legacy_plan, baseline_spec_v2):
+    page_id = baseline_spec_v2["model_view"]["pages"][0]["id"] if baseline_spec_v2 else "generated"
+    nodes = []
+    for node in legacy_plan["result"]["nodes"]:
+        nodes.append({
+            "stable_identity": {"page_id": page_id, "cell_id": node["id"]},
+            "label": node["label"],
+            "semantic_type": node["semantic_type"],
+            "parent": None if not node.get("parent_id") else {"page_id": page_id, "cell_id": node["parent_id"]},
+            "style_hint": node.get("style_hint"),
+        })
+    edges = []
+    for edge in legacy_plan["result"]["edges"]:
+        edges.append({
+            "stable_identity": {"page_id": page_id, "cell_id": edge["id"]},
+            "source": {"page_id": page_id, "cell_id": edge["source_id"]},
+            "target": {"page_id": page_id, "cell_id": edge["target_id"]},
+            "label": edge["label"],
+            "relationship": edge["relationship"],
+            "parent": None,
+            "style_hint": None,
+        })
+    pages = [{"page_id": page_id, "name": legacy_plan["result"]["title"], "nodes": nodes, "edges": edges}]
+    baseline_digest = (
+        baseline_spec_v2["semantic_digest"]["value"]
+        if baseline_spec_v2 else canonical_json_sha256({"technical_cells_excluded": True, "pages": []})
+    )
+    baseline = {}
+    if baseline_spec_v2:
+        for page in baseline_spec_v2["model_view"]["pages"]:
+            for element in page["elements"]:
+                identity = element["stable_identity"]
+                baseline[(identity["page_id"], identity["cell_id"])] = element
+    desired = _plan_element_map(pages)
+    operations = []
+    for key, (collection, element) in sorted(desired.items()):
+        old = baseline.get(key)
+        element_kind = "edge" if collection == "edges" else "group" if element.get("semantic_type") == "group" else "node"
+        if old is None:
+            operations.append({
+                "operation_type": "add", "element_kind": element_kind,
+                "target": element["stable_identity"],
+                "changes": [{"field": "element", "before": None, "after": element}],
+            })
+            continue
+        changes = []
+        fields = ("label", "semantic_type", "parent") if collection == "nodes" else ("label", "source", "target", "relationship", "parent")
+        for field in fields:
+            before = old.get(field)
+            after = element.get(field)
+            if before != after:
+                changes.append({"field": field, "before": before, "after": after})
+        if changes:
+            operation_type = "relationship" if any(item["field"] in {"source", "target", "relationship"} for item in changes) else "parent" if all(item["field"] == "parent" for item in changes) else "update"
+            operations.append({"operation_type": operation_type, "element_kind": element_kind, "target": element["stable_identity"], "changes": changes})
+    source_bundle_hash = lifecycle_v2.require_mutable(run_dir)["latest_snapshots"]["source-bundle"]["canonical_sha256"]
+    delta = normalize_semantic_delta(
+        baseline_semantic_digest=baseline_digest,
+        source_bundle_sha256=source_bundle_hash,
+        operations=operations,
+    )
+    requires_human = bool(
+        legacy_plan.get("status") == "needs_human"
+        or legacy_plan["result"].get("requires_human")
+        or (workflow["mode"] == "improve" and delta["operations"])
+    )
+    assumption_texts = list(legacy_plan["result"].get("assumptions", []))
+    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    assumption_sources = [
+        source_record(
+            source_id=(
+                f"agent-assumption-r{source_bundle['revision'] + 1}-{index + 1}-"
+                f"{canonical_json_sha256(text)[:12]}"
+            ),
+            kind="agent_assumption",
+            uri=f"urn:diagram-run:{workflow['run_id']}:semantic-assumption:{source_bundle['revision'] + 1}:{index + 1}",
+            content=text,
+            confidence=0.5,
+        )
+        for index, text in enumerate(assumption_texts)
+    ]
+    plan = {
+        "schema_version": 2,
+        "role": "semantic_analyst",
+        "status": "needs_human" if requires_human else "ok",
+        "run_id": workflow["run_id"],
+        "source_bundle_sha256": source_bundle_hash,
+        "baseline_semantic_digest": baseline_digest,
+        "result": {
+            "mode": workflow["mode"],
+            "diagram_type": legacy_plan["result"]["diagram_type"],
+            "title": legacy_plan["result"]["title"],
+            "direction": legacy_plan["result"]["direction"],
+            "pages": pages,
+            "semantic_delta": delta,
+            "assumptions": [
+                {
+                    "assumption_id": f"assumption-{index + 1}",
+                    "text": text,
+                    "source_id": assumption_sources[index]["source_id"],
+                }
+                for index, text in enumerate(assumption_texts)
+            ],
+            "requires_human": requires_human,
+            "human_questions": (
+                list(legacy_plan["result"].get("semantic_changes", []))
+                or ["Подтвердите предложенную семантическую дельту перед изменением диаграммы."]
+            ) if requires_human else [],
+        },
+    }
+    diagnostics = validate_semantic_plan(plan)
+    if diagnostics:
+        raise supervisor.SupervisorError(f"semantic plan v2 cross-field validation failed: {diagnostics[0]}")
+    if assumption_sources:
+        source_bundle = lifecycle_v2.revise_sources(
+            run_dir,
+            new_sources=assumption_sources,
+            event_payload={
+                "kind": "semantic_assumptions",
+                "assumption_count": len(assumption_sources),
+            },
+        )
+        source_bundle_hash = canonical_json_sha256(source_bundle)
+        plan["source_bundle_sha256"] = source_bundle_hash
+        plan["result"]["semantic_delta"]["source_bundle_sha256"] = source_bundle_hash
+        diagnostics = validate_semantic_plan(plan)
+        if diagnostics:
+            raise supervisor.SupervisorError(
+                f"semantic plan v2 cross-field validation failed after source binding: {diagnostics[0]}"
+            )
+    output = (
+        Path(run_dir) / "semantic-plans"
+        / f"{canonical_json_sha256(plan)}.semantic-plan.v2.json"
+    )
+    atomic_write_bytes(output, canonical_json_bytes(plan) + b"\n")
+    return plan, output
+
+
+def _record_baseline_v2(run_dir, workflow, accepted, spec_v1, report_path, receipt_path):
+    source_hash = lifecycle_v2.require_mutable(run_dir)["latest_snapshots"]["source-bundle"]["canonical_sha256"]
+    spec_v2 = _v1_spec_to_v2(run_dir, spec_v1, source_hash)
+    spec_path = Path(run_dir) / "diagram-spec.v2.json"
+    atomic_write_bytes(spec_path, canonical_json_bytes(spec_v2) + b"\n")
+    _, receipt_v2_path = lifecycle_v2.mirror_validation_receipt(
+        run_dir, legacy_receipt_path=receipt_path,
+    )
+    verification = lifecycle_v2.verify_v2_receipt(run_dir, receipt_v2_path)
+    if not verification["valid"]:
+        raise supervisor.SupervisorError(f"v2 baseline receipt verification failed: {verification['diagnostics']}")
+    current_evidence = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]["evidence"]
+    evidence = {
+        "imported_diagramspec": _relative_file(run_dir, spec_path),
+        "baseline_validation": {
+            "artifact": _relative_file(run_dir, accepted),
+            "report": _relative_file(run_dir, report_path),
+            "receipt": _relative_file(run_dir, receipt_v2_path),
+        },
+        "eligible_review_handoff": copy.deepcopy(current_evidence.get("eligible_review_handoff")),
+    }
+    lifecycle_v2.revise_sources(
+        run_dir, evidence=evidence,
+        event_payload={"kind": "baseline_evidence", "artifact_sha256": supervisor.sha256_file(accepted)},
+    )
+    lifecycle_v2.transition(
+        run_dir, "analyzed", iteration=workflow.get("iteration", 0),
+        accepted_artifact=_relative_file(run_dir, accepted),
+        validation_report=_relative_file(run_dir, report_path),
+        validation_receipt=_relative_file(run_dir, receipt_v2_path),
+        payload={"baseline_validation": True},
+    )
+    workflow["diagram_spec_v2"] = {"path": str(spec_path.resolve()), "sha256": supervisor.sha256_file(spec_path)}
+    workflow["validation_receipt_v2"] = {"path": str(receipt_v2_path.resolve()), "sha256": supervisor.sha256_file(receipt_v2_path)}
+    return spec_v2
+
+
+def _finish_checkpointed_create(
+    run_dir, workflow, semantic_plan, semantic_plan_v2, cli, timeout,
+):
+    """Render and review a create plan that was explicitly approved pre-render."""
+    accepted = Path(run_dir) / "accepted" / "baseline.drawio"
+    current = supervisor.load_state(run_dir)["state"]
+    if current not in {"awaiting_decision", "awaiting_feedback"}:
+        raise supervisor.SupervisorError(
+            f"checkpointed create cannot render from state {current}"
+        )
+    supervisor.transition(
+        run_dir, "patching", decision="continue",
+        reason="approved pre-render semantic plan",
+    )
+    accepted.parent.mkdir(parents=True, exist_ok=True)
+    adapter_run = tool_step(
+        run_dir, "renderer-adapter",
+        renderer_adapters.render_with_adapter,
+        "generic", semantic_plan_v2, accepted,
+        mode="create", generic_renderer=render_generic,
+    )
+    workflow["renderer_adapter"] = {
+        **adapter_run.record(),
+        "requested_semantic_diagram_type": semantic_plan["result"]["diagram_type"],
+    }
+    supervisor.transition(run_dir, "validating")
+    lifecycle_v2.transition(
+        run_dir, "analyzing",
+        payload={"phase": "rendering", "renderer_adapter": workflow["renderer_adapter"]},
+    )
+    spec = supervisor.make_spec(
+        accepted, [source_ref_for_request(workflow["run_id"], workflow["request"])],
+    )
+    supervisor.write_json(Path(run_dir) / "diagram-spec.json", spec)
+    receipt = tool_step(
+        run_dir, "strict-validator", supervisor.run_validation,
+        accepted, run_dir, attempt_id="baseline",
+    )
+    report_path = Path(run_dir) / "attempts" / "baseline" / "validation-report.json"
+    receipt_path = Path(run_dir) / "attempts" / "baseline" / "validation-receipt.json"
+    state = supervisor.record_initial_candidate(
+        run_dir, accepted, report_path, receipt_path,
+    )
+    _set_workflow_accepted(workflow, state)
+    _record_baseline_v2(
+        run_dir, workflow, accepted, spec, report_path, receipt_path,
+    )
+    workflow.pop("pending_semantic_approval", None)
+    write_workflow(run_dir, workflow)
+    try:
+        verdict, _ = baseline_review(run_dir, workflow, cli, timeout)
+    except supervisor.SupervisorError as exc:
+        supervisor.transition(run_dir, "final_review", artifact=accepted)
+        supervisor.transition(run_dir, "awaiting_feedback", reason="independent review failed")
+        workflow["findings"] = [str(exc)]
+        return checkpoint(
+            run_dir, workflow, "plateau",
+            "Strict validation evidence was retained, but independent review did not produce a usable verdict.",
+            workflow["findings"], ["continue", "pause", "stop", "manual_handoff"],
+        )
+    workflow["findings"] = verdict.get("findings", [])
+    write_workflow(run_dir, workflow)
+    eligibility = _final_approval_eligibility(run_dir, workflow)
+    allowed_final = []
+    if eligibility["approve"]:
+        allowed_final.append("approve")
+    if eligibility["approve_with_findings"]:
+        allowed_final.append("approve_with_findings")
+    if allowed_final:
+        workflow["final_approval_eligibility"] = eligibility
+        write_workflow(run_dir, workflow)
+        supervisor.transition(run_dir, "final_review", artifact=accepted)
+        return checkpoint(
+            run_dir, workflow, "final_acceptance",
+            (
+                "The candidate passed strict validation and independent review."
+                if eligibility["approve"]
+                else "The candidate is structurally safe and evidence-valid, but unresolved findings require explicit approval."
+            ),
+            eligibility["unresolved_findings"],
+            [*allowed_final, "continue", "pause", "stop", "manual_handoff"],
+            evidence={"final_approval_eligibility": eligibility},
+        )
+    return repair_loop(run_dir, workflow, cli, timeout)
+
+
+def _reconcile_feedback(
+    run_dir, workflow, feedback, decision_id, workspace, cli, timeout,
+    *, approved_proposal=None,
+):
+    lifecycle_v2.add_feedback_source(run_dir, feedback, decision_id)
+    accepted_descriptor = workflow.get("accepted_artifact") or {}
+    accepted_path = accepted_descriptor.get("path")
+    accepted = Path(accepted_path) if accepted_path else None
+    baseline_spec_v1 = (
+        supervisor.make_spec(
+            accepted, [source_ref_for_request(workflow["run_id"], workflow["request"])],
+        )
+        if accepted is not None else None
+    )
+    baseline_spec_v2 = (
+        _v1_spec_to_v2(
+            run_dir, baseline_spec_v1,
+            lifecycle_v2.require_mutable(run_dir)["latest_snapshots"]["source-bundle"]["canonical_sha256"],
+        )
+        if baseline_spec_v1 is not None else None
+    )
+    payload = _semantic_input_v2(
+        run_dir, workflow, baseline_spec_v2, feedback=feedback,
+    )
+    analysis, _, _, analysis_output_path = role_call(
+        "semantic_analyst", payload, run_dir, workspace, cli, timeout,
+        f"semantic-feedback-{len(workflow.get('decisions', [])) + 1}",
+    )
+    plan_v2, plan_path = _semantic_analysis_to_v2(
+        run_dir, workflow, analysis, baseline_spec_v2,
+    )
+    delta = plan_v2["result"]["semantic_delta"]
+    if (
+        approved_proposal
+        and delta["baseline_semantic_digest"]
+        == approved_proposal["semantic_delta"]["baseline_semantic_digest"]
+        and delta["operations"]
+        == approved_proposal["semantic_delta"]["operations"]
+    ):
+        # A comment attached to an approval is still retained as source evidence,
+        # but an identical semantic delta does not invalidate the decision or
+        # force the user through the same checkpoint again.
+        return None
+    analysis_descriptor = {
+        "path": str(Path(analysis_output_path).resolve()),
+        "sha256": supervisor.sha256_file(analysis_output_path),
+    }
+    workflow["semantic_analysis_v2"] = analysis_descriptor
+    # Retain the legacy workflow key as a read-only alias for checkpointed
+    # create and older trace consumers; its content is now analysis-only v2.
+    workflow["semantic_plan"] = dict(analysis_descriptor)
+    workflow["semantic_plan_v2"] = {
+        "path": str(plan_path.resolve()),
+        "sha256": supervisor.sha256_file(plan_path),
+        "semantic_delta_sha256": semantic_delta_sha256(delta),
+    }
+    if not delta["operations"] and not plan_v2["result"]["requires_human"]:
+        write_workflow(run_dir, workflow)
+        return None
+    pending = {
+        "semantic_plan": {"path": str(plan_path.resolve()), "sha256": supervisor.sha256_file(plan_path)},
+        "baseline_semantic_digest": plan_v2["baseline_semantic_digest"],
+        "source_bundle_sha256": plan_v2["source_bundle_sha256"],
+        "semantic_delta": delta,
+        "semantic_delta_sha256": semantic_delta_sha256(delta),
+        "semantic_changes": plan_v2["result"]["human_questions"],
+        "semantic_changes_sha256": canonical_hash(plan_v2["result"]["human_questions"]),
+    }
+    workflow["pending_semantic_approval"] = pending
+    workflow["semantic_authorized"] = False
+    workflow.pop("approved_semantic_change", None)
+    current = supervisor.load_state(run_dir)["state"]
+    if current == "final_review":
+        supervisor.transition(run_dir, "awaiting_feedback", reason="new feedback requires semantic reconciliation")
+        current = "awaiting_feedback"
+    if current == "awaiting_feedback":
+        supervisor.transition(
+            run_dir, "awaiting_decision", artifact=accepted,
+            decision="continue", reason="feedback produced a semantic delta",
+        )
+    elif current != "awaiting_decision":
+        raise supervisor.SupervisorError(f"cannot request semantic approval from state {current}")
+    write_workflow(run_dir, workflow)
+    return checkpoint(
+        run_dir, workflow, "semantic_approval",
+        "Новые замечания пользователя сформировали семантическую дельту; подтвердите её перед Repair.",
+        plan_v2["result"]["human_questions"],
+        ["continue", "pause", "stop", "manual_handoff"],
+        evidence=pending,
+    )
+
+
 def tool_step(run_dir, name, function, *args, evidence=None, **kwargs):
     supervisor.append_event(
         run_dir, "tool_started", {"tool": name, **(evidence or {})},
@@ -195,8 +768,277 @@ def _levels(nodes, edges):
     return level
 
 
+def _style_with_hint(base, hint, *, protected=()):
+    """Apply non-executable draw.io style hints without overriding invariants."""
+    if not hint:
+        return base
+    protected = {str(item).lower() for item in protected}
+    safe = []
+    for raw in str(hint).split(";"):
+        token = raw.strip()
+        if not token:
+            continue
+        key = token.split("=", 1)[0].strip().lower()
+        lowered = token.lower()
+        if key in protected or any(marker in lowered for marker in ("javascript:", "data:", "file:", "http:", "https:")):
+            continue
+        safe.append(token)
+    return base + (";".join(safe) + ";" if safe else "")
+
+
+def _v2_node_style(node, *, has_children):
+    semantic_type = node["semantic_type"].strip().lower()
+    if has_children or semantic_type in {"container", "group", "lane", "swimlane"}:
+        base = (
+            "swimlane;html=1;rounded=0;collapsible=0;container=1;"
+            "recursiveResize=0;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;"
+        )
+    elif semantic_type in {"decision", "gateway", "condition"}:
+        base = (
+            "rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;"
+        )
+    elif semantic_type in {"start", "end", "event", "terminal"}:
+        base = (
+            "ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;"
+        )
+    else:
+        base = (
+            "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;"
+        )
+    return _style_with_hint(base, node.get("style_hint"))
+
+
+def _v2_page_layout(page, direction):
+    """Return deterministic relative and absolute bounds for one semantic page."""
+    nodes = page["nodes"]
+    by_id = {node["stable_identity"]["cell_id"]: node for node in nodes}
+    children = {node_id: [] for node_id in by_id}
+    roots = []
+    for node in nodes:
+        node_id = node["stable_identity"]["cell_id"]
+        parent = node.get("parent")
+        if parent is None:
+            roots.append(node_id)
+        else:
+            children[parent["cell_id"]].append(node_id)
+
+    for values in children.values():
+        values.sort()
+    roots.sort()
+    sizes = {}
+    relative = {}
+
+    def measure(node_id):
+        nested = children[node_id]
+        if not nested:
+            sizes[node_id] = (160.0, 70.0)
+            return sizes[node_id]
+        child_sizes = [(child_id, measure(child_id)) for child_id in nested]
+        if direction == "LR":
+            cursor = 40.0
+            for child_id, (width, height) in child_sizes:
+                relative[child_id] = (cursor, 60.0)
+                cursor += width + 50.0
+            width = max(240.0, cursor - 10.0)
+            height = max(160.0, max(60.0 + height for _, (_, height) in child_sizes) + 40.0)
+        else:
+            cursor = 60.0
+            for child_id, (width, height) in child_sizes:
+                relative[child_id] = (40.0, cursor)
+                cursor += height + 50.0
+            width = max(240.0, max(40.0 + width for _, (width, _) in child_sizes) + 40.0)
+            height = max(160.0, cursor - 10.0)
+        sizes[node_id] = (width, height)
+        return sizes[node_id]
+
+    for node_id in roots:
+        measure(node_id)
+
+    # Cross-field validation guarantees that every non-root parent exists and
+    # that parent references are acyclic, so every node is measured above.
+    if direction == "LR":
+        cursor = 80.0
+        for node_id in roots:
+            relative[node_id] = (cursor, 80.0)
+            cursor += sizes[node_id][0] + 100.0
+    else:
+        cursor = 80.0
+        for node_id in roots:
+            relative[node_id] = (80.0, cursor)
+            cursor += sizes[node_id][1] + 100.0
+
+    absolute = {}
+
+    def locate(node_id, parent_origin=(0.0, 0.0)):
+        x, y = relative[node_id]
+        absolute[node_id] = (parent_origin[0] + x, parent_origin[1] + y, *sizes[node_id])
+        for child_id in children[node_id]:
+            locate(child_id, (absolute[node_id][0], absolute[node_id][1]))
+
+    for node_id in roots:
+        locate(node_id)
+    return by_id, children, relative, absolute, sizes
+
+
+def _generated_v2_route(source_box, target_box, *, self_loop):
+    sx, sy, sw, sh = source_box
+    tx, ty, tw, th = target_box
+    if self_loop:
+        source_pin, target_pin = (1.0, 0.5), (0.5, 0.0)
+        source = (sx + sw, sy + sh / 2.0)
+        target = (tx + tw / 2.0, ty)
+        margin = 60.0
+        points = [
+            (source[0] + margin, source[1]),
+            (source[0] + margin, target[1] - margin),
+            (target[0], target[1] - margin),
+        ]
+        return source_pin, target_pin, points
+
+    source_center = (sx + sw / 2.0, sy + sh / 2.0)
+    target_center = (tx + tw / 2.0, ty + th / 2.0)
+    dx = target_center[0] - source_center[0]
+    dy = target_center[1] - source_center[1]
+    if abs(dx) >= abs(dy):
+        forward = dx >= 0
+        source_pin = (1.0 if forward else 0.0, 0.5)
+        target_pin = (0.0 if forward else 1.0, 0.5)
+        source = (sx + source_pin[0] * sw, sy + sh / 2.0)
+        target = (tx + target_pin[0] * tw, ty + th / 2.0)
+        middle = (source[0] + target[0]) / 2.0
+        points = [(middle, source[1]), (middle, target[1])]
+    else:
+        forward = dy >= 0
+        source_pin = (0.5, 1.0 if forward else 0.0)
+        target_pin = (0.5, 0.0 if forward else 1.0)
+        source = (sx + sw / 2.0, sy + source_pin[1] * sh)
+        target = (tx + tw / 2.0, ty + target_pin[1] * th)
+        middle = (source[1] + target[1]) / 2.0
+        points = [(source[0], middle), (target[0], middle)]
+    return source_pin, target_pin, points
+
+
+def _render_generic_v2(plan, output):
+    require_valid_contract(plan, "semantic-plan", 2)
+    diagnostics = validate_semantic_plan(plan)
+    if diagnostics:
+        first = diagnostics[0]
+        raise supervisor.SupervisorError(
+            f"semantic plan v2 cannot be rendered: {first['code']}: {first['message']}"
+        )
+
+    data = plan["result"]
+    mxfile = ET.Element("mxfile", {
+        "host": "GigaCode", "agent": "drawio-agent-extension", "version": "semantic-plan.v2",
+    })
+    for page in data["pages"]:
+        page_id = page["page_id"]
+        diagram = ET.SubElement(mxfile, "diagram", {
+            "id": page_id,
+            "name": page["name"],
+            "data-schema-version": "2",
+        })
+        model = ET.SubElement(diagram, "mxGraphModel", {
+            "dx": "1200", "dy": "800", "grid": "1", "gridSize": "10", "guides": "1",
+            "tooltips": "1", "connect": "1", "arrows": "1", "fold": "1", "page": "1",
+            "pageScale": "1", "pageWidth": "1169", "pageHeight": "827", "math": "0", "shadow": "0",
+        })
+        root = ET.SubElement(model, "root")
+        ET.SubElement(root, "mxCell", {"id": "0"})
+        ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
+
+        by_id, children, relative, absolute, sizes = _v2_page_layout(page, data["direction"])
+
+        def depth(node_id):
+            value = 0
+            parent = by_id[node_id].get("parent")
+            while parent is not None:
+                value += 1
+                parent = by_id[parent["cell_id"]].get("parent")
+            return value
+
+        for node_id in sorted(by_id, key=lambda value: (depth(value), value)):
+            node = by_id[node_id]
+            parent = node.get("parent")
+            x, y = relative[node_id]
+            width, height = sizes[node_id]
+            attributes = {
+                "id": node_id,
+                "value": node["label"],
+                "style": _v2_node_style(node, has_children=bool(children[node_id])),
+                "vertex": "1",
+                "parent": parent["cell_id"] if parent is not None else "1",
+                "data-semantic-type": node["semantic_type"],
+                "data-page-id": page_id,
+            }
+            if node.get("style_hint") is not None:
+                attributes["data-style-hint"] = node["style_hint"]
+            cell = ET.SubElement(root, "mxCell", attributes)
+            ET.SubElement(cell, "mxGeometry", {
+                "x": str(round(x, 2)), "y": str(round(y, 2)),
+                "width": str(round(width, 2)), "height": str(round(height, 2)),
+                "as": "geometry",
+            })
+
+        for edge in sorted(page["edges"], key=lambda item: item["stable_identity"]["cell_id"]):
+            edge_id = edge["stable_identity"]["cell_id"]
+            source_id = edge["source"]["cell_id"]
+            target_id = edge["target"]["cell_id"]
+            route = edge.get("route")
+            if route is None:
+                source_pin, target_pin, points = _generated_v2_route(
+                    absolute[source_id], absolute[target_id], self_loop=source_id == target_id,
+                )
+            else:
+                source_pin = (route["source_pin"]["x"], route["source_pin"]["y"])
+                target_pin = (route["target_pin"]["x"], route["target_pin"]["y"])
+                points = [(point["x"], point["y"]) for point in route["waypoints"]]
+            base_style = (
+                "edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;html=1;rounded=0;"
+                f"exitX={source_pin[0]:g};exitY={source_pin[1]:g};"
+                f"entryX={target_pin[0]:g};entryY={target_pin[1]:g};"
+            )
+            attributes = {
+                "id": edge_id,
+                "value": edge["label"],
+                "style": _style_with_hint(
+                    base_style,
+                    edge.get("style_hint"),
+                    protected={"edgeStyle", "orthogonalLoop", "rounded", "exitX", "exitY", "entryX", "entryY"},
+                ),
+                "edge": "1",
+                "parent": edge["parent"]["cell_id"] if edge.get("parent") is not None else "1",
+                "source": source_id,
+                "target": target_id,
+                "data-semantic-type": "edge",
+                "data-relationship": edge["relationship"],
+                "data-page-id": page_id,
+            }
+            if edge.get("style_hint") is not None:
+                attributes["data-style-hint"] = edge["style_hint"]
+            cell = ET.SubElement(root, "mxCell", attributes)
+            geometry = ET.SubElement(cell, "mxGeometry", {"relative": "1", "as": "geometry"})
+            array = ET.SubElement(geometry, "Array", {"as": "points"})
+            for x, y in points:
+                ET.SubElement(array, "mxPoint", {"x": str(round(x, 2)), "y": str(round(y, 2))})
+
+    ET.indent(mxfile, space="  ")
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = ET.tostring(mxfile, encoding="utf-8", xml_declaration=True) + b"\n"
+    with tempfile.NamedTemporaryFile("wb", dir=output.parent, delete=False) as tmp:
+        tmp.write(payload)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        temp_name = tmp.name
+    os.replace(temp_name, output)
+    return output
+
+
 def render_generic(plan, output):
-    """Render a graph without Graphviz and include explicit orthogonal waypoints."""
+    """Render a validated v2 semantic plan, retaining the legacy v1 boundary."""
+    if plan.get("schema_version") == 2:
+        return _render_generic_v2(plan, output)
     validate_plan(plan)
     data = plan["result"]
     nodes, edges = data["nodes"], data["edges"]
@@ -309,6 +1151,8 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
         host_mandatory_roles = {"supervisor", "semantic_analyst", "repair", "reviewer"}
     else:
         allowed_actions = {"analyze", "repair", "review"}
+        if workflow["mode"] == "create" and not workflow.get("accepted_artifact"):
+            allowed_actions.add("create")
         host_mandatory_roles = {"supervisor", "repair", "reviewer"}
     if action not in allowed_actions:
         raise supervisor.SupervisorError(
@@ -360,7 +1204,7 @@ def checkpoint(run_dir, workflow, kind, summary, findings, allowed, *, evidence=
     value = {
         "schema_version": 1, "run_id": workflow["run_id"], "kind": kind,
         "summary": summary, "findings": findings, "allowed_decisions": allowed,
-        "accepted_artifact": workflow["accepted_artifact"], "created_at": supervisor.utc_now(),
+        "accepted_artifact": workflow.get("accepted_artifact"), "created_at": supervisor.utc_now(),
     }
     if evidence is not None:
         value["evidence"] = evidence
@@ -382,6 +1226,36 @@ def checkpoint(run_dir, workflow, kind, summary, findings, allowed, *, evidence=
         state=supervisor.load_state(run_dir)["state"],
         actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
     )
+    if lifecycle_v2.manifest_path(run_dir).is_file():
+        semantic_plan_sha = None
+        semantic_delta_sha = None
+        baseline_digest = None
+        plan_descriptor = workflow.get("semantic_plan_v2") or {}
+        if plan_descriptor:
+            semantic_plan_sha = plan_descriptor.get("sha256")
+            try:
+                plan_value = supervisor.load_json(plan_descriptor["path"])
+                baseline_digest = plan_value["baseline_semantic_digest"]
+                semantic_delta_sha = semantic_delta_sha256(plan_value["result"]["semantic_delta"])
+            except (KeyError, OSError, ValueError, json.JSONDecodeError):
+                pass
+        accepted_descriptor = None
+        accepted_path = workflow.get("accepted_artifact", {}).get("path")
+        if accepted_path and _inside(accepted_path, run_dir):
+            accepted_descriptor = _relative_file(run_dir, accepted_path)
+        v2_checkpoint, v2_descriptor = lifecycle_v2.create_checkpoint(
+            run_dir,
+            checkpoint_type=kind,
+            allowed_decisions=allowed,
+            context={"summary": summary, "findings": findings, "evidence": evidence},
+            baseline_semantic_digest=baseline_digest,
+            semantic_plan_sha256=semantic_plan_sha,
+            semantic_delta_sha256=semantic_delta_sha,
+            accepted_artifact=accepted_descriptor,
+        )
+        workflow["checkpoint"]["v2_checkpoint_id"] = v2_checkpoint["checkpoint_id"]
+        workflow["checkpoint"]["v2_checkpoint_sha256"] = v2_descriptor["canonical_sha256"]
+        write_workflow(run_dir, workflow)
     return host_result(run_dir, workflow)
 
 
@@ -496,16 +1370,441 @@ def add_command_guidance(result, resolution, *, persist=True):
     return result
 
 
+def _role_document(run_dir, path):
+    descriptor = _relative_file(run_dir, path)
+    return {
+        "path": descriptor["path"],
+        "sha256": descriptor["sha256"],
+        "content": supervisor.load_json(path),
+    }
+
+
+def _reviewer_input_v2(
+    run_dir, workflow, *, review_kind, candidate, report, receipt_v2,
+    baseline=None, baseline_report=None, baseline_receipt_v2=None, patch=None,
+):
+    """Build and validate the actual hash-bound input shown to Reviewer v2."""
+    run_dir = Path(run_dir).resolve()
+    candidate = Path(candidate).resolve()
+    report = Path(report).resolve()
+    receipt_v2 = Path(receipt_v2).resolve()
+    receipt_check = lifecycle_v2.verify_v2_receipt(run_dir, receipt_v2)
+    if not receipt_check["valid"]:
+        raise supervisor.SupervisorError(
+            f"Reviewer candidate receipt v2 failed before model call: {receipt_check['diagnostics']}"
+        )
+    candidate_receipt_value = supervisor.load_json(receipt_v2)
+
+    source_bundle, source_descriptor = lifecycle_v2.latest_document(run_dir, "source-bundle")
+    source_path = run_dir / source_descriptor["path"]
+    evidence_root = run_dir / "evidence" / "reviewer" / supervisor.sha256_file(candidate)[:16]
+    candidate_spec_path = evidence_root / "candidate-spec.v2.json"
+    candidate_spec = _v1_spec_to_v2(
+        run_dir, supervisor.make_spec(candidate), source_descriptor["canonical_sha256"],
+    )
+    atomic_write_bytes(candidate_spec_path, canonical_json_bytes(candidate_spec) + b"\n")
+
+    baseline_value = None
+    baseline_spec_value = None
+    comparison = None
+    if baseline is not None:
+        baseline = Path(baseline).resolve()
+        baseline_report = Path(baseline_report).resolve()
+        baseline_receipt_v2 = Path(baseline_receipt_v2).resolve()
+        baseline_check = lifecycle_v2.verify_v2_receipt(run_dir, baseline_receipt_v2)
+        if not baseline_check["valid"]:
+            raise supervisor.SupervisorError(
+                f"Reviewer baseline receipt v2 failed before model call: {baseline_check['diagnostics']}"
+            )
+        baseline_receipt_value = supervisor.load_json(baseline_receipt_v2)
+        baseline_spec_path = evidence_root / "baseline-spec.v2.json"
+        baseline_spec = _v1_spec_to_v2(
+            run_dir, supervisor.make_spec(baseline), source_descriptor["canonical_sha256"],
+        )
+        atomic_write_bytes(baseline_spec_path, canonical_json_bytes(baseline_spec) + b"\n")
+        baseline_value = {
+            "artifact": _relative_file(run_dir, baseline),
+            "report": _role_document(run_dir, baseline_report),
+            "receipt": _role_document(run_dir, baseline_receipt_v2),
+            "strict_passed": baseline_check["strict_passed"],
+        }
+        baseline_spec_value = _role_document(run_dir, baseline_spec_path)
+        baseline_report_value = supervisor.load_json(baseline_report)
+        candidate_report_value = supervisor.load_json(report)
+        comparison = {
+            "diagram": supervisor.spec_diff(baseline_spec, candidate_spec),
+            "quality": supervisor.compare_reports(
+                baseline_report_value, candidate_report_value,
+                baseline_spec["semantic_digest"]["value"]
+                == candidate_spec["semantic_digest"]["value"],
+                True,
+            ),
+        }
+
+    plan_value = None
+    delta_value = None
+    plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    plan_path = Path(plan_descriptor.get("path", ""))
+    if (
+        plan_path.is_file()
+        and supervisor.sha256_file(plan_path) == plan_descriptor.get("sha256")
+    ):
+        plan_value = _role_document(run_dir, plan_path)
+        delta = plan_value["content"]["result"]["semantic_delta"]
+        delta_value = {"sha256": semantic_delta_sha256(delta), "content": delta}
+
+    resolutions = []
+    legacy_manifest = run_dir / "run-manifest.jsonl"
+    if legacy_manifest.is_file():
+        for line in legacy_manifest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("event_type") == "model_resolved":
+                resolutions.append(event.get("payload", {}))
+
+    value = {
+        "schema_version": 2,
+        "run_id": workflow["run_id"],
+        "review_kind": review_kind,
+        "baseline": baseline_value,
+        "candidate": {
+            "artifact": _relative_file(run_dir, candidate),
+            "report": _role_document(run_dir, report),
+            "receipt": _role_document(run_dir, receipt_v2),
+            "strict_passed": receipt_check["strict_passed"],
+        },
+        "baseline_spec": baseline_spec_value,
+        "candidate_spec": _role_document(run_dir, candidate_spec_path),
+        "patch": _role_document(run_dir, patch) if patch is not None else None,
+        "semantic_plan": plan_value,
+        "semantic_delta": delta_value,
+        "source_bundle": {
+            "path": source_descriptor["path"],
+            "sha256": source_descriptor["sha256"],
+            "content": source_bundle,
+        },
+        "comparison": comparison,
+        "model_resolutions": resolutions,
+    }
+    require_valid_contract(value, "reviewer-input", 2)
+    return value
+
+
+def _reviewer_gate_binding_error(run_dir, workflow, verdict):
+    """Return the first exact Reviewer evidence mismatch, or ``None``."""
+    plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    plan_path = Path(plan_descriptor.get("path", ""))
+    if not plan_path.is_file() or supervisor.sha256_file(plan_path) != plan_descriptor.get("sha256"):
+        return "semantic plan evidence is missing or changed"
+    plan = supervisor.load_json(plan_path)
+    require_valid_contract(plan, "semantic-plan", 2)
+    expected_delta = semantic_delta_sha256(plan["result"]["semantic_delta"])
+    if any((
+        verdict["bindings"].get("semantic_plan_sha256") != plan_descriptor.get("sha256"),
+        verdict["bindings"].get("semantic_delta_sha256") != expected_delta,
+        plan_descriptor.get("semantic_delta_sha256") != expected_delta,
+    )):
+        return "Reviewer semantic bindings differ from the active plan"
+
+    replayed = lifecycle_v2.require_mutable(run_dir, workflow["run_id"])
+    source_hash = verdict["bindings"].get("source_bundle_sha256")
+    source_hashes = {
+        snapshot["canonical_sha256"]
+        for item in replayed["events"]
+        for snapshot in item["event"].get("snapshots", [])
+        if snapshot.get("schema_kind") == "source-bundle"
+    }
+    if source_hash not in source_hashes:
+        return "Reviewer source bundle is not an immutable run revision"
+
+    role_input_path = None
+    legacy_manifest = Path(run_dir) / "run-manifest.jsonl"
+    if legacy_manifest.is_file():
+        for line in legacy_manifest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            payload = event.get("payload", {})
+            if (
+                event.get("event_type") == "role_started"
+                and payload.get("role") == "reviewer"
+                and payload.get("input_sha256") == verdict["role_input_sha256"]
+            ):
+                candidate = Path(payload.get("input", ""))
+                if _inside(candidate, run_dir):
+                    role_input_path = candidate
+                    break
+    if (
+        role_input_path is None
+        or not role_input_path.is_file()
+        or supervisor.sha256_file(role_input_path) != verdict["role_input_sha256"]
+    ):
+        return "Reviewer role input evidence is missing or changed"
+    role_input = supervisor.load_json(role_input_path)
+    require_valid_contract(role_input, "reviewer-input", 2)
+    expected = {
+        "candidate_sha256": role_input["candidate"]["artifact"]["sha256"],
+        "report_sha256": role_input["candidate"]["report"]["sha256"],
+        "receipt_sha256": role_input["candidate"]["receipt"]["sha256"],
+        "source_bundle_sha256": canonical_json_sha256(role_input["source_bundle"]["content"]),
+        "semantic_plan_sha256": (
+            role_input["semantic_plan"]["sha256"]
+            if role_input.get("semantic_plan") is not None else None
+        ),
+        "semantic_delta_sha256": (
+            role_input["semantic_delta"]["sha256"]
+            if role_input.get("semantic_delta") is not None else None
+        ),
+    }
+    mismatches = [
+        key for key, value in expected.items()
+        if verdict["bindings"].get(key) != value
+    ]
+    if mismatches:
+        return "Reviewer verdict differs from its exact role input: " + ", ".join(mismatches)
+    return None
+
+
+def _final_approval_eligibility(run_dir, workflow):
+    """Compute executable final decisions from hash-bound deterministic evidence."""
+    accepted = Path(workflow["accepted_artifact"]["path"])
+    report_path = Path(workflow["accepted_validation"]["report"])
+    receipt_path = Path(workflow["validation_receipt_v2"]["path"])
+    verdict_descriptor = (
+        workflow.get("candidate_reviewer_verdict_v2")
+        or workflow.get("reviewer_verdict_v2")
+        or {}
+    )
+    verdict_path = Path(verdict_descriptor.get("path", ""))
+    receipt_check = lifecycle_v2.verify_v2_receipt(run_dir, receipt_path)
+    if not receipt_check["integrity_valid"]:
+        return {"approve": False, "approve_with_findings": False, "strict_passed": False, "unresolved_findings": [], "reason": "validation receipt integrity failed"}
+    if (
+        not accepted.is_file()
+        or not report_path.is_file()
+        or not verdict_path.is_file()
+        or supervisor.sha256_file(verdict_path) != verdict_descriptor.get("sha256")
+    ):
+        return {"approve": False, "approve_with_findings": False, "strict_passed": receipt_check["strict_passed"], "unresolved_findings": [], "reason": "final evidence is missing or changed"}
+    report = supervisor.load_json(report_path)
+    verdict = supervisor.load_json(verdict_path)
+    require_valid_contract(verdict, "reviewer-verdict", 2)
+    if any((
+        report.get("artifact_sha256") != supervisor.sha256_file(accepted),
+        verdict["run_id"] != workflow["run_id"],
+        verdict["bindings"]["candidate_sha256"] != supervisor.sha256_file(accepted),
+        verdict["bindings"]["report_sha256"] != supervisor.sha256_file(report_path),
+        verdict["bindings"]["receipt_sha256"] != supervisor.sha256_file(receipt_path),
+    )):
+        return {"approve": False, "approve_with_findings": False, "strict_passed": receipt_check["strict_passed"], "unresolved_findings": [], "reason": "Reviewer bindings differ from accepted evidence"}
+    binding_error = _reviewer_gate_binding_error(run_dir, workflow, verdict)
+    if binding_error:
+        return {
+            "approve": False,
+            "approve_with_findings": False,
+            "strict_passed": receipt_check["strict_passed"],
+            "unresolved_findings": [],
+            "reason": binding_error,
+        }
+    report_findings = list(report.get("findings", []))
+    reviewer_findings = list(verdict.get("findings", []))
+    structural_errors = [
+        item for item in report_findings
+        if item.get("severity") == "error" and (
+            item.get("remediation_class") == "structural"
+            or item.get("layer") == "artifact-parse"
+            or str(item.get("code", "")).startswith((
+                "artifact.structure.", "artifact.id.", "artifact.cell.",
+                "artifact.geometry.invalid", "artifact.edge.dangling",
+            ))
+        )
+    ]
+    reviewer_blockers = [
+        item for item in reviewer_findings
+        if item.get("severity") == "error" or item.get("category") == "integrity"
+    ]
+    unresolved = [
+        {"source": "validator", "finding": item} for item in report_findings
+    ] + [
+        {"source": "reviewer", "finding": item} for item in reviewer_findings
+    ]
+    safe_with_findings = not structural_errors and not reviewer_blockers
+    strict_approve = bool(
+        receipt_check["strict_passed"]
+        and verdict["verdict"] == "approve"
+        and not reviewer_blockers
+    )
+    return {
+        "approve": strict_approve,
+        "approve_with_findings": safe_with_findings and bool(unresolved or not receipt_check["strict_passed"]),
+        "strict_passed": receipt_check["strict_passed"],
+        "unresolved_findings": unresolved,
+        "reason": None if safe_with_findings else "structural or integrity findings remain",
+    }
+
+
 def baseline_review(run_dir, workflow, cli, timeout):
     accepted = Path(workflow["accepted_artifact"]["path"])
     report = Path(workflow["accepted_validation"]["report"])
     receipt = Path(workflow["accepted_validation"]["receipt"])
-    audit = diagram_host.audit_input(run_dir, accepted, Path(run_dir) / "diagram-spec.json", report, receipt)
-    verdict, runtime, _, output = role_call(
-        "reviewer", audit, run_dir, Path(workflow["workspace"]), cli, timeout, f"reviewer-baseline-{workflow['iteration']}"
+    receipt_v2 = Path(workflow["validation_receipt_v2"]["path"])
+    audit = _reviewer_input_v2(
+        run_dir, workflow, review_kind="baseline_audit",
+        candidate=accepted, report=report, receipt_v2=receipt_v2,
     )
-    verdict = supervisor.load_reviewer_verdict(output, workflow["run_id"], supervisor.sha256_file(accepted), report, receipt)
+    analysis, runtime, input_path, output = role_call(
+        "reviewer", audit, run_dir, Path(workflow["workspace"]), cli, timeout,
+        f"reviewer-baseline-{workflow['iteration']}"
+    )
+    verdict = analysis
+    _verify_reviewer_runtime(verdict, runtime)
+    verdict_v2, verdict_v2_path = _bind_reviewer_v2(
+        run_dir, workflow, verdict, runtime, input_path, output,
+        accepted, report, receipt_v2,
+    )
+    workflow["reviewer_verdict_v2"] = {
+        "path": str(verdict_v2_path.resolve()),
+        "sha256": supervisor.sha256_file(verdict_v2_path),
+    }
+    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    evidence = copy.deepcopy(source_bundle["evidence"])
+    receipt_v2 = Path(workflow["validation_receipt_v2"]["path"])
+    evidence["eligible_review_handoff"] = {
+        "artifact": _relative_file(run_dir, accepted),
+        "report": _relative_file(run_dir, report),
+        "receipt": _relative_file(run_dir, receipt_v2),
+        "verdict": _relative_file(run_dir, verdict_v2_path),
+        "findings_sha256": canonical_json_sha256(verdict_v2["findings"]),
+    }
+    lifecycle_v2.revise_sources(
+        run_dir, evidence=evidence,
+        event_payload={"kind": "review_handoff", "verdict": verdict_v2["verdict"]},
+    )
     return verdict, runtime
+
+
+def _verify_reviewer_runtime(verdict, runtime):
+    resolution = runtime["resolution"]
+    if verdict.get("schema_version") == 2:
+        metadata = runtime.get("runtime_metadata") or {}
+        model_proof = metadata.get("model_proof") or {}
+        isolation_proof = metadata.get("isolation_proof") or {}
+        if not all((
+            model_proof.get("verified") is True,
+            isolation_proof.get("verified") is True,
+            metadata.get("reported_model") == resolution.get("resolved_model"),
+            resolution.get("resolution_mode") == "isolated_cli",
+        )):
+            raise supervisor.SupervisorError(
+                "Reviewer v2 runtime proof or isolation evidence is invalid"
+            )
+    else:
+        declared = verdict.get("reviewer") or {}
+        expected = {
+            "resolved_model": resolution["resolved_model"],
+            "provider": resolution["provider"],
+            "resolution_mode": resolution["resolution_mode"],
+        }
+        mismatches = [key for key, value in expected.items() if declared.get(key) != value]
+        if mismatches:
+            raise supervisor.SupervisorError(
+                "Reviewer identity differs from verified runtime proof: " + ", ".join(mismatches)
+            )
+    if verdict.get("verdict") == "approve" and any(
+        finding.get("severity") == "error" for finding in verdict.get("findings", [])
+    ):
+        raise supervisor.SupervisorError("Reviewer cannot approve while error-level findings remain")
+
+
+def _bind_reviewer_v2(run_dir, workflow, verdict, runtime, input_path, output_path, candidate, report, receipt):
+    resolution = runtime["resolution"]
+    if verdict.get("schema_version") == 2:
+        analysis = copy.deepcopy(verdict)
+        normalized_findings = analysis["findings"]
+        analysis_id = analysis["analysis_id"]
+    else:
+        normalized_findings = []
+        for index, finding in enumerate(verdict.get("findings", []), 1):
+            reason = finding.get("reason") or finding.get("message") or "Reviewer finding"
+            lowered = reason.lower()
+            category = "semantic" if "semantic" in lowered else "routing" if any(token in lowered for token in ("route", "waypoint", "cross")) else "layout" if any(token in lowered for token in ("layout", "overlap", "label")) else "validation"
+            severity = finding.get("severity", "warning")
+            normalized_findings.append({
+                "finding_id": finding.get("finding_id") or f"review-finding-{index}",
+                "category": category,
+                "severity": severity,
+                "summary": reason,
+                "elements": [],
+                "evidence": [{
+                    "kind": "validation_report",
+                    "path": Path(report).resolve().relative_to(Path(run_dir).resolve()).as_posix(),
+                    "sha256": supervisor.sha256_file(report),
+                    "pointer": None,
+                    "message": reason,
+                }],
+                "remediation": {
+                    "class": "repair" if severity in {"warning", "error"} else "none",
+                    "action": reason,
+                },
+            })
+        analysis_id = verdict["verdict_id"]
+        analysis = {
+            "schema_version": 2,
+            "role": "reviewer",
+            "status": "needs_human" if verdict["verdict"] == "reject" else "ok",
+            "analysis_id": analysis_id,
+            "verdict": verdict["verdict"],
+            "reviewed_at": verdict["reviewed_at"],
+            "findings": normalized_findings,
+        }
+    require_valid_contract(analysis, "reviewer-analysis", 2)
+    # Preserve the analytical model output as its own canonical artifact even
+    # when the runtime already returned v2.  The host-bound verdict is a
+    # separate decision and must not erase analysis_id or structured findings.
+    analysis_path = Path(output_path).with_name("analysis.v2.json")
+    atomic_write_bytes(analysis_path, canonical_json_bytes(analysis) + b"\n")
+    verdict_id = "verdict-" + canonical_json_sha256({
+        "run_id": workflow["run_id"],
+        "analysis_id": analysis_id,
+        "analysis_sha256": supervisor.sha256_file(analysis_path),
+        "candidate_sha256": supervisor.sha256_file(candidate),
+    })[:24]
+    plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    source_hash = lifecycle_v2.require_mutable(run_dir)["latest_snapshots"]["source-bundle"]["canonical_sha256"]
+    runtime_capture = Path(runtime["runtime_capture"])
+    value = {
+        "schema_version": 2,
+        "verdict_id": verdict_id,
+        "analysis_id": analysis_id,
+        "run_id": workflow["run_id"],
+        "analysis_sha256": supervisor.sha256_file(analysis_path),
+        "role_input_sha256": supervisor.sha256_file(input_path),
+        "role_output_sha256": supervisor.sha256_file(output_path),
+        "bindings": {
+            "candidate_sha256": supervisor.sha256_file(candidate),
+            "report_sha256": supervisor.sha256_file(report),
+            "receipt_sha256": supervisor.sha256_file(receipt),
+            "source_bundle_sha256": source_hash,
+            "semantic_plan_sha256": plan_descriptor.get("sha256"),
+            "semantic_delta_sha256": plan_descriptor.get("semantic_delta_sha256"),
+        },
+        "runtime_proof": {
+            "requested_model": resolution["requested_model"],
+            "resolved_model": resolution["resolved_model"],
+            "provider": resolution["provider"],
+            "resolution_mode": resolution["resolution_mode"],
+            "attempt_id": runtime.get("attempt_id") or Path(output_path).parent.name,
+            "evidence_sha256": supervisor.sha256_file(runtime_capture),
+        },
+        "verdict": verdict["verdict"],
+        "reviewed_at": verdict["reviewed_at"],
+        "findings": normalized_findings,
+    }
+    require_valid_contract(value, "reviewer-verdict", 2)
+    path = Path(output_path).with_name("verdict.v2.json")
+    atomic_write_bytes(path, canonical_json_bytes(value) + b"\n")
+    return value, path
 
 
 def repair_input(run_dir, workflow):
@@ -514,6 +1813,48 @@ def repair_input(run_dir, workflow):
     receipt = supervisor.load_json(workflow["accepted_validation"]["receipt"])
     spec = supervisor.make_spec(accepted, [source_ref_for_request(workflow["run_id"], workflow["request"])])
     approved_semantic_change = workflow.get("approved_semantic_change")
+    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    semantic_plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    semantic_plan_path = Path(semantic_plan_descriptor.get("path", ""))
+    semantic_plan = None
+    if semantic_plan_path.is_file():
+        if supervisor.sha256_file(semantic_plan_path) != semantic_plan_descriptor.get("sha256"):
+            raise supervisor.SupervisorError("repair semantic plan changed after review")
+        semantic_plan = supervisor.load_json(semantic_plan_path)
+        require_valid_contract(semantic_plan, "semantic-plan", 2)
+    eligible_handoff = source_bundle.get("evidence", {}).get("eligible_review_handoff") or {}
+    verdict_descriptor = eligible_handoff.get("verdict") or {}
+    verdict_path = Path(run_dir) / verdict_descriptor.get("path", "")
+    reviewer_verdict = None
+    if verdict_path.is_file():
+        if supervisor.sha256_file(verdict_path) != verdict_descriptor.get("sha256"):
+            raise supervisor.SupervisorError("repair Reviewer verdict changed after review")
+        reviewer_verdict = supervisor.load_json(verdict_path)
+        require_valid_contract(reviewer_verdict, "reviewer-verdict", 2)
+        if reviewer_verdict["bindings"]["candidate_sha256"] != supervisor.sha256_file(accepted):
+            raise supervisor.SupervisorError("repair review handoff is not bound to the accepted artifact")
+    receipt_descriptor = eligible_handoff.get("receipt") or {}
+    receipt_v2_path = (
+        Path(run_dir) / receipt_descriptor.get("path", "")
+        if receipt_descriptor else Path((workflow.get("validation_receipt_v2") or {}).get("path", ""))
+    )
+    if not receipt_v2_path.is_file():
+        raise supervisor.SupervisorError("repair requires the hash-bound v2 validation receipt")
+    report_descriptor = eligible_handoff.get("report") or {}
+    review_report_path = (
+        Path(run_dir) / report_descriptor.get("path", "")
+        if report_descriptor else Path(workflow["accepted_validation"]["report"])
+    )
+    if any((
+        not review_report_path.is_file(),
+        report_descriptor and supervisor.sha256_file(review_report_path) != report_descriptor.get("sha256"),
+        receipt_descriptor and supervisor.sha256_file(receipt_v2_path) != receipt_descriptor.get("sha256"),
+        reviewer_verdict is not None
+        and reviewer_verdict["bindings"]["report_sha256"] != supervisor.sha256_file(review_report_path),
+        reviewer_verdict is not None
+        and reviewer_verdict["bindings"]["receipt_sha256"] != supervisor.sha256_file(receipt_v2_path),
+    )):
+        raise supervisor.SupervisorError("repair review handoff report/receipt bindings are invalid")
     if workflow.get("semantic_authorized"):
         if not approved_semantic_change:
             raise supervisor.SupervisorError("semantic repair has no hash-bound human approval")
@@ -528,11 +1869,49 @@ def repair_input(run_dir, workflow):
             != approved_semantic_change["semantic_changes_sha256"]
         ):
             raise supervisor.SupervisorError("approved semantic change evidence is missing or hash-mismatched")
+        plan_value = supervisor.load_json(plan_path)
+        approval_descriptor = approved_semantic_change.get("semantic_approval_v2") or {}
+        approval_path = Path(approval_descriptor.get("path", ""))
+        if (
+            not approval_path.is_file()
+            or supervisor.sha256_file(approval_path) != approval_descriptor.get("sha256")
+        ):
+            raise supervisor.SupervisorError("actual human semantic approval v2 is missing or hash-mismatched")
+        approval = supervisor.load_json(approval_path)
+        require_valid_contract(plan_value, "semantic-plan", 2)
+        require_valid_contract(approval, "semantic-approval", 2)
+        delta = plan_value["result"]["semantic_delta"]
+        if any((
+            approval["decision"] != "approve",
+            approval["baseline_semantic_digest"] != plan_value["baseline_semantic_digest"],
+            approval["semantic_plan_sha256"] != supervisor.sha256_file(plan_path),
+            approval["source_bundle_sha256"] != plan_value["source_bundle_sha256"],
+            approval["semantic_delta_sha256"] != semantic_delta_sha256(delta),
+        )):
+            raise supervisor.SupervisorError("semantic approval v2 bindings differ from the approved plan and delta")
     return {
         "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
         "request": workflow["request"], "iteration": workflow["iteration"],
         "semantic_changes_authorized": workflow.get("semantic_authorized", False),
         "approved_semantic_change": approved_semantic_change,
+        "source_bundle": source_bundle,
+        "semantic_plan_v2": semantic_plan,
+        "approved_semantic_delta": (
+            semantic_plan["result"]["semantic_delta"]
+            if approved_semantic_change and semantic_plan is not None else None
+        ),
+        "review_evidence": {
+            "findings": copy.deepcopy(
+                reviewer_verdict["findings"] if reviewer_verdict is not None
+                else workflow.get("findings", [])
+            ),
+            "report": _role_document(run_dir, review_report_path),
+            "receipt": _role_document(run_dir, receipt_v2_path),
+            "verdict": (
+                _role_document(run_dir, verdict_path)
+                if reviewer_verdict is not None else None
+            ),
+        },
         "baseline": {
             "artifact": {"path": str(accepted), "sha256": supervisor.sha256_file(accepted)},
             "semantic_digest": spec["semantic_digest"]["value"],
@@ -547,10 +1926,100 @@ def repair_input(run_dir, workflow):
     }
 
 
+def _verify_semantic_patch_authorization(workflow, patch_value):
+    semantic_operations = [
+        operation for operation in patch_value["operations"]
+        if operation.get("semantic_effect", "layout_only") not in {"layout_only", "layout-only"}
+    ]
+    if not semantic_operations:
+        return
+    approved = workflow.get("approved_semantic_change") or {}
+    delta = approved.get("semantic_delta")
+    approval_descriptor = approved.get("semantic_approval_v2") or {}
+    if not delta or not approval_descriptor:
+        raise supervisor.SupervisorError("semantic patch has no exact v2 human authorization")
+    approval_path = Path(approval_descriptor.get("path", ""))
+    if not approval_path.is_file() or supervisor.sha256_file(approval_path) != approval_descriptor.get("sha256"):
+        raise supervisor.SupervisorError("semantic approval artifact is missing or changed")
+    approval = supervisor.load_json(approval_path)
+    require_valid_contract(approval, "semantic-approval", 2)
+    if approval["decision"] != "approve" or approval["semantic_delta_sha256"] != semantic_delta_sha256(delta):
+        raise supervisor.SupervisorError("semantic approval does not authorize the current delta")
+    page_id = patch_value["affected_region"]["page_id"]
+    approved_targets = {
+        (operation["operation_type"], operation["target"]["page_id"], operation["target"]["cell_id"])
+        for operation in delta["operations"]
+    }
+    for operation in semantic_operations:
+        patch_type = {
+            "semantic_addition": "add",
+            "semantic_removal": "remove",
+            "semantic_change": "update",
+        }[operation["semantic_effect"]]
+        target = (page_id, operation["target_id"])
+        compatible_types = {patch_type}
+        if patch_type == "update":
+            compatible_types.update({"relationship", "parent"})
+        if not any((kind, *target) in approved_targets for kind in compatible_types):
+            raise supervisor.SupervisorError(
+                f"semantic patch operation {operation['operation_id']} exceeds the approved typed delta"
+            )
+
+    # Type and stable identity are necessary but not sufficient: a Repair
+    # response could otherwise keep the approved operation shell and replace
+    # its proposed semantic value.  Deterministically replay the patch to a
+    # disposable artifact and compare its value-level field/before/after diff
+    # with the immutable human-approved v2 delta.  This remains pre-promotion:
+    # neither the accepted artifact nor the publication target is mutated.
+    baseline_descriptor = workflow.get("accepted_artifact") or {}
+    baseline = Path(baseline_descriptor.get("path", ""))
+    if (
+        not baseline.is_file()
+        or supervisor.sha256_file(baseline) != baseline_descriptor.get("sha256")
+    ):
+        raise supervisor.SupervisorError(
+            "semantic authorization baseline is missing or hash-mismatched"
+        )
+    with tempfile.TemporaryDirectory(prefix="semantic-authorization-") as temporary:
+        temporary = Path(temporary)
+        patch_path = temporary / "patch.json"
+        candidate = temporary / "candidate.drawio"
+        supervisor.write_json(patch_path, patch_value)
+        supervisor.apply_patch_file(
+            baseline, patch_path, candidate, allow_semantic=True,
+        )
+        semantic_diff = supervisor.semantic_diff_value(baseline, candidate)
+    supervisor.load_semantic_approval_v2(
+        approval_path,
+        workflow["run_id"],
+        delta,
+        semantic_diff,
+    )
+
+
 def _review_candidate(run_dir, workflow, candidate, report, receipt, patch, cli, timeout, label):
-    payload = supervisor.make_reviewer_input(run_dir, candidate, report, receipt, patch)
-    verdict, runtime, _, output = role_call("reviewer", payload, run_dir, Path(workflow["workspace"]), cli, timeout, label)
-    supervisor.load_reviewer_verdict(output, workflow["run_id"], supervisor.sha256_file(candidate), report, receipt)
+    candidate_receipt_v2 = Path(receipt).with_name("validation-receipt.v2.json")
+    baseline_receipt_v2 = Path(workflow["validation_receipt_v2"]["path"])
+    payload = _reviewer_input_v2(
+        run_dir, workflow, review_kind="candidate_review",
+        candidate=candidate, report=report, receipt_v2=candidate_receipt_v2,
+        baseline=Path(workflow["accepted_artifact"]["path"]),
+        baseline_report=Path(workflow["accepted_validation"]["report"]),
+        baseline_receipt_v2=baseline_receipt_v2,
+        patch=patch,
+    )
+    verdict, runtime, input_path, output = role_call(
+        "reviewer", payload, run_dir, Path(workflow["workspace"]), cli, timeout, label,
+    )
+    _verify_reviewer_runtime(verdict, runtime)
+    _, verdict_v2_path = _bind_reviewer_v2(
+        run_dir, workflow, verdict, runtime, input_path, output,
+        candidate, report, candidate_receipt_v2,
+    )
+    workflow["candidate_reviewer_verdict_v2"] = {
+        "path": str(verdict_v2_path.resolve()),
+        "sha256": supervisor.sha256_file(verdict_v2_path),
+    }
     return verdict, runtime, output
 
 
@@ -608,22 +2077,66 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 [op["reasons"][0] for op in patch_value["operations"] if op["semantic_effect"] != "layout_only"],
                 ["continue", "pause", "stop", "manual_handoff"],
             )
+        if semantic_patch:
+            try:
+                _verify_semantic_patch_authorization(workflow, patch_value)
+            except (ContractError, supervisor.SupervisorError, KeyError, ValueError) as exc:
+                workflow["pending_patch"] = str(patch_path)
+                workflow["pending_patch_sha256"] = supervisor.sha256_file(patch_path)
+                workflow["semantic_authorized"] = False
+                workflow.pop("approved_semantic_change", None)
+                supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+                supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="Repair exceeded semantic authorization")
+                return checkpoint(
+                    run_dir, workflow, "semantic_approval",
+                    "Repair предложил изменения вне подтверждённой семантической дельты; требуется новое подтверждение.",
+                    [str(exc)], ["continue", "pause", "stop", "manual_handoff"],
+                    evidence={"patch": str(patch_path), "patch_sha256": supervisor.sha256_file(patch_path)},
+                )
         attempt_id = f"iteration-{workflow['iteration']}"
         attempt_dir = Path(run_dir) / "attempts" / attempt_id
         candidate = attempt_dir / "candidate.drawio"
-        tool_step(
-            run_dir, "patch-apply", supervisor.apply_patch_file,
-            baseline_path, patch_path, candidate, allow_semantic=semantic_patch,
-            evidence={"baseline_sha256": supervisor.sha256_file(baseline_path), "patch_sha256": supervisor.sha256_file(patch_path)},
-        )
-        supervisor.transition(run_dir, "validating", artifact=baseline_path)
-        receipt_value = tool_step(
-            run_dir, "strict-validator", supervisor.run_validation,
-            candidate, run_dir, attempt_id=attempt_id,
-            evidence={"candidate_sha256": supervisor.sha256_file(candidate)},
-        )
+        try:
+            tool_step(
+                run_dir, "patch-apply", supervisor.apply_patch_file,
+                baseline_path, patch_path, candidate, allow_semantic=semantic_patch,
+                evidence={"baseline_sha256": supervisor.sha256_file(baseline_path), "patch_sha256": supervisor.sha256_file(patch_path)},
+            )
+            supervisor.transition(run_dir, "validating", artifact=baseline_path)
+            receipt_value = tool_step(
+                run_dir, "strict-validator", supervisor.run_validation,
+                candidate, run_dir, attempt_id=attempt_id,
+                evidence={"candidate_sha256": supervisor.sha256_file(candidate)},
+            )
+        except Exception as exc:
+            current = supervisor.load_state(run_dir)["state"]
+            if current == "patching":
+                supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+            elif current == "validating":
+                supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+            supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="deterministic repair tool failed")
+            workflow["findings"] = [str(exc)]
+            return checkpoint(
+                run_dir, workflow, "plateau",
+                "Детерминированный patch/validation этап завершился ошибкой; последний принятый артефакт сохранён.",
+                workflow["findings"], ["continue", "pause", "stop", "manual_handoff"],
+                evidence={"failure_class": "deterministic_tool", "attempt_id": attempt_id},
+            )
         report = attempt_dir / "validation-report.json"
         receipt = attempt_dir / "validation-receipt.json"
+        _, receipt_v2 = lifecycle_v2.mirror_validation_receipt(
+            run_dir, legacy_receipt_path=receipt,
+        )
+        receipt_v2_verification = lifecycle_v2.verify_v2_receipt(run_dir, receipt_v2)
+        if not receipt_v2_verification["valid"]:
+            supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+            supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="v2 validation receipt failed")
+            workflow["findings"] = [str(receipt_v2_verification["diagnostics"])]
+            return checkpoint(
+                run_dir, workflow, "plateau",
+                "Квитанция валидации v2 не прошла проверку целостности; baseline сохранён.",
+                workflow["findings"], ["continue", "pause", "stop", "manual_handoff"],
+            )
         try:
             verdict, _, verdict_path = _review_candidate(
                 run_dir, workflow, candidate, report, receipt, patch_path, cli, timeout,
@@ -639,16 +2152,17 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 workflow["findings"], ["continue", "pause", "stop", "manual_handoff"],
             )
         semantic_approval_path = None
+        semantic_approval_v2_path = None
+        approved_semantic_delta = None
         if semantic_patch:
-            semantic_approval_path = attempt_dir / "semantic-approval.json"
-            supervisor.write_json(
-                semantic_approval_path,
-                supervisor.create_semantic_approval(run_dir, baseline_path, candidate, patch_path, "approve"),
-            )
+            semantic_approval_v2_path = Path(workflow["approved_semantic_change"]["semantic_approval_v2"]["path"])
+            approved_semantic_delta = workflow["approved_semantic_change"]["semantic_delta"]
         decision = supervisor.record_candidate(
             run_dir, candidate, baseline_report, report, patch_path,
             baseline_receipt, receipt, reviewer_verdict_path=verdict_path,
             semantic_approval_path=semantic_approval_path,
+            semantic_approval_v2_path=semantic_approval_v2_path,
+            approved_semantic_delta=approved_semantic_delta,
         )
         state = supervisor.load_state(run_dir)
         workflow["findings"] = verdict.get("findings", [])
@@ -659,16 +2173,65 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
         })
         if decision["accepted"]:
             _set_workflow_accepted(workflow, state)
+            workflow["validation_receipt_v2"] = {
+                "path": str(receipt_v2.resolve()),
+                "sha256": supervisor.sha256_file(receipt_v2),
+            }
+            verdict_v2_path = Path(workflow["candidate_reviewer_verdict_v2"]["path"])
+            lifecycle_v2.transition(
+                run_dir, "accepted_candidate", iteration=workflow["iteration"],
+                accepted_artifact=_relative_file(run_dir, candidate),
+                validation_report=_relative_file(run_dir, report),
+                validation_receipt=_relative_file(run_dir, receipt_v2),
+                reviewer_verdict=_relative_file(run_dir, verdict_v2_path),
+                payload={"comparison": decision.get("reason"), "candidate_sha256": supervisor.sha256_file(candidate)},
+            )
+            current_source = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+            source_evidence = copy.deepcopy(current_source["evidence"])
+            source_evidence["eligible_review_handoff"] = {
+                "artifact": _relative_file(run_dir, candidate),
+                "report": _relative_file(run_dir, report),
+                "receipt": _relative_file(run_dir, receipt_v2),
+                "verdict": _relative_file(run_dir, verdict_v2_path),
+                "findings_sha256": canonical_json_sha256(supervisor.load_json(verdict_v2_path)["findings"]),
+            }
+            lifecycle_v2.revise_sources(
+                run_dir, evidence=source_evidence,
+                event_payload={"kind": "accepted_candidate_review", "candidate_sha256": supervisor.sha256_file(candidate)},
+            )
             write_workflow(run_dir, workflow)
-            if receipt_value["result"] == "passed" and verdict["verdict"] == "approve":
+            eligibility = _final_approval_eligibility(run_dir, workflow)
+            allowed_final = []
+            if eligibility["approve"]:
+                allowed_final.append("approve")
+            if eligibility["approve_with_findings"]:
+                allowed_final.append("approve_with_findings")
+            if allowed_final:
+                workflow["final_approval_eligibility"] = eligibility
+                write_workflow(run_dir, workflow)
                 supervisor.transition(run_dir, "final_review", artifact=Path(workflow["accepted_artifact"]["path"]))
                 return checkpoint(
                     run_dir, workflow, "final_acceptance",
-                    "The best candidate passed strict validation and independent review.",
-                    workflow["findings"],
-                    ["approve", "approve_with_findings", "continue", "pause", "stop", "manual_handoff"],
+                    (
+                        "The best candidate passed strict validation and independent review."
+                        if eligibility["approve"]
+                        else "The best candidate is structurally safe and evidence-valid, but unresolved findings require explicit approval."
+                    ),
+                    eligibility["unresolved_findings"],
+                    [*allowed_final, "continue", "pause", "stop", "manual_handoff"],
+                    evidence={"final_approval_eligibility": eligibility},
                 )
             continue
+        lifecycle_v2.transition(
+            run_dir, state["state"], iteration=workflow["iteration"],
+            last_error={
+                "code": "candidate.not_accepted",
+                "message": decision.get("reason", "candidate was not accepted"),
+                "recoverable": state["state"] not in {"manual_handoff", "stopped"},
+                "evidence_path": None,
+            },
+            payload={"candidate_sha256": supervisor.sha256_file(candidate)},
+        )
         if state["state"] == "retrying":
             write_workflow(run_dir, workflow)
             continue
@@ -693,11 +2256,15 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
     )
 
 
-def _start_run_impl(mode, diagram, request, workspace, cli, *, run_id, timeout=600, max_iterations=DEFAULT_MAX_ITERATIONS):
+def _start_run_impl(
+    mode, diagram, request, workspace, cli, *, run_id, timeout=600,
+    max_iterations=DEFAULT_MAX_ITERATIONS, review_handoff=None,
+    lock_recoveries=(), explicit_documents=(),
+):
     workspace = normalize_workspace(workspace)
     source = normalize_drawio(diagram, workspace, must_exist=(mode == "improve"))
     run_dir = run_dir_for(workspace, run_id)
-    if run_dir.exists():
+    if run_dir.exists() and any(path.name != ".run-lock" for path in run_dir.iterdir()):
         raise supervisor.SupervisorError(f"run directory already exists: {run_dir}")
     supervisor.host_preflight(workspace, run_dir, cli)
     workflow = {
@@ -712,16 +2279,68 @@ def _start_run_impl(mode, diagram, request, workspace, cli, *, run_id, timeout=6
     supervisor.write_json(request_path, {"schema_version": 1, "mode": mode, "diagram": str(source), "request": request})
     supervisor.append_event(run_dir, "run_created", {"mode": mode, "request": str(request_path), "request_sha256": supervisor.sha256_file(request_path)})
     write_workflow(run_dir, workflow)
+    lifecycle_v2.initialize(
+        run_dir=run_dir, workspace=workspace, target=source,
+        run_id=workflow["run_id"], mode=mode, request=workflow["request"],
+        extension_root=ROOT, explicit_documents=explicit_documents,
+    )
+    lifecycle_v2.record_lock_recovery(run_dir, lock_recoveries)
+    if review_handoff and review_handoff.get("reviewer_verdict_path"):
+        handoff_root = run_dir / "inputs" / "review-handoff"
+        copied = {}
+        for name, source_path, expected_sha in (
+            ("artifact", review_handoff["diagram"], review_handoff["artifact_sha256"]),
+            ("report", review_handoff["validation_report"], review_handoff["validation_report_sha256"]),
+            ("receipt", review_handoff["validation_receipt"], review_handoff["validation_receipt_sha256"]),
+            ("verdict", review_handoff["reviewer_verdict_path"], review_handoff["reviewer_verdict_sha256"]),
+        ):
+            path = Path(source_path).resolve()
+            if not path.is_file() or supervisor.sha256_file(path) != expected_sha:
+                raise supervisor.SupervisorError(f"review handoff {name} changed before improve started")
+            destination = handoff_root / ("artifact.drawio" if name == "artifact" else f"{name}.json")
+            atomic_write_bytes(destination, path.read_bytes())
+            copied[name] = _relative_file(run_dir, destination)
+        lifecycle_v2.revise_sources(
+            run_dir,
+            new_sources=[],
+            evidence={
+                "imported_diagramspec": None,
+                "baseline_validation": None,
+                "eligible_review_handoff": {
+                    **copied,
+                    "findings_sha256": review_handoff["findings_sha256"],
+                },
+            },
+            event_payload={"kind": "review_handoff_import", "review_run_id": review_handoff["run_id"]},
+        )
+        workflow["review_handoff"] = copy.deepcopy(review_handoff)
     original = run_dir / "inputs" / "original.drawio"
+    accepted = run_dir / "accepted" / "baseline.drawio"
+    imported_spec = None
+    baseline_spec_v2 = None
     if mode == "improve":
         atomic_copy(source, original)
         workflow["original_artifact"] = {"path": str(original), "sha256": supervisor.sha256_file(original)}
         imported_spec = supervisor.make_spec(original, [source_ref_for_request(workflow["run_id"], request)])
+        atomic_copy(original, accepted)
+        supervisor.write_json(run_dir / "diagram-spec.json", imported_spec)
+        supervisor.transition(run_dir, "analyzed", artifact=accepted, max_attempts=max_iterations)
+        receipt = tool_step(run_dir, "strict-validator", supervisor.run_validation, accepted, run_dir, attempt_id="baseline")
+        report_path = run_dir / "attempts" / "baseline" / "validation-report.json"
+        receipt_path = run_dir / "attempts" / "baseline" / "validation-receipt.json"
+        bind_accepted_validation(run_dir, report_path, receipt_path)
+        state = supervisor.load_state(run_dir)
+        _set_workflow_accepted(workflow, state)
+        baseline_spec_v2 = _record_baseline_v2(
+            run_dir, workflow, accepted, imported_spec, report_path, receipt_path,
+        )
+        write_workflow(run_dir, workflow)
     else:
-        imported_spec = None
+        lifecycle_v2.transition(run_dir, "analyzing", payload={"phase": "semantic_planning"})
     supervisor_payload = {
         "schema_version": 1, "run_id": workflow["run_id"], "mode": mode,
         "request": request, "target": str(source), "existing_diagram_spec": imported_spec,
+        "baseline_validation": workflow.get("accepted_validation"),
         "constraints": {"local_only": True, "deterministic_mutations": True, "max_iterations": max_iterations},
     }
     supervisor_result, _, _, _ = role_call("supervisor", supervisor_payload, run_dir, workspace, cli, timeout, "supervisor-initial")
@@ -729,35 +2348,126 @@ def _start_run_impl(mode, diagram, request, workspace, cli, *, run_id, timeout=6
         workflow, supervisor_result, phase="initial", requested_max_iterations=max_iterations,
     )
     write_workflow(run_dir, workflow)
-    semantic_payload = {
-        "schema_version": 1, "run_id": workflow["run_id"], "mode": mode,
-        "request": request, "existing_diagram_spec": imported_spec,
-        "source_priority": ["explicit_user_decision", "confirmed_clarification", "openspec", "existing_diagram", "agent_assumption"],
-        "requirements": {"compare_request_to_existing": mode == "improve", "return_complete_plan_for_create": mode == "create"},
+    semantic_payload = _semantic_input_v2(
+        run_dir, workflow, baseline_spec_v2,
+    )
+    semantic_analysis, _, _, analysis_path = role_call(
+        "semantic_analyst", semantic_payload, run_dir, workspace, cli, timeout,
+        "semantic-initial",
+    )
+    analysis_descriptor = {
+        "path": str(Path(analysis_path).resolve()),
+        "sha256": supervisor.sha256_file(analysis_path),
     }
-    semantic_plan, _, _, plan_path = role_call("semantic_analyst", semantic_payload, run_dir, workspace, cli, timeout, "semantic-initial")
-    validate_plan(semantic_plan)
-    workflow["semantic_plan"] = {"path": str(plan_path), "sha256": supervisor.sha256_file(plan_path)}
-    accepted = run_dir / "accepted" / "baseline.drawio"
+    workflow["semantic_analysis_v2"] = analysis_descriptor
+    # Compatibility alias for old trace/checkpoint readers. New runs never
+    # interpret this analysis artifact as a canonical semantic plan.
+    workflow["semantic_plan"] = dict(analysis_descriptor)
+    semantic_plan_v2, semantic_plan_v2_path = _semantic_analysis_to_v2(
+        run_dir, workflow, semantic_analysis, baseline_spec_v2,
+    )
+    workflow["semantic_plan_v2"] = {
+        "path": str(semantic_plan_v2_path.resolve()),
+        "sha256": supervisor.sha256_file(semantic_plan_v2_path),
+        "semantic_delta_sha256": semantic_delta_sha256(semantic_plan_v2["result"]["semantic_delta"]),
+    }
+    if mode == "create" and semantic_plan_v2["result"]["requires_human"]:
+        supervisor.transition(run_dir, "analyzed", max_attempts=max_iterations)
+        supervisor.transition(
+            run_dir, "awaiting_decision",
+            reason="semantic plan requires clarification before rendering",
+        )
+        delta = semantic_plan_v2["result"]["semantic_delta"]
+        questions = semantic_plan_v2["result"]["human_questions"]
+        pending_semantic = {
+            "semantic_plan": {
+                "path": str(semantic_plan_v2_path.resolve()),
+                "sha256": supervisor.sha256_file(semantic_plan_v2_path),
+            },
+            "baseline_semantic_digest": semantic_plan_v2["baseline_semantic_digest"],
+            "source_bundle_sha256": semantic_plan_v2["source_bundle_sha256"],
+            "semantic_delta": delta,
+            "semantic_delta_sha256": semantic_delta_sha256(delta),
+            "semantic_changes": questions,
+            "semantic_changes_sha256": canonical_hash(questions),
+        }
+        workflow["pending_semantic_approval"] = pending_semantic
+        write_workflow(run_dir, workflow)
+        return checkpoint(
+            run_dir, workflow, "semantic_approval",
+            "The create plan needs clarification or approval before any diagram bytes are rendered.",
+            questions, ["continue", "pause", "stop", "manual_handoff"],
+            evidence=pending_semantic,
+        )
     if mode == "create":
-        tool_step(run_dir, "generic-renderer", render_generic, semantic_plan, accepted)
-    else:
-        atomic_copy(original, accepted)
-    spec = supervisor.make_spec(accepted, [source_ref_for_request(workflow["run_id"], request)])
-    supervisor.write_json(run_dir / "diagram-spec.json", spec)
-    supervisor.transition(run_dir, "analyzed", artifact=accepted, max_attempts=max_iterations)
-    receipt = tool_step(run_dir, "strict-validator", supervisor.run_validation, accepted, run_dir, attempt_id="baseline")
-    report_path = run_dir / "attempts" / "baseline" / "validation-report.json"
-    receipt_path = run_dir / "attempts" / "baseline" / "validation-receipt.json"
-    bind_accepted_validation(run_dir, report_path, receipt_path)
-    state = supervisor.load_state(run_dir)
-    _set_workflow_accepted(workflow, state)
+        accepted.parent.mkdir(parents=True, exist_ok=True)
+        source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+        adapter_input = renderer_adapters.select_lifecycle_adapter_input(
+            semantic_plan_v2, source_bundle, mode="create",
+        )
+        selected_adapter = adapter_input.selection.adapter
+        renderer_source = semantic_plan_v2
+        if adapter_input.source_record is not None:
+            source_path = (
+                run_dir / "inputs" / "renderer-sources"
+                / f"{adapter_input.source_record['content_sha256']}.json"
+            )
+            atomic_write_bytes(
+                source_path,
+                canonical_json_bytes(adapter_input.source_content) + b"\n",
+            )
+            renderer_source = source_path
+        adapter_run = tool_step(
+            run_dir, "renderer-adapter",
+            renderer_adapters.render_with_adapter,
+            selected_adapter.diagram_type, renderer_source, accepted,
+            mode="create", options=dict(adapter_input.options),
+            generic_renderer=render_generic, timeout=timeout,
+        )
+        workflow["renderer_adapter"] = {
+            **adapter_run.record(),
+            **adapter_input.record(),
+            "requested_semantic_diagram_type": semantic_analysis["result"]["diagram_type"],
+        }
+        lifecycle_v2.transition(
+            run_dir, "analyzing",
+            payload={"phase": "rendering", "renderer_adapter": workflow["renderer_adapter"]},
+        )
+        spec = supervisor.make_spec(accepted, [source_ref_for_request(workflow["run_id"], request)])
+        supervisor.write_json(run_dir / "diagram-spec.json", spec)
+        supervisor.transition(run_dir, "analyzed", artifact=accepted, max_attempts=max_iterations)
+        validation_profile = selected_adapter.validation_profile
+        validation_source = (
+            adapter_run.source_path
+            if validation_profile in {"roadmap", "gitflow"}
+            else None
+        )
+        receipt = tool_step(
+            run_dir, "strict-validator", supervisor.run_validation,
+            accepted, run_dir,
+            profile=None if validation_profile == "structural" else validation_profile,
+            source=validation_source,
+            attempt_id="baseline",
+        )
+        report_path = run_dir / "attempts" / "baseline" / "validation-report.json"
+        receipt_path = run_dir / "attempts" / "baseline" / "validation-receipt.json"
+        bind_accepted_validation(run_dir, report_path, receipt_path)
+        state = supervisor.load_state(run_dir)
+        _set_workflow_accepted(workflow, state)
+        baseline_spec_v2 = _record_baseline_v2(
+            run_dir, workflow, accepted, spec, report_path, receipt_path,
+        )
     write_workflow(run_dir, workflow)
-    changes = semantic_plan["result"]["semantic_changes"]
-    if mode == "improve" and (semantic_plan["result"]["requires_human"] or changes):
+    delta = semantic_plan_v2["result"]["semantic_delta"]
+    changes = semantic_plan_v2["result"]["human_questions"]
+    if mode == "improve" and (semantic_plan_v2["result"]["requires_human"] or delta["operations"]):
         supervisor.transition(run_dir, "awaiting_decision", artifact=accepted)
         pending_semantic = {
-            "semantic_plan": {"path": str(Path(plan_path).resolve()), "sha256": supervisor.sha256_file(plan_path)},
+            "semantic_plan": {"path": str(semantic_plan_v2_path.resolve()), "sha256": supervisor.sha256_file(semantic_plan_v2_path)},
+            "baseline_semantic_digest": semantic_plan_v2["baseline_semantic_digest"],
+            "source_bundle_sha256": semantic_plan_v2["source_bundle_sha256"],
+            "semantic_delta": delta,
+            "semantic_delta_sha256": semantic_delta_sha256(delta),
             "semantic_changes": changes,
             "semantic_changes_sha256": canonical_hash(changes),
         }
@@ -780,71 +2490,193 @@ def _start_run_impl(mode, diagram, request, workspace, cli, *, run_id, timeout=6
         )
     workflow["findings"] = verdict.get("findings", [])
     write_workflow(run_dir, workflow)
-    if receipt["result"] == "passed" and verdict["verdict"] == "approve":
+    eligibility = _final_approval_eligibility(run_dir, workflow)
+    allowed_final = []
+    if eligibility["approve"]:
+        allowed_final.append("approve")
+    if eligibility["approve_with_findings"]:
+        allowed_final.append("approve_with_findings")
+    if allowed_final:
+        workflow["final_approval_eligibility"] = eligibility
+        write_workflow(run_dir, workflow)
         supervisor.transition(run_dir, "final_review", artifact=accepted)
         return checkpoint(
             run_dir, workflow, "final_acceptance",
-            "The candidate passed strict validation and independent review.", workflow["findings"],
-            ["approve", "approve_with_findings", "continue", "pause", "stop", "manual_handoff"],
+            (
+                "The candidate passed strict validation and independent review."
+                if eligibility["approve"]
+                else "The candidate is structurally safe and evidence-valid, but unresolved findings require explicit approval."
+            ),
+            eligibility["unresolved_findings"],
+            [*allowed_final, "continue", "pause", "stop", "manual_handoff"],
+            evidence={"final_approval_eligibility": eligibility},
         )
     return repair_loop(run_dir, workflow, cli, timeout)
 
 
-def start_run(mode, diagram, request, workspace, cli, *, run_id=None, timeout=600, max_iterations=DEFAULT_MAX_ITERATIONS):
+def start_run(
+    mode, diagram, request, workspace, cli, *, run_id=None, timeout=600,
+    max_iterations=DEFAULT_MAX_ITERATIONS, review_handoff=None,
+    explicit_documents=(),
+):
     normalized_workspace = normalize_workspace(workspace)
+    # Reject invalid/existing targets before creating the lock/run hierarchy.
+    normalize_drawio(diagram, normalized_workspace, must_exist=(mode == "improve"))
     effective_run_id = run_id or utc_slug(mode)
+    run_dir = run_dir_for(normalized_workspace, effective_run_id)
     try:
-        return _start_run_impl(
-            mode, diagram, request, normalized_workspace, cli,
-            run_id=effective_run_id, timeout=timeout, max_iterations=max_iterations,
-        )
-    except Exception as exc:
-        run_dir = run_dir_for(normalized_workspace, effective_run_id)
-        if run_dir.is_dir():
-            if (run_dir / WORKFLOW_FILE).is_file():
-                workflow = load_workflow(run_dir)
-            else:
-                workflow = {
-                    "schema_version": 1, "run_id": supervisor.ensure_run_id(run_dir),
-                    "mode": mode, "workspace": str(normalized_workspace),
-                    "target": str(diagram), "request": request, "status": "error",
-                    "created_at": supervisor.utc_now(), "checkpoint": None,
-                }
-            workflow["status"] = "error"
-            workflow["error"] = str(exc)
-            write_workflow(run_dir, workflow)
-            host_result(run_dir, workflow, error=str(exc))
-        raise
+        with RunLock(
+            workspace=normalized_workspace, run_dir=run_dir, run_id=effective_run_id,
+        ) as run_lock:
+            try:
+                return _start_run_impl(
+                    mode, diagram, request, normalized_workspace, cli,
+                    run_id=effective_run_id, timeout=timeout, max_iterations=max_iterations,
+                    review_handoff=review_handoff,
+                    lock_recoveries=run_lock.recovery_records,
+                    explicit_documents=explicit_documents,
+                )
+            except Exception as exc:
+                if run_dir.is_dir():
+                    if (run_dir / WORKFLOW_FILE).is_file():
+                        workflow = load_workflow(run_dir)
+                    else:
+                        workflow = {
+                            "schema_version": 1, "run_id": supervisor.ensure_run_id(run_dir),
+                            "mode": mode, "workspace": str(normalized_workspace),
+                            "target": str(diagram), "request": request, "status": "error",
+                            "created_at": supervisor.utc_now(), "checkpoint": None,
+                        }
+                    workflow["status"] = "error"
+                    workflow["error"] = str(exc)
+                    write_workflow(run_dir, workflow)
+                    if lifecycle_v2.manifest_path(run_dir).is_file():
+                        try:
+                            lifecycle_v2.transition(
+                                run_dir, "failed",
+                                last_error={"code": "run.start_failed", "message": str(exc), "recoverable": True, "evidence_path": None},
+                            )
+                        except Exception:
+                            pass
+                    host_result(run_dir, workflow, error=str(exc))
+                raise
+    except RunAlreadyLocked as exc:
+        raise supervisor.SupervisorError(json.dumps(exc.as_result(), ensure_ascii=False)) from exc
 
 
 def publish(run_dir, workflow, decision):
     accepted = Path(workflow["accepted_artifact"]["path"])
     target = Path(workflow["target"])
-    if workflow.get("mode") == "create" and target.exists():
+    report = Path(workflow["accepted_validation"]["report"])
+    receipt_v2 = Path(workflow["validation_receipt_v2"]["path"])
+    verdict_descriptor = (
+        workflow.get("candidate_reviewer_verdict_v2")
+        or workflow.get("reviewer_verdict_v2")
+        or {}
+    )
+    verdict_path = Path(verdict_descriptor.get("path", ""))
+    if (
+        not verdict_path.is_file()
+        or supervisor.sha256_file(verdict_path) != verdict_descriptor.get("sha256")
+    ):
+        raise supervisor.SupervisorError("publication requires the exact host-bound Reviewer v2 verdict")
+    verdict = supervisor.load_json(verdict_path)
+    require_valid_contract(verdict, "reviewer-verdict", 2)
+    eligibility = _final_approval_eligibility(run_dir, workflow)
+    if decision not in {"approve", "approve_with_findings"} or not eligibility.get(decision):
         raise supervisor.SupervisorError(
-            f"create target appeared after the run started and will not be overwritten: {target}"
+            f"publication decision {decision!r} is not authorized by current final evidence: "
+            f"{eligibility.get('reason') or 'decision gate is false'}"
         )
-    atomic_copy(accepted, target)
+    if any((
+        verdict["run_id"] != workflow["run_id"],
+        verdict["bindings"]["candidate_sha256"] != supervisor.sha256_file(accepted),
+        verdict["bindings"]["report_sha256"] != supervisor.sha256_file(report),
+        verdict["bindings"]["receipt_sha256"] != supervisor.sha256_file(receipt_v2),
+    )):
+        raise supervisor.SupervisorError("publication Reviewer v2 evidence does not authorize this accepted artifact")
+    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    handoff = source_bundle.get("evidence", {}).get("eligible_review_handoff") or {}
+    if (
+        handoff.get("verdict", {}).get("sha256") != supervisor.sha256_file(verdict_path)
+        or handoff.get("artifact", {}).get("sha256") != supervisor.sha256_file(accepted)
+        or handoff.get("report", {}).get("sha256") != supervisor.sha256_file(report)
+        or handoff.get("receipt", {}).get("sha256") != supervisor.sha256_file(receipt_v2)
+    ):
+        raise supervisor.SupervisorError("publication source bundle lacks the exact eligible review handoff")
+    transaction = lifecycle_v2.publish_transaction(
+        run_dir,
+        accepted_artifact=accepted,
+        validation_report=report,
+        validation_receipt=receipt_v2,
+        reviewer_verdict=verdict_path,
+        unresolved_findings=eligibility["unresolved_findings"],
+        decision=decision,
+    )
+    if transaction["status"] != "committed":
+        raise supervisor.SupervisorError("publication transaction did not commit")
     supervisor.append_event(
         run_dir, "artifact_published",
-        {"decision": decision, "artifact": str(target), "artifact_sha256": supervisor.sha256_file(target), "accepted_sha256": supervisor.sha256_file(accepted)},
+        {"decision": decision, "artifact": str(target), "artifact_sha256": supervisor.sha256_file(target), "accepted_sha256": supervisor.sha256_file(accepted), "publication_id": transaction["publication_id"]},
         actor={"kind": "human", "id": "user", "model": None},
     )
     return target
 
 
-def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
+def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=600):
     workspace = normalize_workspace(workspace)
     run_dir = resolve_run(reference, workspace)
     workflow = load_workflow(run_dir)
+    replayed = lifecycle_v2.require_mutable(run_dir, workflow.get("run_id"))
+    if not workflow.get("checkpoint") and replayed["latest_snapshots"].get("publication-transaction"):
+        was_terminal = workflow.get("status") in {"completed", "approved_with_findings"}
+        recovered = lifecycle_v2.recover_publication(run_dir)
+        if recovered and recovered["status"] == "committed":
+            target = Path(workflow["target"])
+            workflow["status"] = (
+                "completed" if recovered["decision"] == "approve"
+                else "approved_with_findings"
+            )
+            workflow["published_artifact"] = {
+                "path": str(target.resolve()), "sha256": supervisor.sha256_file(target),
+            }
+            workflow.pop("pending_publication_decision", None)
+            write_workflow(run_dir, workflow)
+            result = host_result(run_dir, workflow)
+            if was_terminal:
+                result["status"] = "already_applied"
+                result["decision_replayed"] = True
+                result["publication_id"] = recovered["publication_id"]
+            return result
+    checkpoint_v2, checkpoint_v2_descriptor = lifecycle_v2.latest_document(
+        run_dir, "checkpoint", replayed,
+    )
+    decision_id = "decision-" + canonical_json_sha256({
+        "checkpoint_sha256": checkpoint_v2_descriptor["canonical_sha256"],
+        "decision": decision,
+        "feedback": feedback,
+    })[:24]
     checkpoint_value = workflow.get("checkpoint")
     if not checkpoint_value:
+        if any(
+            event["event"].get("event_type") == "decision_committed"
+            and event["event"].get("payload", {}).get("decision_id") == decision_id
+            for event in replayed["events"]
+        ):
+            result = host_result(run_dir, workflow)
+            result["status"] = "already_applied"
+            result["decision_id"] = decision_id
+            result["decision_replayed"] = True
+            return result
         raise supervisor.SupervisorError("run has no pending human checkpoint")
     if decision not in checkpoint_value["allowed_decisions"]:
         raise supervisor.SupervisorError(f"decision {decision!r} is not allowed at {checkpoint_value['kind']}")
     checkpoint_path = Path(checkpoint_value["path"])
     if not checkpoint_path.is_file() or supervisor.sha256_file(checkpoint_path) != checkpoint_value["sha256"]:
         raise supervisor.SupervisorError("pending checkpoint evidence is missing or hash-mismatched")
+    # Verify every immutable input to the human decision before appending the
+    # idempotency event.  Otherwise a stale semantic plan could consume the
+    # decision id and leave the still-pending checkpoint impossible to resume.
     approved_proposal = None
     if decision == "continue" and checkpoint_value["kind"] == "semantic_approval":
         approved_proposal = workflow.get("pending_semantic_approval")
@@ -858,17 +2690,65 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
             != approved_proposal["semantic_changes_sha256"]
         ):
             raise supervisor.SupervisorError("semantic plan changed after the human checkpoint")
-    if decision == "continue":
+        approved_plan = supervisor.load_json(plan_path)
+        require_valid_contract(approved_plan, "semantic-plan", 2)
+        if (
+            approved_plan["baseline_semantic_digest"] != approved_proposal["baseline_semantic_digest"]
+            or approved_plan["source_bundle_sha256"] != approved_proposal["source_bundle_sha256"]
+            or approved_plan["result"]["semantic_delta"] != approved_proposal["semantic_delta"]
+            or semantic_delta_sha256(approved_plan["result"]["semantic_delta"])
+            != approved_proposal["semantic_delta_sha256"]
+        ):
+            raise supervisor.SupervisorError("semantic checkpoint bindings differ from the approved v2 plan")
+    decision_v2, decision_v2_descriptor, decision_replayed = lifecycle_v2.commit_decision(
+        run_dir, decision=decision, feedback=feedback, decision_id=decision_id,
+    )
+    if decision_replayed:
+        return host_result(run_dir, workflow)
+    semantic_approval_v2 = None
+    semantic_approval_v2_path = None
+    if checkpoint_value["kind"] == "semantic_approval" and decision == "continue":
+        semantic_approval_v2, semantic_approval_v2_path = lifecycle_v2.create_semantic_approval_from_decision(
+            run_dir, decision=decision_v2,
+        )
+        workflow["approved_semantic_change"] = {
+            **approved_proposal,
+            "semantic_approval_v2": {
+                "path": str(semantic_approval_v2_path.resolve()),
+                "sha256": supervisor.sha256_file(semantic_approval_v2_path),
+                "content": semantic_approval_v2,
+            },
+        }
+        workflow["semantic_authorized"] = True
+        write_workflow(run_dir, workflow)
+    if decision == "continue" and checkpoint_value["kind"] != "publication_conflict":
         resume_payload = {
             "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
             "phase": "resume", "request": workflow["request"], "feedback": feedback,
-            "checkpoint": checkpoint_value, "accepted_artifact": workflow["accepted_artifact"],
+            "checkpoint": checkpoint_value, "accepted_artifact": workflow.get("accepted_artifact"),
             "iteration": workflow["iteration"], "previous_decision": workflow.get("supervisor_decision"),
         }
-        resume_plan, _, _, _ = role_call(
-            "supervisor", resume_payload, run_dir, workspace, cli, timeout,
-            f"supervisor-resume-{len(workflow.get('decisions', [])) + 1}",
-        )
+        try:
+            resume_plan, _, _, _ = role_call(
+                "supervisor", resume_payload, run_dir, workspace, cli, timeout,
+                f"supervisor-resume-{len(workflow.get('decisions', [])) + 1}",
+            )
+        except supervisor.SupervisorError as exc:
+            current = supervisor.load_state(run_dir)["state"]
+            if current in {"awaiting_decision", "final_review"}:
+                supervisor.transition(
+                    run_dir, "awaiting_feedback",
+                    decision="pause", reason="Supervisor resume role failed",
+                )
+            workflow["findings"] = [str(exc)]
+            write_workflow(run_dir, workflow)
+            return checkpoint(
+                run_dir, workflow, "role_contract",
+                "Supervisor resume failed after the human decision was recorded; the accepted candidate and decision evidence were preserved.",
+                workflow["findings"],
+                ["continue", "pause", "stop", "manual_handoff"],
+                evidence={"failure_class": "supervisor_resume", "decision_id": decision_id},
+            )
         requested_additional = DEFAULT_MAX_ITERATIONS
         consume_supervisor_decision(
             workflow, resume_plan, phase="resume", requested_max_iterations=requested_additional,
@@ -883,6 +2763,11 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
     }
     if approved_proposal is not None:
         decision_value["approved_semantic_change"] = approved_proposal
+        decision_value["semantic_approval_v2"] = {
+            "path": str(semantic_approval_v2_path.resolve()),
+            "sha256": supervisor.sha256_file(semantic_approval_v2_path),
+            "content": semantic_approval_v2,
+        }
     supervisor.write_json(decision_path, decision_value)
     workflow.setdefault("decisions", []).append({"path": str(decision_path), "sha256": supervisor.sha256_file(decision_path), **decision_value})
     workflow["checkpoint"] = None
@@ -908,10 +2793,60 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
         workflow["status"] = "awaiting_human"
         write_workflow(run_dir, workflow)
         return checkpoint(run_dir, workflow, checkpoint_value["kind"], "Run remains paused.", checkpoint_value["findings"], checkpoint_value["allowed_decisions"])
+    if decision == "continue" and checkpoint_value["kind"] == "publication_conflict":
+        publication_decision = workflow.get("pending_publication_decision")
+        if publication_decision not in {"approve", "approve_with_findings"}:
+            raise supervisor.SupervisorError("publication conflict lost the original final decision")
+        try:
+            target = publish(run_dir, workflow, publication_decision)
+        except ContractError as exc:
+            if exc.code != "publication.conflict":
+                raise
+            workflow["findings"] = [str(exc)]
+            return checkpoint(
+                run_dir, workflow, "publication_conflict",
+                "Целевой файл всё ещё конфликтует с исходным состоянием; перезапись не выполнялась.",
+                workflow["findings"], ["continue", "pause", "stop", "manual_handoff"],
+                evidence={"code": exc.code, "target": str(Path(workflow["target"]).resolve())},
+            )
+        final_status = "completed" if publication_decision == "approve" else "approved_with_findings"
+        supervisor.transition(
+            run_dir, final_status,
+            artifact=Path(workflow["accepted_artifact"]["path"]),
+            receipt=workflow["accepted_validation"]["receipt"] if final_status == "completed" else None,
+            decision=publication_decision,
+            reason=feedback or "publication conflict resolved",
+        )
+        workflow["status"] = final_status
+        workflow["published_artifact"] = {"path": str(target), "sha256": supervisor.sha256_file(target)}
+        workflow.pop("pending_publication_decision", None)
+        write_workflow(run_dir, workflow)
+        return host_result(run_dir, workflow)
     if decision in {"approve", "approve_with_findings"}:
         if checkpoint_value["kind"] != "final_acceptance" and decision == "approve":
             raise supervisor.SupervisorError("approve is only valid at final acceptance")
-        target = publish(run_dir, workflow, decision)
+        try:
+            target = publish(run_dir, workflow, decision)
+        except ContractError as exc:
+            if exc.code != "publication.conflict":
+                raise
+            workflow["status"] = "awaiting_human"
+            workflow["findings"] = [str(exc)]
+            workflow["pending_publication_decision"] = decision
+            write_workflow(run_dir, workflow)
+            checkpoint(
+                run_dir, workflow, "publication_conflict",
+                "Целевой файл изменился после начала запуска; он не был перезаписан. "
+                "Устраните конфликт и продолжите либо завершите работу вручную.",
+                workflow["findings"],
+                ["continue", "pause", "stop", "manual_handoff"],
+                evidence={"code": exc.code, "target": str(Path(workflow["target"]).resolve())},
+            )
+            raise supervisor.SupervisorError(
+                "create target appeared after start and will not be overwritten"
+                if workflow["mode"] == "create"
+                else "improve target changed after start and will not be overwritten"
+            ) from exc
         if decision == "approve":
             supervisor.transition(run_dir, "completed", artifact=Path(workflow["accepted_artifact"]["path"]), receipt=workflow["accepted_validation"]["receipt"], decision="approve", reason=feedback)
             workflow["status"] = "completed"
@@ -923,14 +2858,53 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
         return host_result(run_dir, workflow)
     if feedback:
         workflow["request"] += "\n\nUser feedback: " + feedback
+        write_workflow(run_dir, workflow)
+        reconciliation_result = _reconcile_feedback(
+            run_dir, workflow, feedback, decision_id, workspace, cli, timeout,
+            approved_proposal=approved_proposal,
+        )
+        if reconciliation_result is not None:
+            return reconciliation_result
     if approved_proposal is not None:
         workflow["approved_semantic_change"] = {
             **approved_proposal,
             "decision": {"path": str(decision_path.resolve()), "sha256": supervisor.sha256_file(decision_path)},
+            "semantic_approval_v2": decision_value["semantic_approval_v2"],
         }
     workflow["semantic_authorized"] = approved_proposal is not None or workflow.get("semantic_authorized", False)
     workflow["status"] = "running"
     write_workflow(run_dir, workflow)
+    if (
+        decision == "continue"
+        and checkpoint_value["kind"] == "semantic_approval"
+        and workflow["mode"] == "create"
+        and not workflow.get("accepted_artifact")
+    ):
+        if approved_proposal is None:
+            raise supervisor.SupervisorError(
+                "checkpointed create has no hash-bound semantic approval"
+            )
+        legacy_descriptor = workflow.get("semantic_plan") or {}
+        legacy_path = Path(legacy_descriptor.get("path", ""))
+        approved_path = Path(approved_proposal["semantic_plan"]["path"])
+        if (
+            not legacy_path.is_file()
+            or supervisor.sha256_file(legacy_path) != legacy_descriptor.get("sha256")
+            or not approved_path.is_file()
+            or supervisor.sha256_file(approved_path)
+            != approved_proposal["semantic_plan"]["sha256"]
+        ):
+            raise supervisor.SupervisorError(
+                "checkpointed create semantic plan evidence is missing or changed"
+            )
+        return _finish_checkpointed_create(
+            run_dir,
+            workflow,
+            supervisor.load_json(legacy_path),
+            supervisor.load_json(approved_path),
+            cli,
+            timeout,
+        )
     current = supervisor.load_state(run_dir)["state"]
     accepted = Path(workflow["accepted_artifact"]["path"])
     if current == "awaiting_feedback":
@@ -943,17 +2917,45 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
     return repair_loop(run_dir, workflow, cli, timeout, already_patching=True)
 
 
+def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
+    normalized_workspace = normalize_workspace(workspace)
+    run_dir = resolve_run(reference, normalized_workspace)
+    workflow = load_workflow(run_dir)
+    lifecycle_v2.require_mutable(run_dir, workflow.get("run_id"))
+    try:
+        with RunLock(
+            workspace=normalized_workspace, run_dir=run_dir,
+            run_id=workflow.get("run_id", run_dir.name),
+        ) as run_lock:
+            lifecycle_v2.record_lock_recovery(run_dir, run_lock.recovery_records)
+            return _resume_run_impl(
+                str(run_dir), decision, feedback, normalized_workspace, cli,
+                timeout=timeout,
+            )
+    except RunAlreadyLocked as exc:
+        return {**exc.as_result(), "run_dir": str(run_dir)}
+
+
 def trace_run(reference, workspace):
     workspace = normalize_workspace(workspace)
     run_dir = resolve_run(reference, workspace)
     workflow = load_workflow(run_dir)
+    state_path = run_dir / "state.json"
     manifest = run_dir / "run-manifest.jsonl"
     checks, events, previous = [], [], None
     schema = supervisor.load_json(ROOT / "data" / "run-event.v1.schema.json")
     for index, line in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
-        event = json.loads(line)
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            checks.append({
+                "sequence": index, "schema_valid": False, "chain_valid": False,
+                "error": f"invalid JSONL event: {exc}",
+            })
+            previous = None
+            continue
         errors = list(jsonschema.Draft202012Validator(schema).iter_errors(event))
         chain_ok = event.get("sequence") == index and event.get("previous_event_sha256") == previous
         checks.append({"sequence": index, "schema_valid": not errors, "chain_valid": chain_ok, "error": errors[0].message if errors else None})
@@ -997,8 +2999,8 @@ def trace_run(reference, workspace):
                 if not start or not output_valid or not capture_valid or role not in policy["roles"]:
                     raise supervisor.SupervisorError("role evidence set is incomplete")
                 parsed, metadata = agent_runtime.parse_runtime_output(role, capture_path.read_text(encoding="utf-8"))
-                parsed = agent_runtime.validate_role_output(role, parsed)
                 role_input = supervisor.load_json(start["payload"]["input"])
+                parsed = agent_runtime.validate_role_output(role, parsed, role_input)
                 parsed, binding_proof = agent_runtime.finalize_role_output(
                     role, role_input, parsed
                 )
@@ -1191,6 +3193,96 @@ def trace_run(reference, workspace):
             and supervisor.sha256_file(accepted_receipt_path) == accepted_validation.get("receipt_sha256")
         )
     preflight = supervisor.verify_host_preflight(run_dir)
+    v2_trace = {
+        "present": lifecycle_v2.manifest_path(run_dir).is_file(),
+        "status": "legacy_read_only",
+        "valid": True,
+        "event_count": 0,
+        "diagnostics": [],
+        "accepted_artifact_valid": None,
+        "accepted_receipt_valid": None,
+        "publication_valid": None,
+        "implementation_changed": None,
+        "implementation_diagnostics": [],
+    }
+    if v2_trace["present"]:
+        replayed_v2 = lifecycle_v2.replay(run_dir, workflow.get("run_id"))
+        v2_trace.update({
+            "status": replayed_v2["status"],
+            "valid": replayed_v2["valid"],
+            "event_count": replayed_v2["event_count"],
+            "latest_event_sha256": replayed_v2["latest_event_sha256"],
+            "diagnostics": replayed_v2["diagnostics"],
+            "latest_snapshots": {
+                kind: {
+                    "path": descriptor["path"],
+                    "canonical_sha256": descriptor["canonical_sha256"],
+                }
+                for kind, descriptor in replayed_v2["latest_snapshots"].items()
+            },
+        })
+        if replayed_v2["valid"]:
+            state_v2, _ = lifecycle_v2.latest_document(run_dir, "run-state", replayed_v2)
+            accepted_v2 = state_v2.get("accepted_artifact")
+            receipt_v2 = state_v2.get("validation_receipt")
+            accepted_v2_valid = False
+            receipt_v2_valid = False
+            if accepted_v2:
+                try:
+                    accepted_v2_path = Path(run_dir) / accepted_v2["path"]
+                    accepted_v2_valid = (
+                        accepted_v2_path.is_file()
+                        and supervisor.sha256_file(accepted_v2_path) == accepted_v2["sha256"]
+                        and accepted_v2_path.stat().st_size == accepted_v2["byte_length"]
+                    )
+                except OSError:
+                    accepted_v2_valid = False
+            if receipt_v2:
+                try:
+                    receipt_v2_path = Path(run_dir) / receipt_v2["path"]
+                    receipt_v2_valid = (
+                        receipt_v2_path.is_file()
+                        and supervisor.sha256_file(receipt_v2_path) == receipt_v2["sha256"]
+                        and lifecycle_v2.verify_v2_receipt(run_dir, receipt_v2_path)["valid"]
+                    )
+                except (OSError, ContractError, KeyError, json.JSONDecodeError):
+                    receipt_v2_valid = False
+            implementation_v2, _ = lifecycle_v2.latest_document(
+                run_dir, "implementation-snapshot", replayed_v2,
+            )
+            implementation_diagnostics = verify_implementation_snapshot(
+                implementation_v2, extension_root=ROOT,
+            )
+            publication_valid = None
+            publication_descriptor = replayed_v2["latest_snapshots"].get("publication-transaction")
+            if publication_descriptor:
+                publication, _ = lifecycle_v2.latest_document(
+                    run_dir, "publication-transaction", replayed_v2,
+                )
+                target_v2 = Path(workflow["workspace"]) / publication["target_path"]
+                publication_valid = (
+                    publication["status"] != "committed"
+                    or (
+                        target_v2.is_file()
+                        and supervisor.sha256_file(target_v2) == publication["published_sha256"]
+                    )
+                )
+            v2_trace.update({
+                "accepted_artifact_valid": accepted_v2_valid,
+                "accepted_receipt_valid": receipt_v2_valid,
+                "publication_valid": publication_valid,
+                "implementation_changed": bool(implementation_diagnostics),
+                "implementation_diagnostics": implementation_diagnostics,
+            })
+            requires_accepted_evidence = state_v2.get("status") not in {
+                "initialized", "analyzing", "failed", "stopped", "manual_handoff",
+            }
+            v2_trace["valid"] = bool(
+                (not requires_accepted_evidence or (accepted_v2_valid and receipt_v2_valid))
+                and publication_valid is not False
+            )
+            if not v2_trace["valid"] and v2_trace["status"] == "verified":
+                v2_trace["status"] = "tampered_or_incomplete"
     integrity_valid = (
         bool(events)
         and all(item["schema_valid"] and item["chain_valid"] for item in checks)
@@ -1198,6 +3290,7 @@ def trace_run(reference, workspace):
         and all(item["valid"] for item in role_checks)
         and all(item["evidence_valid"] for item in failed_roles)
         and preflight["valid"]
+        and v2_trace["valid"]
     )
     terminal_failed_roles = [
         item for item in failed_roles if item.get("terminal", True)
@@ -1208,6 +3301,7 @@ def trace_run(reference, workspace):
         and accepted_valid
         and accepted_receipt_valid
     )
+    state = supervisor.load_json(state_path) if state_path.is_file() else None
     roles = [
         {key: event["payload"].get(key) for key in ("role", "requested_model", "resolved_model", "resolution_mode", "fallback_used", "model_proof", "isolation_controls", "isolation_proof", "binding_proof", "output_sha256")}
         for event in events if event["event_type"] == "role_finished"
@@ -1220,7 +3314,7 @@ def trace_run(reference, workspace):
     result = {
         "schema_version": 1, "status": status,
         "valid": valid, "run_id": workflow["run_id"], "run_dir": str(run_dir),
-        "state": (supervisor.load_state(run_dir) or {}).get("state"),
+        "state": (state or {}).get("state"),
         "event_count": len(events), "event_checks": checks, "artifact_checks": artifact_checks,
         "accepted_artifact_valid": accepted_valid, "accepted_receipt_valid": accepted_receipt_valid,
         "host_preflight": preflight, "role_checks": role_checks,
@@ -1232,6 +3326,7 @@ def trace_run(reference, workspace):
         "roles": roles, "terminal_result": workflow.get("status"),
         "role_policy": role_policy_evidence(workflow),
         "trust_scope": "local runtime capture and configured routing policy; no external cryptographic attestation",
+        "control_plane_v2": v2_trace,
     }
     return result
 
@@ -1249,6 +3344,8 @@ def main():
         cmd.add_argument("--run-id")
         cmd.add_argument("--timeout", type=int, default=600)
         cmd.add_argument("--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS)
+        if name == "create":
+            cmd.add_argument("--renderer-source")
     resume = sub.add_parser("resume")
     resume.add_argument("input", nargs="*")
     resume.add_argument("--run")
@@ -1275,10 +3372,17 @@ def main():
                 else:
                     resolved_diagram, selection = command_ux.generated_target(args.workspace, request)
                 handoff = None
+                explicit_documents = []
+                if args.renderer_source:
+                    renderer_source_path, renderer_document = command_ux.explicit_renderer_document(
+                        args.workspace, args.renderer_source,
+                    )
+                    explicit_documents.append(renderer_document)
             else:
                 resolved_diagram, selection, request, handoff = command_ux.resolve_improve_inputs(
                     args.workspace, diagram=diagram, request=request,
                 )
+                explicit_documents = []
             if args.request is not None:
                 request_source = "explicit_flag"
             elif request_was_supplied:
@@ -1294,9 +3398,13 @@ def main():
             }
             if handoff:
                 resolution["review_handoff"] = handoff
+            if explicit_documents:
+                resolution["renderer_source"] = str(renderer_source_path)
             result = start_run(
                 args.command, resolved_diagram, request, args.workspace, args.cli,
                 run_id=args.run_id, timeout=args.timeout, max_iterations=args.max_iterations,
+                review_handoff=handoff,
+                explicit_documents=explicit_documents,
             )
             result = add_command_guidance(result, resolution)
         elif args.command == "resume":

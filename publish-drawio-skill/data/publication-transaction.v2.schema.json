@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/publication-transaction.v2.schema.json",
+  "title": "Journaled diagram publication transaction v2",
+  "type": "object",
+  "required": ["schema_version", "publication_id", "run_id", "mode", "decision", "status", "target_path", "target_before_sha256", "accepted_artifact", "validation_report", "validation_receipt", "source_bundle_sha256", "state_sha256", "prepared_at", "transaction_id", "previous_snapshot_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "publication_id": {"$ref": "#/$defs/nonEmpty"},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "mode": {"enum": ["create", "improve"]},
+    "decision": {"enum": ["approve", "approve_with_findings"]},
+    "status": {"enum": ["prepared", "staged", "bytes_published", "committed", "conflict", "rolled_back", "failed"]},
+    "target_path": {"$ref": "#/$defs/relativePath"},
+    "target_before_sha256": {"$ref": "#/$defs/nullableSha"},
+    "accepted_artifact": {"$ref": "#/$defs/file"},
+    "validation_report": {"$ref": "#/$defs/file"},
+    "validation_receipt": {"$ref": "#/$defs/file"},
+    "reviewer_verdict": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/file"}]},
+    "strict_passed": {"type": "boolean"},
+    "unresolved_findings": {"type": "array", "items": {"type": "object"}},
+    "source_bundle_sha256": {"$ref": "#/$defs/sha"},
+    "state_sha256": {"$ref": "#/$defs/sha"},
+    "staging_path": {"type": ["string", "null"], "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "backup_path": {"type": ["string", "null"], "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "published_sha256": {"$ref": "#/$defs/nullableSha"},
+    "prepared_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": ["string", "null"], "format": "date-time"},
+    "transaction_id": {"$ref": "#/$defs/nonEmpty"},
+    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"}
+  },
+  "allOf": [
+    {"if": {"properties": {"mode": {"const": "create"}}, "required": ["mode"]}, "then": {"properties": {"target_before_sha256": {"type": "null"}}}},
+    {"if": {"properties": {"mode": {"const": "improve"}}, "required": ["mode"]}, "then": {"properties": {"target_before_sha256": {"$ref": "#/$defs/sha"}}}},
+    {"if": {"properties": {"status": {"const": "committed"}}, "required": ["status"]}, "then": {"properties": {"published_sha256": {"$ref": "#/$defs/sha"}}}}
+  ],
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableSha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

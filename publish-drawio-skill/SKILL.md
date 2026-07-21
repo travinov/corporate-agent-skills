@@ -2,7 +2,7 @@
 name: drawio-skill
 description: Use when the user requests diagrams, flowcharts, roadmap diagrams, git-flow / branching strategy timelines, architecture diagrams, ER diagrams, UML / sequence / class diagrams, network topology, cloud architecture from Terraform or Kubernetes manifests, ML/DL model figures (Transformer/CNN/LSTM), mind maps, or any visualization. Also use proactively when explaining systems with 3+ components, complex data flows, or relationships that benefit from visual representation. Best suited when the diagram needs custom styling, rich shape vocabulary, swimlanes, precise timeline/lane placement, intake clarification, canonical XLSX/CSV roadmap intake, full milestone revision history, baseline comparison, milestone shift markers, or exportable images (PNG/SVG/PDF/JPG). Generates .drawio XML and exports locally via the native draw.io desktop CLI.
 license: MIT
-metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.23.0-corporate.13"}
+metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.24.0-corporate.1"}
 ---
 
 # Draw.io Diagrams
@@ -116,10 +116,11 @@ not fully represented in the source XML.
 When the request is to repair, improve, validate, iterate on, or independently
 review an existing `.drawio`, read `references/diagram-supervisor.md` and use
 `scripts/diagram_supervisor.py`. Inspect the artifact first and keep the source
-unchanged. Search for a relevant OpenSpec and compare it with both the user's
-process description and the current diagram. Tell the user when that comparison
-implies semantic changes; a user/OpenSpec conflict requires one consolidated
-decision. Absence of a relevant spec is not a blocker.
+unchanged. Compare the user's process description only with the current diagram
+and any explicitly supplied reference documents. Tell the user when that
+comparison implies semantic changes; a user/reference conflict requires one
+consolidated decision. Absence of an explicitly supplied specification is not
+a blocker.
 
 On corporate GigaCode, normal read-only review MUST start through the extension
 command, not through a free-form chat prompt:
@@ -165,9 +166,14 @@ execution. Explicit flags remain supported for automation.
 `diagram_orchestrator.py` creates `.diagram-runs/<run-id>`, invokes isolated
 Supervisor and Semantic Analyst, renders or imports a baseline, validates it,
 and invokes Repair/Reviewer only when their state requires them. Resume applies
-human feedback to that same run. Trace is read-only and verifies event chaining,
-model proofs against captured raw runtime output and the configured routing
-policy, validation receipts, and artifact hashes. It is local evidence
+human feedback to that same run. New mutable runs use the strict v2 control
+plane under `lifecycle-v2/`: immutable source, implementation, state,
+checkpoint, decision, receipt, Reviewer, and publication snapshots are bound to
+`run-manifest.v2.jsonl`. The v1 `run-manifest.jsonl` and other v1 files remain a compatibility shadow for proven
+deterministic tools and read-only trace/manual handoff; a mutable v1 checkpoint
+is never resumed. Trace is read-only and verifies both ledgers, model proofs
+against captured raw runtime output and the configured routing policy,
+validation receipts, implementation snapshots, and artifact hashes. It is local evidence
 verification, not external cryptographic attestation against an actor who can
 rewrite the entire run directory.
 
@@ -209,14 +215,21 @@ Repair runs only when deterministic validation or Reviewer findings require it.
 Phase-incompatible actions, invalid role JSON, unapproved semantic changes,
 tool leakage, and unverified models remain fail closed.
 
-Reviewer returns an analytical decision conforming to
-`reviewer-analysis.v1.schema.json`; it does not own `run_id` or evidence SHA
-values. The deterministic host derives those fields from the validated role
-input, publishes the final `reviewer-verdict.v1` envelope, and records
-`binding_proof`, including any optional legacy model-declared mismatch. Every
+Reviewer receives `reviewer-input.v2` and returns analysis conforming to
+`reviewer-analysis.v2`; it does not own runtime identity or evidence SHA
+values. The deterministic host derives those fields from the validated input
+and raw model/isolation proof, then publishes the hash-bound
+`reviewer-verdict.v2`. A v1 Reviewer contract is read only for legacy evidence;
+it is not the mutable lifecycle contract. Every
 read-only review persists `workflow.json`, so bare trace selects the newest
 review/create/improve workflow and an explicit published run UUID resolves to
 the same directory.
+
+Semantic Analyst v2 returns strict analysis-only `semantic-analysis.v2` with
+page-scoped structure, parents, styles, routes, assumptions, and human
+questions. It does not calculate evidence hashes or semantic operation IDs.
+The host binds the actual source bundle and baseline and deterministically
+normalizes the result into canonical `semantic-plan.v2` plus a typed delta.
 
 Before inspecting the diagram, run this from the main session and keep its
 evidence under the user's project, never under the installed extension:
@@ -229,7 +242,7 @@ python3 "$EXT/scripts/diagram_supervisor.py" host-preflight \
   --cli "$HOME/.gigacode/bin/gigacode"
 ```
 
-If `host-preflight.json`, `run-manifest.jsonl`, a hash-bound validation receipt,
+If `host-preflight.json`, either required event ledger, a hash-bound validation receipt,
 or required isolated-role model proof is absent, fail closed and report the
 missing evidence. Do not turn a child-agent status or prose assertion into a
 successful run.
@@ -240,12 +253,30 @@ only as a monotonic improvement. Never use a rejected candidate as the next
 baseline. Persist state and evidence so user feedback resumes the same run.
 Request human input only for source conflicts, semantic changes, a plateau, or
 final review. The user can continue, approve, stop, pause/resume, accept with
-findings, or take the last accepted artifact for manual completion.
+findings, or take the last accepted artifact for manual completion. A non-empty
+resume comment becomes a hash-bound confirmed clarification and triggers
+bounded reconciliation from the last accepted artifact. `approve_with_findings`
+is offered only when evidence integrity and structural safety are valid and no
+error-level finding remains; it never pretends that strict validation passed.
 
 Logical roles are Supervisor and read-only Independent Reviewer during a normal
 run, plus on-demand Repair and Semantic Analyst roles. Resolve models per role;
 never silently execute a global `/model` switch. A run may report `completed`
 only when the strict validation receipt hash matches the exact final `.drawio`.
+
+For new v2 runs, the deterministic host selects rendering through the local
+adapter registry by validated `diagram_type`. Roadmap, git-flow, and C4 may use
+their existing specialized generators only when the user explicitly supplied a
+schema-valid source document and that exact document is hash-bound in the
+immutable source bundle. If the specialized source is missing or invalid, the
+host records the fallback reason and uses the generic adapter; it must not invent
+specialized source data. Every adapter produces only a candidate and then uses
+the same validation, Reviewer, checkpoint, trace, and transactional-publication
+gates.
+The advanced deterministic entry point is
+`/drawio:create --renderer-source "path/to/user-source.json" --request "..."`;
+the short conversational form remains the default when no explicit source
+document is needed.
 
 Run `python3 scripts/self_check.py --check-registry` before first use. Runtime
 requirements are declared in `requirements.txt`; no checker may add or replace a

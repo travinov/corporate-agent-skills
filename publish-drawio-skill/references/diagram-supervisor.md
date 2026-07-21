@@ -7,7 +7,7 @@ Use this workflow when the user asks to improve, repair, validate, iterate on, o
 - **Supervisor** owns the run state and user communication. Default model: `GigaChat-3-Ultra`.
 - **Independent Reviewer** is read-only and returns findings/verdicts. Default model: `vllm/DeepSeek-V4-Flash-262k`.
 - **Repair** is on demand and proposes patch intent, never raw XML. Default model: `vllm/MiniMax-M3-113k`.
-- **Semantic Analyst / Arbiter** is on demand for OpenSpec reconciliation and semantic conflicts. Default model: `vllm/Qwen3.6-35B-262k`.
+- **Semantic Analyst / Arbiter** is on demand for semantic conflicts and explicitly supplied reference reconciliation. Default model: `vllm/Qwen3.6-35B-262k`.
 
 Model output is advisory. `scripts/diagram_supervisor.py` and `scripts/validate.py` own parsing, mutation, comparison, evidence, and state transitions.
 
@@ -109,11 +109,10 @@ Semantic Analyst processes itself; it never changes the interactive `/model`.
 Before changing an existing diagram:
 
 1. Read the user's description and any files explicitly supplied.
-2. Search the current repository for relevant OpenSpec material (`openspec/specs/`, active `openspec/changes/`, or a user-selected specification).
-3. Compare the process facts with the current diagram and build source references containing `kind`, `uri`, `revision`, `fragment`, `content_hash`, and `confidence`.
-4. Apply this priority: explicit user decision > confirmed clarification > selected OpenSpec > existing diagram > agent assumption.
-5. Tell the user when their description implies semantic diagram changes. If user intent conflicts with selected OpenSpec, show one consolidated conflict and pause. Do not silently choose one.
-6. If no relevant specification exists, continue and record that fact. Never create or rewrite OpenSpec automatically from the diagram.
+2. Compare the process facts with the current diagram and build source references containing `kind`, `uri`, `revision`, `fragment`, `content_hash`, and `confidence`.
+3. Apply this priority: explicit user decision > confirmed clarification > original user request > explicitly supplied specification or document > existing diagram > agent assumption.
+4. Tell the user when their description implies semantic diagram changes. If user intent conflicts with an explicitly supplied specification or document, show one consolidated conflict and pause. Do not silently choose one.
+5. If the user did not explicitly supply a reference document, continue from the request and diagram; this is not a blocker. Never search the repository for OpenSpec automatically or create/rewrite OpenSpec from the diagram.
 
 If the user supplies an existing role, actor, system, step, or stable element, reuse it rather than constructing a duplicate.
 
@@ -121,7 +120,9 @@ If the user supplies an existing role, actor, system, step, or stable element, r
 
 Create a run directory outside the skill installation, for example `.diagram-runs/<run-id>/`. Keep:
 
-- `diagram-spec.json` — semantic working model and source references;
+- `diagram-spec.json` — v1 compatibility model used by proven deterministic tools;
+- `lifecycle-v2/` — immutable v2 source, DiagramSpec, state, checkpoint,
+  decision, approval, receipt, Reviewer, implementation, and publication evidence;
 - `state.json` — resumable state and last accepted artifact;
 - `run-manifest.jsonl` — append-only event ledger;
 - `roles/*/runtime-output.json` — raw isolated CLI evidence saved on success and failure;
@@ -193,7 +194,15 @@ python3 scripts/diagram_supervisor.py candidate "$RUN_DIR" \
   --repair-class edge-route
 ```
 
-The model Reviewer output must conform to `data/reviewer-analysis.v1.schema.json`. The deterministic host binds `run_id`, candidate hash, report hash, and receipt hash from the validated input, validates the resulting `data/reviewer-verdict.v1.schema.json`, and records `binding_proof`. Optional legacy hashes returned by the model are diagnostic only and cannot override host values. A missing or rejected verdict cannot promote the candidate. The only bypass is an explicitly recorded `--review-exception approved_degraded_review` or `manual_handoff` decision; never use it silently in a normal run.
+For new lifecycle runs the Reviewer input must conform to
+`data/reviewer-input.v2.schema.json` and the model returns analysis conforming
+to `data/reviewer-analysis.v2.schema.json`. The deterministic host binds the
+actual runtime identity plus candidate, report, receipt, source bundle,
+semantic plan/delta, role-input, and role-output hashes into
+`data/reviewer-verdict.v2.schema.json`. The model cannot override those values.
+A missing, rejected, contradictory, or error-bearing approval cannot promote
+the candidate. Legacy v1 Reviewer evidence is trace/manual-handoff compatible,
+not a mutable-run bypass.
 
 ## Patch-only repair loop
 
@@ -213,7 +222,11 @@ Semantic operations are rejected unless a consolidated human decision was
 recorded and the deterministic patch command is invoked with
 `--allow-semantic`. Layout-only repair never uses that flag.
 
-Before a semantic candidate can become the accepted baseline, bind the exact run, patch, candidate, and semantic diff to an explicit human decision:
+Before a semantic candidate can become the accepted baseline, bind the exact
+run, baseline semantic digest, source-bundle revision, semantic plan, typed
+delta, patch preview, and actual human decision. The lifecycle command creates
+this approval from `/drawio:resume continue`; the host never invents a human
+actor. Low-level v1 compatibility tooling remains available for manual evidence:
 
 ```bash
 python3 scripts/diagram_supervisor.py semantic-approval <run-dir> \
@@ -222,7 +235,14 @@ python3 scripts/diagram_supervisor.py semantic-approval <run-dir> \
   --output <run-dir>/semantic-approval.json
 ```
 
-Pass that file to the candidate gate with `--semantic-approval`. A missing, rejected, or hash-mismatched approval stops promotion. Approval does not bypass patch replay, structural checks, validation receipts, untouched-region checks, or the independent Reviewer. After approval, the semantic candidate becomes the new baseline and later layout patches use its new semantic digest and quality epoch.
+Pass that file to the candidate gate with `--semantic-approval`. A missing,
+rejected, or hash-mismatched approval stops promotion. For v2 the deterministic
+patch-preview semantic diff must be an exact declared subset of the approved
+typed delta, including the affected field and before/after values. Approval
+does not bypass patch replay, structural checks, validation receipts,
+untouched-region checks, or the independent Reviewer. After approval, the
+semantic candidate becomes the new baseline and later layout patches use its
+new semantic digest and quality epoch.
 
 ## Validation and monotonic acceptance
 
@@ -259,12 +279,20 @@ Vision review is supplemental. It cannot override a deterministic failure or a m
 
 Do not ask after every iteration. Pause only for:
 
-- a conflict between user intent and a selected source specification;
+- a conflict between user intent and an explicitly supplied source document;
 - semantic additions, removals, or relationship changes;
 - plateau, repeated cycle, unsupported structure, or agent confusion;
 - final review.
 
-Present semantic and layout diffs separately. At a checkpoint, offer continuation, approval, pause/resume, stop, manual handoff, or explicit approval with findings. A manual handoff returns the last accepted file, remaining findings, and receipt status so the user can finish by hand.
+Present semantic and layout diffs separately. At a checkpoint, offer only
+decisions with executable state transitions: continuation, approval,
+pause/resume, stop, manual handoff, or explicit approval with findings. A
+non-empty continuation comment is stored as a confirmed clarification and
+reconciled against the same last accepted artifact. `approve_with_findings` is
+available only for an integrity-valid, structurally safe candidate without
+error-level findings and retains `strict_passed: false` plus unresolved
+findings. A manual handoff returns the last accepted file, remaining findings,
+and receipt status so the user can finish by hand.
 `manual_handoff` never promotes the pending unreviewed candidate.
 
 Completion requires an exact successful strict receipt:

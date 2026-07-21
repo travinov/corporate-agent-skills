@@ -94,6 +94,50 @@ def workspace_path(workspace):
     return path
 
 
+def explicit_renderer_document(workspace, source):
+    """Load one deliberately supplied JSON/YAML renderer source document."""
+    workspace = workspace_path(workspace)
+    path = Path(source).expanduser().resolve()
+    if not path.is_file() or not _inside(path, workspace):
+        raise CommandUXError(
+            "renderer_source_invalid",
+            f"renderer source must be a file inside the workspace: {path}",
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+        if path.suffix.lower() == ".json":
+            content = json.loads(text)
+        elif path.suffix.lower() in {".yaml", ".yml"}:
+            # Reuse the established scalar normalizer so YAML timestamps enter
+            # the immutable JSON source bundle as stable ISO strings.
+            from roadmap_validate import load_yaml
+            content = load_yaml(path)
+        else:
+            raise CommandUXError(
+                "renderer_source_invalid",
+                "renderer source must use .json, .yaml, or .yml",
+            )
+    except CommandUXError:
+        raise
+    except (ImportError, OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CommandUXError(
+            "renderer_source_invalid",
+            f"could not parse renderer source {path}: {exc}",
+        ) from exc
+    if not isinstance(content, dict):
+        raise CommandUXError(
+            "renderer_source_invalid",
+            "renderer source top level must be an object",
+        )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return path, {
+        "source_id": f"renderer-source-{digest[:20]}",
+        "uri": path.as_uri(),
+        "content": content,
+        "revision": digest,
+    }
+
+
 def positional_request(parts, explicit=None, *, required=True):
     if explicit is not None:
         if parts:
@@ -191,9 +235,21 @@ def latest_review_handoff(workspace):
             reviewer_input = json.loads(
                 reviewer_input_path.read_text(encoding="utf-8")
             )
-            audit_artifact = reviewer_input["artifact"]
-            audit_path = Path(audit_artifact["path"]).expanduser().resolve()
+            reviewer_input_v2 = reviewer_input.get("schema_version") == 2
+            audit_artifact = (
+                reviewer_input["candidate"]["artifact"]
+                if reviewer_input_v2 else reviewer_input["artifact"]
+            )
+            audit_path = Path(audit_artifact["path"]).expanduser()
+            if reviewer_input_v2:
+                audit_path = run_dir / audit_path
+            audit_path = audit_path.resolve()
             audit_sha256 = audit_artifact["sha256"]
+            report_path = Path(result["validation"]["report"]).expanduser().resolve()
+            receipt_path_value = evidence.get("validation_receipt_v2") or result["validation"]["receipt"]
+            receipt_path = Path(receipt_path_value).expanduser().resolve()
+            verdict_path_value = evidence.get("reviewer_verdict")
+            verdict_path = Path(verdict_path_value).expanduser().resolve() if verdict_path_value else None
             result_mtime_ns = result_path.stat().st_mtime_ns
         except (KeyError, TypeError, OSError, json.JSONDecodeError):
             continue
@@ -219,7 +275,7 @@ def latest_review_handoff(workspace):
             continue
         if reviewer_input.get("run_id") != result["run_id"]:
             continue
-        if audit_path != reviewed_path or audit_sha256 != reviewed_sha256:
+        if (not reviewer_input_v2 and audit_path != reviewed_path) or audit_sha256 != reviewed_sha256:
             continue
         handoff = result.get("improve_handoff")
         if handoff is not None and (
@@ -230,6 +286,24 @@ def latest_review_handoff(workspace):
             continue
         if not isinstance(reviewed_sha256, str) or _sha256_file(reviewed_path) != reviewed_sha256:
             continue
+        if (
+            not report_path.is_file() or not receipt_path.is_file()
+            or not _inside(report_path, run_dir) or not _inside(receipt_path, run_dir)
+        ):
+            continue
+        if reviewer_input_v2:
+            if verdict_path is None or not verdict_path.is_file() or not _inside(verdict_path, run_dir):
+                continue
+            candidate_evidence = reviewer_input["candidate"]
+            if (
+                candidate_evidence["report"]["sha256"] != _sha256_file(report_path)
+                or candidate_evidence["receipt"]["sha256"] != _sha256_file(receipt_path)
+            ):
+                continue
+        findings = reviewer.get("findings", [])
+        findings_sha256 = hashlib.sha256(
+            json.dumps(findings, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         eligible.append((result_mtime_ns, run_dir.name, {
             "run_id": result["run_id"],
             "run_dir": str(run_dir),
@@ -238,6 +312,14 @@ def latest_review_handoff(workspace):
             "artifact_sha256": reviewed_sha256,
             "review_status": result["status"],
             "reviewer_verdict": reviewer.get("verdict"),
+            "findings": findings,
+            "findings_sha256": findings_sha256,
+            "validation_report": str(report_path),
+            "validation_report_sha256": _sha256_file(report_path),
+            "validation_receipt": str(receipt_path),
+            "validation_receipt_sha256": _sha256_file(receipt_path),
+            "reviewer_verdict_path": str(verdict_path) if verdict_path else None,
+            "reviewer_verdict_sha256": _sha256_file(verdict_path) if verdict_path else None,
         }))
     if not eligible:
         return None

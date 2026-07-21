@@ -8,6 +8,9 @@ Do not call any tools, agents, directory search, grep, shell, or file-reading op
 Present the structured result below to the user. Preserve all evidence paths, validation
 status, reviewer verdict, requested_model, resolved_model, and model proof. Never turn a
 `findings` or `error` status into success.
+The Reviewer returns analysis only; the deterministic host owns the v2 runtime
+identity and artifact/report/receipt/source bindings. Do not treat model-written
+hashes or parent `/stats model` as proof.
 
 Normal use: `/drawio:review` when the workspace contains one `.drawio`.
 An explicit relative or absolute `.drawio` path remains supported.

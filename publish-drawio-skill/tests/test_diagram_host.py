@@ -33,37 +33,38 @@ def clean_diagram():
 
 def successful_reviewer(role, input_path, output_path, **kwargs):
     audit = supervisor.load_json(input_path)
-    verdict = {
-        "schema_version": 1,
-        "verdict_id": "audit-verdict",
-        "run_id": audit["run_id"],
-        "candidate_sha256": audit["artifact"]["sha256"],
-        "report_sha256": audit["report"]["sha256"],
-        "receipt_sha256": audit["receipt"]["sha256"],
+    analysis = {
+        "schema_version": 2,
+        "role": "reviewer",
+        "status": "ok",
+        "analysis_id": "audit-analysis",
         "verdict": "approve",
         "reviewed_at": "2026-07-20T12:00:00+00:00",
-        "reviewer": {
-            "resolved_model": "vllm/DeepSeek-V4-Flash-262k",
-            "provider": "vllm",
-            "resolution_mode": "isolated_cli",
-        },
         "findings": [],
     }
-    supervisor.write_json(output_path, verdict)
+    supervisor.write_json(output_path, analysis)
     return {
         "resolution": {
             "requested_model": "vllm/DeepSeek-V4-Flash-262k",
             "resolved_model": "vllm/DeepSeek-V4-Flash-262k",
             "resolution_mode": "isolated_cli",
             "fallback_used": False,
+            "provider": "vllm",
         },
         "runtime_metadata": {
+            "reported_model": "vllm/DeepSeek-V4-Flash-262k",
             "model_proof": {
                 "verified": True,
                 "system_model": "vllm/DeepSeek-V4-Flash-262k",
                 "assistant_model": "vllm/DeepSeek-V4-Flash-262k",
                 "stats_models": ["vllm/DeepSeek-V4-Flash-262k"],
-            }
+            },
+            "isolation_proof": {
+                "verified": True,
+                "tool_calls": 0,
+                "system_models": ["vllm/DeepSeek-V4-Flash-262k"],
+                "assistant_models": ["vllm/DeepSeek-V4-Flash-262k"],
+            },
         },
     }
 
@@ -86,6 +87,8 @@ class DiagramHostTests(unittest.TestCase):
             self.assertEqual(result["reviewer"]["status"], "completed")
             self.assertEqual(result["reviewer"]["resolved_model"], "vllm/DeepSeek-V4-Flash-262k")
             self.assertTrue(result["reviewer"]["model_proof"]["verified"])
+            self.assertTrue(result["reviewer"]["binding_proof"]["verified"])
+            self.assertEqual(result["reviewer"]["binding_proof"]["source"], "host-bound-reviewer-verdict-v2")
             self.assertEqual(result["mode"], "review")
             self.assertEqual(
                 result["improve_handoff"]["artifact_sha256"], original
@@ -100,6 +103,17 @@ class DiagramHostTests(unittest.TestCase):
             self.assertEqual(workflow["accepted_artifact"]["sha256"], original)
             self.assertEqual(
                 result["evidence"]["workflow"], str((run_dir / "workflow.json").resolve())
+            )
+            analysis = supervisor.load_json(result["reviewer"]["analysis"])
+            self.assertEqual(analysis["schema_version"], 2)
+            self.assertEqual(analysis["analysis_id"], "audit-analysis")
+            verdict = supervisor.load_json(result["reviewer"]["output"])
+            self.assertEqual(verdict["schema_version"], 2)
+            self.assertEqual(verdict["analysis_id"], "audit-analysis")
+            self.assertEqual(verdict["runtime_proof"]["resolved_model"], "vllm/DeepSeek-V4-Flash-262k")
+            self.assertEqual(
+                verdict["bindings"]["receipt_sha256"],
+                supervisor.sha256_file(Path(result["evidence"]["validation_receipt_v2"])),
             )
             audit = supervisor.load_json(run_dir / "reviewer-audit-input.json")
             schema = supervisor.load_json(ROOT / "data" / "reviewer-audit-input.v1.schema.json")
@@ -202,19 +216,16 @@ if '--version' in sys.argv:
 raw = sys.stdin.read()
 payload = json.loads(raw)
 model = payload['context']['requested_reviewer_model']
-verdict = {
-    'schema_version': 1,
-    'verdict_id': 'real-adapter-test',
-    'run_id': payload['run_id'],
-    'candidate_sha256': payload['artifact']['sha256'],
-    'report_sha256': payload['report']['sha256'],
-    'receipt_sha256': 'f' * 64,
+analysis = {
+    'schema_version': 2,
+    'role': 'reviewer',
+    'status': 'ok',
+    'analysis_id': 'real-adapter-test',
     'verdict': 'approve',
     'reviewed_at': '2026-07-20T12:00:00+00:00',
-    'reviewer': {'resolved_model': model, 'provider': 'vllm', 'resolution_mode': 'isolated_cli'},
     'findings': [],
 }
-encoded = json.dumps(verdict)
+encoded = json.dumps(analysis)
 events = [
     {'type': 'system', 'subtype': 'init', 'model': model, 'qwen_code_version': '0.13.1-test'},
     {'type': 'assistant', 'message': {'model': model, 'content': [{'type': 'text', 'text': encoded}]}},
@@ -254,12 +265,18 @@ print(json.dumps(events))
             self.assertEqual(result["command_resolution"]["diagram_selection"], "explicit")
             self.assertEqual(result["reviewer"]["resolution_mode"], "isolated_cli")
             self.assertTrue(result["reviewer"]["model_proof"]["verified"])
-            binding = result["reviewer"]["binding_proof"]
-            self.assertTrue(binding["verified"])
-            self.assertEqual(binding["declared_mismatches"], ["receipt_sha256"])
+            self.assertTrue(result["reviewer"]["binding_proof"]["verified"])
+            self.assertEqual(result["reviewer"]["binding_proof"]["source"], "host-bound-reviewer-verdict-v2")
+            analysis = supervisor.load_json(result["reviewer"]["analysis"])
+            self.assertEqual(analysis["schema_version"], 2)
+            self.assertEqual(analysis["analysis_id"], "real-adapter-test")
+            verdict = supervisor.load_json(result["reviewer"]["output"])
+            self.assertEqual(verdict["schema_version"], 2)
+            self.assertEqual(verdict["analysis_id"], "real-adapter-test")
+            self.assertEqual(verdict["runtime_proof"]["resolved_model"], "vllm/DeepSeek-V4-Flash-262k")
             self.assertEqual(
-                supervisor.load_json(result["reviewer"]["output"])["receipt_sha256"],
-                binding["expected"]["receipt_sha256"],
+                verdict["bindings"]["receipt_sha256"],
+                supervisor.sha256_file(Path(result["evidence"]["validation_receipt_v2"])),
             )
             improve = result["next_commands"]["improve"]
             self.assertEqual(improve, "/drawio:improve")
@@ -284,10 +301,6 @@ print(json.dumps(events))
             self.assertTrue(trace["valid"])
             self.assertEqual(trace["terminal_result"], "passed")
             self.assertEqual([role["role"] for role in trace["roles"]], ["reviewer"])
-            self.assertEqual(
-                trace["role_checks"][0]["binding_proof"]["declared_mismatches"],
-                ["receipt_sha256"],
-            )
             self.assertTrue(trace["role_checks"][0]["binding_proof_valid"])
             trace_command = result["next_commands"]["trace"]
             self.assertEqual(trace_command, f"/drawio:trace --run {result['run_id']}")

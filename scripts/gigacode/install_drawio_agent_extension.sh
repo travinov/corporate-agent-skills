@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
 ARCHIVE_NAME="drawio-skill-agent-extension.zip"
-DEFAULT_VERSION="1.23.0-corporate.13"
-DEFAULT_BRANCH="codex/drawio-packaged-guide-v1.23.0-corporate.13"
+DEFAULT_VERSION="1.24.0-corporate.1"
+DEFAULT_BRANCH="codex/drawio-stabilize-v1.24.0-corporate.1"
 DEFAULT_BASE_URL="https://raw.githubusercontent.com/travinov/corporate-agent-skills/refs/heads/${DEFAULT_BRANCH}/dist"
 
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
@@ -340,7 +340,32 @@ if [[ -n "$source_dir" ]]; then
     scripts/diagram_host.py \
     scripts/diagram_orchestrator.py \
     scripts/agent_runtime.py \
-    scripts/command_ux.py; do
+    scripts/command_ux.py \
+    scripts/lifecycle_contracts.py \
+    scripts/lifecycle_host_v2.py \
+    scripts/source_bundle_v2.py \
+    scripts/diagram_model_v2.py \
+    scripts/run_lock_v2.py \
+    scripts/evidence_v2.py \
+    scripts/implementation_snapshot_v2.py \
+    scripts/renderer_adapters.py \
+    data/checkpoint.v2.schema.json \
+    data/decision.v2.schema.json \
+    data/diagramspec.v2.schema.json \
+    data/implementation-snapshot.v2.schema.json \
+    data/publication-transaction.v2.schema.json \
+    data/reviewer-analysis.v2.schema.json \
+    data/workflow.v2.schema.json \
+    data/run-state.v2.schema.json \
+    data/reviewer-input.v2.schema.json \
+    data/reviewer-verdict.v2.schema.json \
+    data/run-event.v2.schema.json \
+    data/semantic-analysis.v2.schema.json \
+    data/semantic-approval.v2.schema.json \
+    data/semantic-delta.v2.schema.json \
+    data/semantic-plan.v2.schema.json \
+    data/source-bundle.v2.schema.json \
+    data/validation-receipt.v2.schema.json; do
     [[ -f "$extension_root/$required" ]] || die "Extracted extension is missing: $required"
   done
   "$PYTHON_BIN" - "$extension_root" <<'PY'
@@ -454,7 +479,33 @@ required = {
     "drawio-skill/commands/drawio/trace.md",
     "drawio-skill/scripts/diagram_host.py",
     "drawio-skill/scripts/diagram_orchestrator.py",
+    "drawio-skill/scripts/agent_runtime.py",
     "drawio-skill/scripts/command_ux.py",
+    "drawio-skill/scripts/lifecycle_contracts.py",
+    "drawio-skill/scripts/lifecycle_host_v2.py",
+    "drawio-skill/scripts/source_bundle_v2.py",
+    "drawio-skill/scripts/diagram_model_v2.py",
+    "drawio-skill/scripts/run_lock_v2.py",
+    "drawio-skill/scripts/evidence_v2.py",
+    "drawio-skill/scripts/implementation_snapshot_v2.py",
+    "drawio-skill/scripts/renderer_adapters.py",
+    "drawio-skill/data/checkpoint.v2.schema.json",
+    "drawio-skill/data/decision.v2.schema.json",
+    "drawio-skill/data/diagramspec.v2.schema.json",
+    "drawio-skill/data/implementation-snapshot.v2.schema.json",
+    "drawio-skill/data/publication-transaction.v2.schema.json",
+    "drawio-skill/data/reviewer-analysis.v2.schema.json",
+    "drawio-skill/data/workflow.v2.schema.json",
+    "drawio-skill/data/run-state.v2.schema.json",
+    "drawio-skill/data/reviewer-input.v2.schema.json",
+    "drawio-skill/data/reviewer-verdict.v2.schema.json",
+    "drawio-skill/data/run-event.v2.schema.json",
+    "drawio-skill/data/semantic-analysis.v2.schema.json",
+    "drawio-skill/data/semantic-approval.v2.schema.json",
+    "drawio-skill/data/semantic-delta.v2.schema.json",
+    "drawio-skill/data/semantic-plan.v2.schema.json",
+    "drawio-skill/data/source-bundle.v2.schema.json",
+    "drawio-skill/data/validation-receipt.v2.schema.json",
 }
 with zipfile.ZipFile(archive) as zf:
     names = set(zf.namelist())

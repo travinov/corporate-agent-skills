@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.13}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.24.0-corporate.1}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -150,9 +150,34 @@ def verify_tree(root, label):
         "scripts/diagram_orchestrator.py",
         "scripts/agent_runtime.py",
         "scripts/command_ux.py",
+        "scripts/lifecycle_contracts.py",
+        "scripts/lifecycle_host_v2.py",
+        "scripts/source_bundle_v2.py",
+        "scripts/diagram_model_v2.py",
+        "scripts/run_lock_v2.py",
+        "scripts/evidence_v2.py",
+        "scripts/implementation_snapshot_v2.py",
+        "scripts/renderer_adapters.py",
         "data/reviewer-audit-input.v1.schema.json",
         "data/supervisor-decision.v1.schema.json",
         "data/semantic-plan.v1.schema.json",
+        "data/checkpoint.v2.schema.json",
+        "data/decision.v2.schema.json",
+        "data/diagramspec.v2.schema.json",
+        "data/implementation-snapshot.v2.schema.json",
+        "data/publication-transaction.v2.schema.json",
+        "data/semantic-analysis.v2.schema.json",
+        "data/semantic-plan.v2.schema.json",
+        "data/semantic-approval.v2.schema.json",
+        "data/semantic-delta.v2.schema.json",
+        "data/reviewer-analysis.v2.schema.json",
+        "data/reviewer-input.v2.schema.json",
+        "data/reviewer-verdict.v2.schema.json",
+        "data/run-event.v2.schema.json",
+        "data/source-bundle.v2.schema.json",
+        "data/workflow.v2.schema.json",
+        "data/run-state.v2.schema.json",
+        "data/validation-receipt.v2.schema.json",
     ):
         if not (root / relative).is_file():
             fail(f"Missing {label} command host file: {relative}")
@@ -201,14 +226,22 @@ def verify_tree(root, label):
         if marker not in agent_runtime:
             fail(f"Missing {label} empty MCP discovery marker: {marker}")
     for marker in (
-        'return "reviewer-analysis.v1.schema.json"',
+        'return f"reviewer-analysis.v{version}.schema.json"',
         "def finalize_role_output",
         '"source": "validated_role_input"',
+        "def correction_contract",
+        '"contract-correction-1"',
     ):
         if marker not in agent_runtime:
             fail(f"Missing {label} host-bound Reviewer marker: {marker}")
-    if not (root / "data" / "reviewer-analysis.v1.schema.json").is_file():
-        fail(f"Missing {label} Reviewer analytical output Schema")
+    for relative in (
+        "data/reviewer-analysis.v1.schema.json",
+        "data/reviewer-analysis.v2.schema.json",
+        "data/reviewer-input.v2.schema.json",
+        "data/reviewer-verdict.v2.schema.json",
+    ):
+        if not (root / relative).is_file():
+            fail(f"Missing {label} Reviewer contract: {relative}")
     manifest = load_json(root / "gemini-extension.json")
     if manifest.get("name") != "publish-drawio-skill":
         fail(f"Unexpected {label} manifest name: {manifest.get('name')!r}")
@@ -255,8 +288,8 @@ def verify_tree(root, label):
         for forbidden in ("max_turns", "kind", "temperature"):
             if forbidden in values:
                 fail(f"Unsupported {label} frontmatter field {forbidden} in {filename}")
-        if role != "supervisor" and values.get("approvalMode") != "plan":
-            fail(f"{label} {filename} must use approvalMode: plan")
+        if values.get("approvalMode") != "default":
+            fail(f"{label} {filename} must use approvalMode: default")
     return manifest
 
 

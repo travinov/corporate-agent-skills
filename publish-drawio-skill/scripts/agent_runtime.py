@@ -65,11 +65,24 @@ ROLE_EXCLUDED_TOOLS = (
 class RoleOutputContractError(SupervisorError):
     """Role output was model-proven JSON but failed its output contract."""
 
-    def __init__(self, message, *, resolution, runtime_metadata, invalid_output_sha256=None):
+    def __init__(
+        self,
+        message,
+        *,
+        resolution,
+        runtime_metadata,
+        invalid_output_sha256=None,
+        diagnostics=(),
+        failure_kind="output_schema",
+        original_input_sha256=None,
+    ):
         super().__init__(message)
         self.resolution = resolution
         self.runtime_metadata = runtime_metadata
         self.invalid_output_sha256 = invalid_output_sha256
+        self.diagnostics = [dict(item) for item in diagnostics]
+        self.failure_kind = failure_kind
+        self.original_input_sha256 = original_input_sha256
 
 
 def role_isolation_controls():
@@ -102,20 +115,40 @@ def role_body(path):
     return text[marker + 5:].strip()
 
 
-def role_schema_name(role):
+def contract_version(payload=None):
+    if (
+        isinstance(payload, dict)
+        and type(payload.get("schema_version")) is int
+        and payload["schema_version"] == 2
+    ):
+        return 2
+    return 1
+
+
+def role_schema_name(role, payload=None):
+    version = contract_version(payload)
     if role == "reviewer":
-        return "reviewer-analysis.v1.schema.json"
+        return f"reviewer-analysis.v{version}.schema.json"
     if role == "repair":
         return "diagram-patch.v1.schema.json"
     if role == "supervisor":
         return "supervisor-decision.v1.schema.json"
     if role == "semantic_analyst":
-        return "semantic-plan.v1.schema.json"
+        return (
+            "semantic-analysis.v2.schema.json"
+            if version == 2 else "semantic-plan.v1.schema.json"
+        )
     raise SupervisorError(f"unknown role {role!r}")
 
 
+def role_input_schema_name(role, payload=None):
+    if role == "reviewer" and contract_version(payload) == 2:
+        return "reviewer-input.v2.schema.json"
+    return None
+
+
 def reviewer_evidence_bindings(payload):
-    if payload.get("review_kind") == "baseline_audit":
+    if payload.get("review_kind") == "baseline_audit" and isinstance(payload.get("artifact"), dict):
         return {
             "run_id": payload["run_id"],
             "candidate_sha256": payload["artifact"]["sha256"],
@@ -141,24 +174,66 @@ def reviewer_evidence_bindings(payload):
 
 
 def role_output_contract(role, payload):
-    schema = load_json(ROOT / "data" / role_schema_name(role))
+    schema_name = role_schema_name(role, payload)
+    schema = load_json(ROOT / "data" / schema_name)
     sections = [
         "## Required output JSON Schema",
-        "Return exactly one JSON object that validates against this schema. Do not omit required properties.",
+        (
+            f"Return exactly one JSON object that validates against {schema_name}. "
+            "Do not omit required properties."
+        ),
         json.dumps(schema, ensure_ascii=False, sort_keys=True),
     ]
     if role == "reviewer":
-        sections.extend(
-            [
-                "## Host-owned reviewer evidence bindings",
-                "Return the analytical verdict and findings. Do not copy run_id, candidate_sha256, report_sha256, or receipt_sha256. The deterministic host derives those fields from the validated runtime input and constructs the final hash-bound verdict. Optional legacy declarations are diagnostic only.",
-            ]
-        )
+        if contract_version(payload) == 2:
+            reviewer_binding = (
+                "Return analysis only. Do not assert reviewer model, provider, "
+                "resolution mode, runtime proof, role input/output hashes, or final "
+                "evidence bindings. The deterministic host derives those fields "
+                "from verified runtime evidence and constructs reviewer-verdict.v2."
+            )
+        else:
+            reviewer_binding = (
+                "Return the analytical verdict and findings. Do not copy run_id, "
+                "candidate_sha256, report_sha256, or receipt_sha256. The deterministic "
+                "host derives those fields from the validated runtime input and "
+                "constructs the final hash-bound verdict. Optional legacy declarations "
+                "are diagnostic only."
+            )
+        sections.extend(["## Host-owned reviewer evidence bindings", reviewer_binding])
+    if role == "semantic_analyst" and contract_version(payload) == 2:
+        sections.extend([
+            "## Host-owned semantic bindings",
+            (
+                "Return only the complete desired page-scoped graph, assumptions, "
+                "and human questions. Do not return run or source hashes, a semantic "
+                "delta, operation IDs, approval claims, or any model-owned evidence "
+                "binding. The deterministic host binds the exact source bundle and "
+                "baseline, derives removals as well as additions/changes, assigns "
+                "operation IDs, records assumption sources, and constructs the "
+                "canonical semantic-plan.v2 artifact. Route is layout context and is "
+                "not a semantic operation."
+            ),
+        ])
     return "\n\n".join(sections)
 
 
-def isolated_role_system_prompt(role, prompt_path, payload):
-    return (
+def correction_contract(original_input_sha256, diagnostics):
+    return {
+        "correction_attempt": 1,
+        "original_input_sha256": original_input_sha256,
+        "diagnostics": [dict(item) for item in diagnostics],
+        "requirements": {
+            "same_role": True,
+            "same_model": True,
+            "input_is_unchanged": True,
+            "return_json_only": True,
+        },
+    }
+
+
+def isolated_role_system_prompt(role, prompt_path, payload, *, correction=None):
+    prompt = (
         "You are the isolated diagram role itself. Complete exactly one bounded "
         "JSON decision. Do not call or delegate to any agent. Do not call any tool, "
         "slash command, skill, interactive question, todo facility, filesystem "
@@ -169,6 +244,16 @@ def isolated_role_system_prompt(role, prompt_path, payload):
         + "\n\n"
         + role_output_contract(role, payload)
     )
+    if correction is not None:
+        prompt += (
+            "\n\n## Bounded contract correction\n\n"
+            "Your prior model-proven, isolated, tool-free response failed only the "
+            "declared output contract. Correct those diagnostics against the unchanged "
+            "canonical input. Do not reinterpret, expand, or replace the input. This is "
+            "the only correction attempt.\n\n"
+            + json.dumps(correction, ensure_ascii=False, sort_keys=True)
+        )
+    return prompt
 
 
 def build_gemini_command(
@@ -197,6 +282,13 @@ def build_gemini_command(
         "--approval-mode", ROLE_APPROVAL_MODE,
     ])
     return command
+
+
+def command_model_argument(command):
+    if "--model" not in command:
+        return None
+    index = command.index("--model") + 1
+    return command[index] if index < len(command) else None
 
 
 def minimal_environment():
@@ -627,22 +719,266 @@ def parse_runtime_output(role, output):
     }
 
 
-def validate_role_output(role, parsed):
-    schema = load_json(ROOT / "data" / role_schema_name(role))
-    errors = sorted(
-        jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).iter_errors(parsed),
-        key=lambda error: (list(error.path), error.message),
+def _json_pointer(parts):
+    encoded = [str(part).replace("~", "~0").replace("/", "~1") for part in parts]
+    return "" if not encoded else "/" + "/".join(encoded)
+
+
+def _schema_contract_diagnostics(schema, parsed):
+    validator = jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.FormatChecker()
     )
-    if errors:
-        raise SupervisorError(f"isolated {role} output schema failed: {errors[0].message}")
+    diagnostics = []
+    for error in sorted(
+        validator.iter_errors(parsed),
+        key=lambda item: (
+            list(item.absolute_path), item.validator or "", item.message
+        ),
+    ):
+        diagnostics.append(
+            {
+                "code": f"schema.{error.validator or 'invalid'}",
+                "pointer": _json_pointer(error.absolute_path),
+                "rule": str(error.validator or "invalid"),
+                "message": error.message,
+            }
+        )
+    return diagnostics
+
+
+def validate_role_input(role, payload):
+    """Fail closed on versioned role inputs before any isolated model call."""
+    if role == "semantic_analyst" and contract_version(payload) == 2:
+        from diagram_model_v2 import validate_semantic_analysis_input
+
+        diagnostics = [
+            {
+                "code": item["code"],
+                "pointer": item.get("pointer", ""),
+                "rule": item["code"],
+                "message": item["message"],
+            }
+            for item in validate_semantic_analysis_input(payload)
+        ]
+        if diagnostics:
+            first = diagnostics[0]
+            error = SupervisorError(
+                f"isolated {role} input contract failed at "
+                f"{first['pointer'] or '/'}: {first['message']}"
+            )
+            error.contract_diagnostics = diagnostics
+            error.contract_failure_kind = "input_schema"
+            raise error
+        return payload
+    schema_name = role_input_schema_name(role, payload)
+    if schema_name is None:
+        return payload
+
+    try:
+        schema = load_json(ROOT / "data" / schema_name)
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except (OSError, json.JSONDecodeError, jsonschema.SchemaError) as exc:
+        diagnostic = {
+            "code": "input_schema.unavailable",
+            "pointer": "",
+            "rule": "schema_availability",
+            "message": f"{schema_name} is unavailable or invalid: {exc}",
+        }
+        error = SupervisorError(
+            f"isolated {role} input contract cannot be verified: {diagnostic['message']}"
+        )
+        error.contract_diagnostics = [diagnostic]
+        error.contract_failure_kind = "input_schema"
+        raise error from exc
+
+    diagnostics = _schema_contract_diagnostics(schema, payload)
+    if diagnostics:
+        first = diagnostics[0]
+        error = SupervisorError(
+            f"isolated {role} input contract failed at "
+            f"{first['pointer'] or '/'}: {first['message']}"
+        )
+        error.contract_diagnostics = diagnostics
+        error.contract_failure_kind = "input_schema"
+        raise error
+    return payload
+
+
+def _cross_field_contract_diagnostics(role, payload, parsed):
+    diagnostics = []
+    version = contract_version(payload)
     if role in {"supervisor", "semantic_analyst"} and parsed.get("role") != role:
-        raise SupervisorError(f"isolated {role} output role mismatch")
+        diagnostics.append(
+            {
+                "code": "role.identity_mismatch",
+                "pointer": "/role",
+                "rule": "role_identity",
+                "message": f"role must equal {role!r}",
+            }
+        )
+    if role == "semantic_analyst" and version == 2:
+        from diagram_model_v2 import validate_semantic_analysis_cross_fields
+
+        diagnostics.extend(
+            {
+                "code": item["code"],
+                "pointer": item.get("pointer", ""),
+                "rule": item["code"],
+                "message": item["message"],
+            }
+            for item in validate_semantic_analysis_cross_fields(parsed)
+        )
+        if parsed.get("result", {}).get("mode") != payload.get("mode"):
+            diagnostics.append({
+                "code": "semantic.analysis.mode_mismatch",
+                "pointer": "/result/mode",
+                "rule": "host_mode_binding",
+                "message": "analysis mode differs from the immutable host input",
+            })
+    if role == "reviewer" and version == 2:
+        status = parsed.get("status")
+        verdict = parsed.get("verdict")
+        if (status == "needs_human") != (verdict == "needs_human"):
+            diagnostics.append(
+                {
+                    "code": "reviewer.status_verdict_mismatch",
+                    "pointer": "/verdict",
+                    "rule": "status_verdict_consistency",
+                    "message": (
+                        "status and verdict must both be needs_human or both describe "
+                        "a completed analytical decision"
+                    ),
+                }
+            )
+        if verdict == "approve" and any(
+            item.get("severity") == "error" for item in parsed.get("findings", [])
+        ):
+            diagnostics.append(
+                {
+                    "code": "reviewer.approve_with_error",
+                    "pointer": "/verdict",
+                    "rule": "approve_requires_no_error_findings",
+                    "message": "approve is invalid while any error-level finding remains",
+                }
+            )
+    diagnostics.sort(
+        key=lambda item: (
+            item.get("pointer", ""), item.get("code", ""), item.get("message", "")
+        )
+    )
+    return diagnostics
+
+
+def _legacy_reviewer_analysis_v2(parsed, payload):
+    normalized_findings = []
+    candidate_report = (payload.get("candidate") or {}).get("report") or {}
+    for index, finding in enumerate(parsed.get("findings", []), 1):
+        summary = finding.get("reason") or finding.get("message") or "Reviewer finding"
+        lowered = summary.lower()
+        category = (
+            "semantic" if "semantic" in lowered
+            else "routing" if any(token in lowered for token in ("route", "waypoint", "cross"))
+            else "layout" if any(token in lowered for token in ("layout", "overlap", "label"))
+            else "validation"
+        )
+        severity = finding.get("severity", "warning")
+        normalized_findings.append({
+            "finding_id": finding.get("finding_id") or f"review-finding-{index}",
+            "category": category,
+            "severity": severity,
+            "summary": summary,
+            "elements": [],
+            "evidence": [{
+                "kind": "validation_report",
+                "path": candidate_report.get("path"),
+                "sha256": candidate_report.get("sha256"),
+                "pointer": None,
+                "message": summary,
+            }],
+            "remediation": {
+                "class": "repair" if severity in {"warning", "error"} else "none",
+                "action": summary,
+            },
+        })
+    return {
+        "schema_version": 2,
+        "role": "reviewer",
+        "status": "needs_human" if parsed.get("verdict") == "needs_human" else "ok",
+        "analysis_id": parsed["verdict_id"],
+        "verdict": parsed["verdict"],
+        "reviewed_at": parsed["reviewed_at"],
+        "findings": normalized_findings,
+    }
+
+
+def validate_role_output(role, parsed, payload=None):
+    if (
+        role == "reviewer"
+        and contract_version(payload) == 2
+        and isinstance(parsed, dict)
+        and parsed.get("schema_version") == 1
+    ):
+        # Compatibility is analysis-only: validate the legacy shape, then
+        # discard its self-reported identity and evidence bindings.  The v2
+        # lifecycle host derives those exclusively from verified runtime proof
+        # and the hash-bound reviewer input.
+        legacy_schema = load_json(ROOT / "data" / "reviewer-verdict.v1.schema.json")
+        legacy_diagnostics = _schema_contract_diagnostics(legacy_schema, parsed)
+        if legacy_diagnostics:
+            first = legacy_diagnostics[0]
+            error = SupervisorError(
+                f"isolated reviewer legacy compatibility output failed at "
+                f"{first['pointer'] or '/'}: {first['message']}"
+            )
+            error.contract_diagnostics = legacy_diagnostics
+            error.contract_failure_kind = "output_schema"
+            raise error
+        return parsed
+    schema = load_json(ROOT / "data" / role_schema_name(role, payload))
+    diagnostics = _schema_contract_diagnostics(schema, parsed)
+    failure_kind = "output_schema"
+    if not diagnostics:
+        diagnostics = _cross_field_contract_diagnostics(role, payload, parsed)
+        failure_kind = "cross_field"
+    if diagnostics:
+        first = diagnostics[0]
+        error = SupervisorError(
+            f"isolated {role} output contract failed at "
+            f"{first['pointer'] or '/'}: {first['message']}"
+        )
+        error.contract_diagnostics = diagnostics
+        error.contract_failure_kind = failure_kind
+        raise error
     return parsed
 
 
 def finalize_role_output(role, payload, parsed):
     """Construct host-owned envelopes after validating the model decision."""
     if role != "reviewer":
+        return parsed, None
+    if contract_version(payload) == 2:
+        # Reviewer v2 is analysis-only. The lifecycle host binds runtime proof,
+        # input/output hashes, candidate evidence, and source/semantic hashes in
+        # reviewer-verdict.v2 after this isolated role completes.
+        if parsed.get("schema_version") == 1:
+            expected = reviewer_evidence_bindings(payload)
+            declared = {key: parsed[key] for key in expected if key in parsed}
+            mismatches = sorted(
+                key for key, value in declared.items() if value != expected[key]
+            )
+            analysis = _legacy_reviewer_analysis_v2(parsed, payload)
+            schema = load_json(ROOT / "data" / "reviewer-analysis.v2.schema.json")
+            errors = _schema_contract_diagnostics(schema, analysis)
+            if errors:
+                raise SupervisorError(
+                    f"legacy Reviewer compatibility normalization failed: {errors[0]['message']}"
+                )
+            return analysis, {
+                "verified": True,
+                "source": "host-derived-v1-compatibility",
+                "declared_mismatches": mismatches,
+                "expected": expected,
+            }
         return parsed, None
     expected = reviewer_evidence_bindings(payload)
     if not expected:
@@ -698,6 +1034,8 @@ def record_failure(
     invalid_output_sha256=None, failure_kind=None, capture_evidence=None,
     isolation_proof=None, terminal=True, attempted_model=None,
     fallback_model=None, attempt_id=None, output_format=None,
+    contract_diagnostics=None, original_input_sha256=None,
+    correction_attempt_id=None,
 ):
     if run_dir:
         payload = {
@@ -714,6 +1052,14 @@ def record_failure(
             payload["attempt_id"] = attempt_id
         if output_format is not None:
             payload["output_format"] = output_format
+        if contract_diagnostics is not None:
+            payload["contract_diagnostics"] = [
+                dict(item) for item in contract_diagnostics
+            ]
+        if original_input_sha256 is not None:
+            payload["original_input_sha256"] = original_input_sha256
+        if correction_attempt_id is not None:
+            payload["correction_attempt_id"] = correction_attempt_id
         if resolved_model is not None:
             payload["resolved_model"] = resolved_model
         if model_proof is not None:
@@ -742,29 +1088,89 @@ def invoke_role(
     run_dir=None, timeout=600, cwd=None, dry_run=False,
     current_model=None, current_provider=None, auth_type=None,
     _attempted_model=None, _attempt_id=None, _allow_runtime_fallback=True,
+    _contract_correction=None, _allow_contract_correction=True,
 ):
     cli = cli or DEFAULT_CLI
     policy = load_json(policy_path)
     config = policy.get("roles", {}).get(role)
     if config is None:
         raise SupervisorError(f"unknown role {role!r}")
+    input_path = Path(input_path)
+    input_bytes = input_path.read_bytes()
+    input_sha256 = hashlib.sha256(input_bytes).hexdigest()
+    payload = load_json(input_path)
+    try:
+        validate_role_input(role, payload)
+    except SupervisorError as exc:
+        record_failure(
+            run_dir, role, "input_validation", config["requested_model"],
+            diagnostic=str(exc), failure_kind="input_schema", terminal=True,
+            contract_diagnostics=getattr(exc, "contract_diagnostics", None),
+            original_input_sha256=input_sha256,
+        )
+        raise
+    correction_attempt = _contract_correction is not None
+    if (
+        correction_attempt
+        and input_sha256 != _contract_correction["original_input_sha256"]
+    ):
+        record_failure(
+            run_dir, role, "correction_input_verification",
+            config["requested_model"], diagnostic="role input changed before correction",
+            failure_kind="evidence_integrity", terminal=True,
+            attempted_model=_contract_correction["expected_model"],
+            attempt_id=_contract_correction["attempt_id"],
+            original_input_sha256=_contract_correction["original_input_sha256"],
+        )
+        raise SupervisorError(
+            "isolated role input changed before bounded contract correction"
+        )
     primary_model = config["requested_model"]
-    attempted_model = _attempted_model or primary_model
+    attempted_model = (
+        _contract_correction["expected_model"]
+        if correction_attempt else _attempted_model or primary_model
+    )
     has_runtime_fallback = bool(config.get("runtime_fallbacks"))
     if has_runtime_fallback and role != "supervisor":
         raise SupervisorError("runtime model fallback is permitted only for supervisor")
-    attempt_id = _attempt_id or ("primary" if has_runtime_fallback else None)
+    attempt_id = (
+        _contract_correction["attempt_id"]
+        if correction_attempt else _attempt_id or (
+            "primary" if has_runtime_fallback else
+            "contract-attempt-1" if contract_version(payload) == 2 else None
+        )
+    )
     prompt_path = ROOT / config["prompt"]
-    payload = load_json(input_path)
     stdin_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    system_prompt = isolated_role_system_prompt(role, prompt_path, payload)
+    correction_prompt = None
+    if correction_attempt:
+        correction_prompt = correction_contract(
+            _contract_correction["original_input_sha256"],
+            _contract_correction["diagnostics"],
+        )
+    system_prompt = isolated_role_system_prompt(
+        role, prompt_path, payload, correction=correction_prompt
+    )
     try:
         capabilities = detect_cli_capabilities(cli)
     except (OSError, subprocess.TimeoutExpired) as exc:
         record_failure(run_dir, role, "capability_detection", config["requested_model"], diagnostic=str(exc))
         raise SupervisorError(f"CLI {cli!r} capability detection failed: {exc}") from exc
-    inherited_without_override = not capabilities["available"] and current_model and capabilities["inherited_available"]
-    if not capabilities["available"] and not inherited_without_override:
+    if correction_attempt:
+        command_model = _contract_correction["model_argument"]
+        inherited_without_override = command_model is None
+        correction_capable = (
+            capabilities["inherited_available"]
+            if inherited_without_override else capabilities["available"]
+        )
+    else:
+        inherited_without_override = (
+            not capabilities["available"] and current_model
+            and capabilities["inherited_available"]
+        )
+        correction_capable = capabilities["available"] or inherited_without_override
+        command_model = None if inherited_without_override else attempted_model
+    if not correction_capable:
         record_failure(run_dir, role, "capability_detection", config["requested_model"], diagnostic=str(capabilities))
         raise SupervisorError(f"CLI {cli!r} lacks isolated-role capabilities: {capabilities}")
     if auth_type and not capabilities["supports_auth_type"]:
@@ -774,20 +1180,28 @@ def invoke_role(
         )
         raise SupervisorError(f"CLI {cli!r} does not support explicit --auth-type")
     auth_type = auth_type or capabilities["suggested_auth_type"]
-    output_format = "stream-json" if capabilities["supports_stream_json"] else "json"
+    output_format = (
+        _contract_correction["output_format"]
+        if correction_attempt else
+        "stream-json" if capabilities["supports_stream_json"] else "json"
+    )
     command = build_gemini_command(
         cli,
-        None if inherited_without_override else attempted_model,
+        command_model,
         auth_type=auth_type,
         system_prompt=system_prompt,
         output_format=output_format,
     )
-    resolution = resolve_model(
-        policy_path, role, isolated_available=not inherited_without_override,
-        current_model=("unknown/default" if inherited_without_override else None),
-        current_provider=("unknown" if inherited_without_override else current_provider), run_dir=None,
-    )
-    if attempted_model != primary_model:
+    if correction_attempt:
+        resolution = json.loads(json.dumps(_contract_correction["resolution"]))
+        resolution["resolved_model"] = _contract_correction["expected_model"]
+    else:
+        resolution = resolve_model(
+            policy_path, role, isolated_available=not inherited_without_override,
+            current_model=("unknown/default" if inherited_without_override else None),
+            current_provider=("unknown" if inherited_without_override else current_provider), run_dir=None,
+        )
+    if attempted_model != primary_model and not correction_attempt:
         fallback_config = next(
             (
                 item for item in config.get("runtime_fallbacks", [])
@@ -827,15 +1241,14 @@ def invoke_role(
             {
                 "role": role,
                 "input": str(Path(input_path).resolve()),
-                "input_sha256": hashlib.sha256(
-                    Path(input_path).read_bytes()
-                ).hexdigest(),
+                "input_sha256": input_sha256,
                 "requested_model": config["requested_model"],
                 "attempted_model": attempted_model,
                 "attempt_id": attempt_id,
                 "output_format": output_format,
                 "resolution_mode": resolution["resolution_mode"],
                 "fallback_used": resolution["fallback_used"],
+                "contract_correction": correction_attempt,
                 "isolation_controls": role_isolation_controls(),
             },
             actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
@@ -861,7 +1274,13 @@ def invoke_role(
         )
         raise SupervisorError(f"isolated {role} process timed out after {timeout}s") from exc
     failure_diagnostic = (completed.stderr or "") + "\n" + (completed.stdout or "")
-    if completed.returncode != 0 and not inherited_without_override and current_model and model_unavailable(failure_diagnostic):
+    if (
+        completed.returncode != 0
+        and not correction_attempt
+        and not inherited_without_override
+        and current_model
+        and model_unavailable(failure_diagnostic)
+    ):
         record_failure(
             run_dir, role, "requested_model_unavailable", config["requested_model"],
             exit_code=completed.returncode, diagnostic=failure_diagnostic,
@@ -956,7 +1375,8 @@ def invoke_role(
         parsed_output, runtime_metadata = parse_runtime_output(role, completed.stdout)
         reported_model = runtime_metadata.get("reported_model")
         expected_model = (
-            None
+            _contract_correction["expected_model"]
+            if correction_attempt else None
             if inherited_without_override and not result.get("fallback_from")
             else current_model if result.get("fallback_from")
             else attempted_model
@@ -972,7 +1392,7 @@ def invoke_role(
             resolution["fallback_used"] or reported_model != resolution["requested_model"]
         )
         try:
-            parsed_output = validate_role_output(role, parsed_output)
+            parsed_output = validate_role_output(role, parsed_output, payload)
             parsed_output, binding_proof = finalize_role_output(
                 role, payload, parsed_output
             )
@@ -989,8 +1409,27 @@ def invoke_role(
                 resolution=dict(resolution),
                 runtime_metadata=runtime_metadata,
                 invalid_output_sha256=invalid_output_sha256,
+                diagnostics=getattr(exc, "contract_diagnostics", ()),
+                failure_kind=getattr(
+                    exc, "contract_failure_kind", "cross_field"
+                ),
+                original_input_sha256=input_sha256,
             ) from exc
     except SupervisorError as exc:
+        correction_eligible = bool(
+            isinstance(exc, RoleOutputContractError)
+            and contract_version(payload) == 2
+            and _allow_contract_correction
+            and not correction_attempt
+            and exc.failure_kind in {"output_schema", "cross_field"}
+            and runtime_metadata
+            and runtime_metadata.get("model_proof", {}).get("verified") is True
+            and runtime_metadata.get("isolation_proof", {}).get("verified") is True
+            and runtime_metadata.get("isolation_proof", {}).get("tool_calls") == 0
+        )
+        correction_attempt_id = (
+            "contract-correction-1" if correction_eligible else None
+        )
         record_failure(
             run_dir, role, "output_validation", config["requested_model"],
             diagnostic=str(exc),
@@ -1007,7 +1446,47 @@ def invoke_role(
             attempted_model=attempted_model,
             attempt_id=attempt_id,
             output_format=output_format,
+            terminal=not correction_eligible,
+            failure_kind=getattr(exc, "failure_kind", "output_validation"),
+            contract_diagnostics=getattr(exc, "diagnostics", None),
+            original_input_sha256=(
+                input_sha256 if isinstance(exc, RoleOutputContractError) else None
+            ),
+            correction_attempt_id=correction_attempt_id,
         )
+        if correction_eligible:
+            correction_context = {
+                "attempt_id": correction_attempt_id,
+                "diagnostics": exc.diagnostics,
+                "expected_model": runtime_metadata["reported_model"],
+                "model_argument": command_model_argument(command),
+                "original_input_sha256": input_sha256,
+                "output_format": output_format,
+                "resolution": dict(resolution),
+            }
+            corrected = invoke_role(
+                role, input_path, output_path, cli=cli, policy_path=policy_path,
+                run_dir=run_dir, timeout=timeout, cwd=cwd, dry_run=False,
+                current_model=current_model, current_provider=current_provider,
+                auth_type=auth_type, _allow_runtime_fallback=False,
+                _contract_correction=correction_context,
+                _allow_contract_correction=False,
+            )
+            corrected["contract_correction"] = {
+                "attempted": True,
+                "original_input_sha256": input_sha256,
+                "first_attempt_id": attempt_id,
+                "correction_attempt_id": correction_attempt_id,
+                "role": role,
+                "model": runtime_metadata["reported_model"],
+                "diagnostics": exc.diagnostics,
+                "invalid_output_sha256": exc.invalid_output_sha256,
+                "runtime_capture": capture_evidence["runtime_capture"],
+                "runtime_capture_sha256": capture_evidence["runtime_capture_sha256"],
+                "stderr_capture": capture_evidence["stderr_capture"],
+                "stderr_capture_sha256": capture_evidence["stderr_capture_sha256"],
+            }
+            return corrected
         raise
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=output_path.parent, delete=False) as tmp:
         json.dump(parsed_output, tmp, ensure_ascii=False, indent=2, sort_keys=True)

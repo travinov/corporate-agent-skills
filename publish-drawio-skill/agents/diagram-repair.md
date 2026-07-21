@@ -5,7 +5,7 @@ tools:
   - read_file
   - read_many_files
 model: vllm/MiniMax-M3-113k
-approvalMode: plan
+approvalMode: default
 maxTurns: 12
 ---
 

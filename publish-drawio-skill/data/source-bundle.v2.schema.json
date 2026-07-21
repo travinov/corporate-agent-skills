@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/source-bundle.v2.schema.json",
+  "title": "Immutable diagram source bundle v2",
+  "type": "object",
+  "required": ["schema_version", "bundle_id", "run_id", "revision", "created_at", "source_priority", "sources", "evidence", "transaction_id", "previous_bundle_sha256", "previous_snapshot_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "bundle_id": {"$ref": "#/$defs/nonEmpty"},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "revision": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "source_priority": {"const": ["explicit_user_decision", "confirmed_clarification", "original_user_request", "explicit_user_document", "existing_diagram", "agent_assumption"]},
+    "sources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/source"}},
+    "evidence": {
+      "type": "object",
+      "required": ["imported_diagramspec", "baseline_validation", "eligible_review_handoff"],
+      "additionalProperties": false,
+      "properties": {
+        "imported_diagramspec": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/file"}]},
+        "baseline_validation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/validationEvidence"}]},
+        "eligible_review_handoff": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/reviewEvidence"}]}
+      }
+    },
+    "transaction_id": {"$ref": "#/$defs/nonEmpty"},
+    "previous_bundle_sha256": {"$ref": "#/$defs/nullableSha"},
+    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableSha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "nullableString": {"type": ["string", "null"]},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "jsonValue": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+    "source": {
+      "type": "object",
+      "required": ["source_id", "kind", "uri", "revision", "fragment", "content_sha256", "confidence", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {"$ref": "#/$defs/nonEmpty"},
+        "kind": {"enum": ["explicit_user_decision", "confirmed_clarification", "original_user_request", "explicit_user_document", "existing_diagram", "agent_assumption"]},
+        "uri": {"$ref": "#/$defs/nonEmpty"},
+        "revision": {"$ref": "#/$defs/nullableString"},
+        "fragment": {"$ref": "#/$defs/nullableString"},
+        "content_sha256": {"$ref": "#/$defs/sha"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "content": {"$ref": "#/$defs/jsonValue"}
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0}
+      }
+    },
+    "validationEvidence": {
+      "type": "object",
+      "required": ["artifact", "report", "receipt"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {"$ref": "#/$defs/file"},
+        "report": {"$ref": "#/$defs/file"},
+        "receipt": {"$ref": "#/$defs/file"}
+      }
+    },
+    "reviewEvidence": {
+      "type": "object",
+      "required": ["artifact", "report", "receipt", "verdict", "findings_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {"$ref": "#/$defs/file"},
+        "report": {"$ref": "#/$defs/file"},
+        "receipt": {"$ref": "#/$defs/file"},
+        "verdict": {"$ref": "#/$defs/file"},
+        "findings_sha256": {"$ref": "#/$defs/sha"}
+      }
+    }
+  }
+}

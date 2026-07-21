@@ -1503,7 +1503,7 @@ class ModelRoutingTests(unittest.TestCase):
         self.assertIn("owns execution and invokes you as an isolated planning role", supervisor_definition)
         for role in ("reviewer", "repair", "semantic_analyst"):
             agent_definition = (ROOT / "agents" / agent_files[role]).read_text(encoding="utf-8")
-            self.assertIn("approvalMode: plan\n", agent_definition)
+            self.assertIn("approvalMode: default\n", agent_definition)
         self.assertEqual(policy["global_interactive_model"], "preserve")
         self.assertEqual(
             {tuple(config["fallback_order"]) for config in policy["roles"].values()},

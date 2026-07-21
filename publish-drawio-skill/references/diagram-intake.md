@@ -27,10 +27,11 @@ questions and proceed with assumptions.
 When an existing `.drawio` is supplied, the brief must also state whether the
 request is layout-only or changes process semantics. Compare the user's process
 description with the represented nodes and relationships and name missing
-decision branches, failure/return loops, actors, or transitions. If relevant
-OpenSpec material exists in the repository, cite it as a source for the brief;
-if it conflicts with current user intent, defer to the consolidated decision
-rule in `references/diagram-supervisor.md`.
+decision branches, failure/return loops, actors, or transitions. If the user
+explicitly supplies a specification document or other reference, cite it as a
+source for the brief. Do not search the repository for an applicable OpenSpec
+automatically; compare only the sources the user actually provided and defer
+conflicts to the consolidated decision rule in `references/diagram-supervisor.md`.
 
 ## Question limits
 

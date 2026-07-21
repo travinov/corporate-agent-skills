@@ -1,6 +1,6 @@
 # Draw.io Agent Extension: установка и проверка в GigaCode
 
-Версия: `1.23.0-corporate.13`
+Версия: `1.24.0-corporate.1`
 
 Эта инструкция уже включена в `drawio-skill-agent-extension.zip` и после
 распаковки находится в
@@ -38,7 +38,7 @@ cd "$HOME/Downloads" || exit 1; if [ -d drawio-skill ]; then mv drawio-skill "dr
 sed -n '1,20p' "$HOME/.gigacode/extensions/publish-drawio-skill/gemini-extension.json"
 ```
 
-Ожидаемо: `"version": "1.23.0-corporate.13"`.
+Ожидаемо: `"version": "1.24.0-corporate.1"`.
 
 ## 4. Terminal: запустить GigaCode из каталога проекта
 
@@ -92,7 +92,7 @@ cd "/Users/travinov-sv/Documents/DrawioTest" && "$HOME/.gigacode/bin/gigacode"
 ## 9. GigaCode: найти существующий вход Reviewer
 
 ```text
-!find "$PWD/.diagram-runs" -type f -name 'reviewer-audit-input.json' | tail -5
+!find "$PWD/.diagram-runs" -type f -name 'reviewer-audit-input.v2.json' | tail -5
 ```
 
 Если файлы не найдены, сначала выполните команду из раздела 10.
@@ -106,7 +106,7 @@ cd "/Users/travinov-sv/Documents/DrawioTest" && "$HOME/.gigacode/bin/gigacode"
 ## 11. GigaCode: запустить изолированного Reviewer на DeepSeek
 
 ```text
-!EXT="$HOME/.gigacode/extensions/publish-drawio-skill"; PROBE="$PWD/.gigacode-probe"; IN="$(find "$PWD/.diagram-runs" -type f -name 'reviewer-audit-input.json' | tail -1)"; echo "INPUT=$IN"; if [ -z "$IN" ]; then echo 'ОШИБКА: reviewer-audit-input.json не найден'; else python3 "$EXT/scripts/agent_runtime.py" reviewer "$IN" --output "$PROBE/reviewer-output.json" --cli "$HOME/.gigacode/bin/gigacode" --cwd "$PWD" --timeout 600 > "$PROBE/invocation-result.json" 2> "$PROBE/invocation-error.txt"; RC=$?; echo "exit=$RC"; fi
+!EXT="$HOME/.gigacode/extensions/publish-drawio-skill"; PROBE="$PWD/.gigacode-probe"; IN="$(find "$PWD/.diagram-runs" -type f -name 'reviewer-audit-input.v2.json' | tail -1)"; echo "INPUT=$IN"; if [ -z "$IN" ]; then echo 'ОШИБКА: reviewer-audit-input.v2.json не найден'; else python3 "$EXT/scripts/agent_runtime.py" reviewer "$IN" --output "$PROBE/reviewer-analysis.v2.json" --cli "$HOME/.gigacode/bin/gigacode" --cwd "$PWD" --timeout 600 > "$PROBE/invocation-result.json" 2> "$PROBE/invocation-error.txt"; RC=$?; echo "exit=$RC"; fi
 ```
 
 Основная сессия остаётся на MiniMax; дочерний Reviewer должен запуститься
@@ -121,11 +121,10 @@ cd "/Users/travinov-sv/Documents/DrawioTest" && "$HOME/.gigacode/bin/gigacode"
 ```
 
 Read-only review записывает `workflow.json`, поэтому trace без `--run`
-должен выбрать именно тот же свежий review. В `roles.reviewer` должно
-быть `binding_proof.verified: true`. Если модель неверно переписала
-`receipt_sha256`, Host привязывает итоговый verdict к проверенным входным
-SHA и отражает ошибку модели в `binding_proof.declared_mismatches`, а не обрывает
-review.
+должен выбрать именно тот же свежий review. В `roles.reviewer` нужны
+подтверждённые model/isolation proof, а в v2 evidence — hash-bound
+`reviewer-verdict.v2.json`. Модель возвращает только analysis и не задаёт
+`receipt_sha256`, provider или итоговые bindings: их формирует Host.
 
 Затем выполните:
 
@@ -160,14 +159,27 @@ Host отдельно записывает `supervisor_declared_roles`, `host_ma
 ```
 
 При успехе нужны: `resolved_model` и `reported_model` с DeepSeek,
-`model_proof.verified: true`, `isolation_proof.verified: true`, `tool_calls: 0` и
-`binding_proof.verified: true`.
+`model_proof.verified: true`, `isolation_proof.verified: true` и `tool_calls: 0`.
+Финальный evidence binding появляется в `reviewer-verdict.v2.json`, который
+создаёт Host во время `/drawio:review`, а не при отдельной runtime-пробе.
 
 ## 14. GigaCode: запустить новую полную мультиагентную цепочку
 
 ```text
 /drawio:create "Создай тестовую диаграмму обработки заказа с проверкой оплаты, возвратом на исправление при ошибке, комплектацией, доставкой и завершением. Подпиши условия переходов и используй ортогональные соединения с waypoint."
 ```
+
+Если пользователь отдельно передал готовый roadmap, git-flow или C4 JSON/YAML,
+проверьте specialized adapter расширенной формой (путь должен быть внутри
+текущего workspace):
+
+```text
+/drawio:create --renderer-source "roadmap.json" --request "Построй диаграмму строго по переданному источнику"
+```
+
+Ожидаются hash-bound `explicit_user_document`, выбранный specialized adapter и
+`fallback: false`. При невалидном документе Host обязан явно записать generic
+fallback, а не домыслить данные.
 
 Не возобновляйте старый run, у которого `checkpoint: null`.
 
@@ -188,16 +200,126 @@ Host отдельно записывает `supervisor_declared_roles`, `host_ma
 ```
 
 Нужны хотя бы события `role_started`/`role_finished` с `allowed_mcp_servers: []` и
-строка `OK: MCP tool calls отсутствуюют`. Старый run без checkpoint после ошибки
+строка `OK: MCP tool calls отсутствуют`. Старый run без checkpoint после ошибки
 Supervisor не возобновлять — запускать свежую `/drawio:review` или `/drawio:improve`.
 
 ## 16. GigaCode: найти последние артефакты
 
 ```text
-!find "$PWD/.diagram-runs" -type f \( -name 'host-result.json' -o -name 'run-manifest.jsonl' -o -name 'runtime-output.jsonl' -o -name 'runtime-stderr.txt' \) -print | tail -30
+!find "$PWD/.diagram-runs" -type f \( -name 'host-result.json' -o -name 'run-manifest.jsonl' -o -name 'run-manifest.v2.jsonl' -o -name 'output.json' -o -name 'runtime-output.jsonl' -o -name 'runtime-stderr.txt' -o -name '*.semantic-plan.v2.json' -o -name 'verdict.v2.json' -o -name 'validation-receipt.v2.json' \) -print | tail -60
 ```
 
-## 17. Файлы для передачи на анализ
+## 17. GigaCode: проверить все фактически вызванные модели
+
+```text
+!RUN="$(ls -td "$PWD"/.diagram-runs/* 2>/dev/null | head -1)"; echo "RUN=$RUN"; find "$RUN/roles" -type f -name 'runtime-output.json*' -print0 | while IFS= read -r -d '' F; do echo "===== $F ====="; grep -oE '"model"[[:space:]]*:[[:space:]]*"[^"]+"' "$F" | sort -u; done
+```
+
+В полном create/improve-цикле ожидаются роли и модели:
+
+- Supervisor — `GigaChat-3-Ultra` либо один документированный fallback на
+  `vllm/DeepSeek-V4-Flash-262k` после `FatalTurnLimitedError`;
+- Semantic Analyst — `vllm/Qwen3.6-35B-262k`;
+- Repair — `vllm/MiniMax-M3-113k`, только когда есть применимые findings;
+- Reviewer — `vllm/DeepSeek-V4-Flash-262k`.
+
+Отсутствие Repair в уже чистом кандидате допустимо. Значение `/stats model`
+по-прежнему относится только к основной сессии.
+
+Выход Semantic Analyst должен соответствовать `semantic-analysis.v2`: роль
+возвращает complete desired graph, assumptions и human questions, но не SHA,
+operation IDs или approval. Canonical `semantic-plan.v2`, точные evidence
+bindings и typed delta создаёт Host. В новом run отсутствие legacy-конвертации
+проверяется по `workflow.json`: там есть `semantic_analysis_v2` и
+`semantic_plan_v2`, а raw output роли имеет `schema_version: 2`.
+
+## 18. GigaCode: проверить human-in-the-loop и продолжение того же run
+
+Если `host-result.json` вернул checkpoint, используйте одну из команд, которые
+он сам показал в `next_commands`. Типовой вариант с уточнением:
+
+```text
+/drawio:resume continue "Сохрани текущую структуру, разведи пересекающиеся стрелки ортогональными waypoint и не удаляй подписанные возвратные петли"
+```
+
+Проверить, что замечание стало новым источником, а decision не применился дважды:
+
+```text
+!RUN="$(ls -td "$PWD"/.diagram-runs/* 2>/dev/null | head -1)"; echo "RUN=$RUN"; grep -R -n 'confirmed_clarification\|decision_committed\|semantic_approval' "$RUN/lifecycle-v2" | tail -40
+```
+
+Повтор той же команды не должен запускать новую итерацию: ожидается
+`already_applied` либо тот же `decision_id`.
+
+## 19. GigaCode: проверить Repair-итерацию на существующей диаграмме
+
+```text
+/drawio:improve "Исправь все Validator и Reviewer findings. Сохрани семантику и стабильные ID; прямые соединения через препятствия замени ортогональными маршрутами с различными pins и явными waypoint."
+```
+
+После checkpoint выполните показанный `next_commands.continue`. Затем проверьте:
+
+```text
+!RUN="$(ls -td "$PWD"/.diagram-runs/* 2>/dev/null | head -1)"; echo "RUN=$RUN"; find "$RUN/roles" -maxdepth 2 -type f \( -name 'input.json' -o -name 'output.json' -o -name 'analysis.v2.json' -o -name 'verdict.v2.json' \) -print; grep -n 'candidate\|validation_receipt\|reviewer_verdict\|checkpoint' "$RUN/lifecycle-v2/run-manifest.v2.jsonl" | tail -40
+```
+
+Каждый retry должен начинаться от последнего принятого кандидата. Отклонённый
+кандидат остаётся evidence и не становится новой baseline.
+
+## 20. GigaCode: проверить финальное решение и транзакционную публикацию
+
+На `final_acceptance` выберите ровно команду из `next_commands`:
+
+```text
+/drawio:resume approve
+```
+
+`approve_with_findings` используйте только если эта команда явно предложена
+Host. Она допустима лишь без error findings при валидной integrity/structure и
+сохраняет `strict_passed: false`. Для ручного завершения используйте:
+
+```text
+/drawio:resume manual_handoff "Продолжу редактирование вручную"
+```
+
+Проверить publication journal и целевой SHA:
+
+```text
+!RUN="$(ls -td "$PWD"/.diagram-runs/* 2>/dev/null | head -1)"; echo "RUN=$RUN"; find "$RUN/lifecycle-v2/snapshots/publication-transaction" -type f -maxdepth 1 -print -exec sed -n '1,240p' {} \; 2>/dev/null; sed -n '1,260p' "$RUN/host-result.json"
+```
+
+Create обязан использовать no-clobber, improve — compare-and-swap с rollback
+copy. Если целевой файл изменился после начала run, ожидается
+`publication_conflict`, а не перезапись.
+
+## 21. GigaCode: финальная read-only проверка trace
+
+```text
+/drawio:trace
+```
+
+Для нового run нужны валидные `control_plane_v2`, event/snapshot bindings,
+accepted artifact/receipt и publication transaction. Trace не должен создавать,
+восстанавливать или менять файлы. Для старого v1 run он остаётся read-only и
+предлагает manual handoff; mutable resume v1 запрещён.
+
+Runtime не сканирует проект в поиске OpenSpec. Только документ, явно переданный
+пользователем, входит в source bundle как `explicit_user_document`.
+
+## 22. Terminal: откат на сохранённую `1.23.0-corporate.13`
+
+Сначала остановите GigaCode, затем в распакованном архиве новой версии:
+
+```bash
+cd "$HOME/Downloads/drawio-skill" && bash install/rollback_drawio_agent_extension.sh --latest && sed -n '1,20p' "$HOME/.gigacode/extensions/publish-drawio-skill/gemini-extension.json" && "$HOME/.gigacode/bin/gigacode" extensions list
+```
+
+Ожидается восстановленная версия `1.23.0-corporate.13` и зарегистрированный
+`publish-drawio-skill`. Verifier из распакованного `1.24` намеренно не запускайте
+против старой версии: он проверяет контракт своей поставки. Не удаляйте backup
+вручную до проверки.
+
+## 23. Файлы для передачи на анализ
 
 Из `.gigacode-probe`:
 
@@ -210,7 +332,11 @@ Supervisor не возобновлять — запускать свежую `/d
 
 - `host-result.json`;
 - `run-manifest.jsonl`;
+- `lifecycle-v2/run-manifest.v2.jsonl`;
+- последние snapshots из `lifecycle-v2/snapshots/`;
 - `workflow.json`;
+- raw `roles/semantic-initial/output.json` и canonical файл из
+  `semantic-plans/*.semantic-plan.v2.json`;
 - `roles/supervisor-initial/attempts/primary/runtime-output.jsonl`;
 - `roles/supervisor-initial/attempts/fallback-1/runtime-output.jsonl`, если fallback был вызван.
 

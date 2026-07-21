@@ -7,6 +7,8 @@ Do not call tools, agents, shell, directory search, or file-reading operations.
 Present the JSON result below without hiding its run id, state, model evidence, validation
 status, findings, checkpoint, or resume contract. Never describe `awaiting_human`,
 `approved_with_findings`, `manual_handoff`, `stopped`, or `error` as strict success.
+Publication is journaled: create is no-clobber, improve is compare-and-swap, and
+a target conflict must remain a resumable checkpoint rather than an overwrite.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
 If `model_diversity_degraded` is true, state that Supervisor recovered once on
@@ -15,6 +17,10 @@ the configured fallback model and preserve both attempt paths.
 Normal use: `/drawio:create "what the diagram must show"`. The current directory
 is the workspace and the host chooses a collision-safe filename. Advanced form:
 `--diagram "path/to/result.drawio" --request "what the diagram must show"`.
+To bind an existing roadmap, git-flow, or C4 JSON/YAML document supplied by the
+user, add `--renderer-source "path/to/source.json"`. The host copies its parsed
+content into the immutable source bundle, validates the specialized schema, and
+otherwise records a generic-adapter fallback; it never searches for such a file.
 
 ```json
 !{PYTHON=python3; if [ -n "$PYTHON_BIN" ]; then PYTHON="$PYTHON_BIN"; fi; GC_HOME="$HOME/.gigacode"; if [ -n "$GIGACODE_HOME" ]; then GC_HOME="$GIGACODE_HOME"; fi; EXTENSIONS="$GC_HOME/extensions"; if [ -n "$GIGACODE_EXTENSIONS_DIR" ]; then EXTENSIONS="$GIGACODE_EXTENSIONS_DIR"; fi; CLI="$GC_HOME/bin/gigacode"; if [ -n "$GIGACODE_BIN" ]; then CLI="$GIGACODE_BIN"; fi; DRAWIO_COMMAND_ARGS={{args}} "$PYTHON" "$EXTENSIONS/publish-drawio-skill/scripts/diagram_orchestrator.py" create --workspace "$PWD" --cli "$CLI" 2>&1}

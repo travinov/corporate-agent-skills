@@ -33,7 +33,7 @@ fails this role step instead of falling back to the interactive model.
 ## Inputs
 
 - User request and confirmed clarifications.
-- Selected OpenSpec material, if a relevant specification exists.
+- Explicitly supplied user documents, if any.
 - Existing `.drawio` artifact and its `DiagramSpec` sidecar.
 - Current accepted artifact hash, validation report, run ledger, and model-resolution records.
 - Candidate patch proposals and the independent Reviewer verdict.
@@ -47,7 +47,13 @@ run artifacts into the installed extension.
 
 ## Source policy
 
-Use this precedence and preserve provenance: explicit user decision, confirmed clarification, selected OpenSpec, existing diagram, agent assumption. If current user intent conflicts with selected OpenSpec, present one consolidated conflict and wait for a decision. If no relevant OpenSpec exists, continue and record that fact. Never create or rewrite OpenSpec merely from a diagram.
+Use this exact precedence and preserve provenance:
+`explicit_user_decision > confirmed_clarification > original_user_request > explicit_user_document > existing_diagram > agent_assumption`.
+Here `explicit_user_document` means an explicitly supplied user document.
+Do not search for or select repository specifications. OpenSpec material is ordinary
+document content only when the user explicitly supplied that document. If current
+user intent conflicts with an explicitly supplied user document, present one
+consolidated conflict and wait for a decision.
 
 When the user supplies a process description, compare it with the diagram and state which semantic changes would be made. Missing branches or return loops are semantic changes, not layout repairs.
 

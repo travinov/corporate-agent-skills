@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/reviewer-input.v2.schema.json",
+  "title": "Independent Reviewer input v2",
+  "type": "object",
+  "required": [
+    "schema_version", "run_id", "review_kind", "baseline", "candidate",
+    "baseline_spec", "candidate_spec", "patch", "semantic_plan",
+    "semantic_delta", "source_bundle", "comparison", "model_resolutions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "review_kind": {"enum": ["baseline_audit", "candidate_review"]},
+    "baseline": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidenceSet"}]},
+    "candidate": {"$ref": "#/$defs/evidenceSet"},
+    "baseline_spec": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/document"}]},
+    "candidate_spec": {"$ref": "#/$defs/document"},
+    "patch": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/document"}]},
+    "semantic_plan": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/document"}]},
+    "semantic_delta": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/inlineDocument"}]},
+    "source_bundle": {"$ref": "#/$defs/document"},
+    "comparison": {"type": ["object", "null"]},
+    "model_resolutions": {"type": "array", "items": {"type": "object"}},
+    "artifact": {"$ref": "#/$defs/legacyArtifact"},
+    "spec": {"$ref": "#/$defs/legacyDocument"},
+    "report": {"$ref": "#/$defs/legacyDocument"},
+    "receipt": {"$ref": "#/$defs/legacyDocument"},
+    "strict_passed": {"type": "boolean"},
+    "context": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"review_kind": {"const": "candidate_review"}}, "required": ["review_kind"]},
+      "then": {"properties": {"baseline": {"$ref": "#/$defs/evidenceSet"}, "patch": {"$ref": "#/$defs/document"}}}
+    }
+  ],
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0}
+      }
+    },
+    "legacyArtifact": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha"}
+      }
+    },
+    "legacyDocument": {
+      "type": "object",
+      "required": ["path", "sha256", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "content": {}
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": ["path", "sha256", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "content": {}
+      }
+    },
+    "inlineDocument": {
+      "type": "object",
+      "required": ["sha256", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha"},
+        "content": {"type": "object"}
+      }
+    },
+    "evidenceSet": {
+      "type": "object",
+      "required": ["artifact", "report", "receipt", "strict_passed"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {"$ref": "#/$defs/file"},
+        "report": {"$ref": "#/$defs/document"},
+        "receipt": {"$ref": "#/$defs/document"},
+        "strict_passed": {"type": "boolean"}
+      }
+    }
+  }
+}

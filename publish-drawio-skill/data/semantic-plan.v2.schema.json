@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/semantic-plan.v2.schema.json",
+  "title": "Semantic Analyst plan v2",
+  "type": "object",
+  "required": ["schema_version", "role", "status", "run_id", "source_bundle_sha256", "baseline_semantic_digest", "result"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "role": {"const": "semantic_analyst"},
+    "status": {"enum": ["ok", "needs_human"]},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "source_bundle_sha256": {"$ref": "#/$defs/sha"},
+    "baseline_semantic_digest": {"$ref": "#/$defs/sha"},
+    "result": {
+      "type": "object",
+      "required": ["mode", "diagram_type", "title", "direction", "pages", "semantic_delta", "assumptions", "requires_human", "human_questions"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["create", "improve"]},
+        "diagram_type": {"$ref": "#/$defs/nonEmpty"},
+        "title": {"$ref": "#/$defs/nonEmpty"},
+        "direction": {"enum": ["TB", "LR"]},
+        "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/page"}},
+        "semantic_delta": {"$ref": "#/$defs/delta"},
+        "assumptions": {"type": "array", "items": {"$ref": "#/$defs/assumption"}},
+        "requires_human": {"type": "boolean"},
+        "human_questions": {"type": "array", "items": {"$ref": "#/$defs/nonEmpty"}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "needs_human"}}, "required": ["status"]},
+      "then": {"properties": {"result": {"properties": {"requires_human": {"const": true}, "human_questions": {"minItems": 1}}}}}
+    }
+  ],
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "jsonValue": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+    "identity": {
+      "type": "object",
+      "required": ["page_id", "cell_id"],
+      "additionalProperties": false,
+      "properties": {"page_id": {"$ref": "#/$defs/nonEmpty"}, "cell_id": {"$ref": "#/$defs/nonEmpty"}}
+    },
+    "node": {
+      "type": "object",
+      "required": ["stable_identity", "label", "semantic_type", "parent", "style_hint"],
+      "additionalProperties": false,
+      "properties": {
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "label": {"type": "string"},
+        "semantic_type": {"$ref": "#/$defs/nonEmpty"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "style_hint": {"type": ["string", "null"]}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["stable_identity", "source", "target", "label", "relationship", "parent", "style_hint"],
+      "additionalProperties": false,
+      "properties": {
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "source": {"$ref": "#/$defs/identity"},
+        "target": {"$ref": "#/$defs/identity"},
+        "label": {"type": "string"},
+        "relationship": {"$ref": "#/$defs/nonEmpty"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "style_hint": {"type": ["string", "null"]},
+        "route": {
+          "type": "object",
+          "required": ["orthogonal", "source_pin", "target_pin", "waypoints"],
+          "additionalProperties": false,
+          "properties": {
+            "orthogonal": {"const": true},
+            "source_pin": {"$ref": "#/$defs/pin"},
+            "target_pin": {"$ref": "#/$defs/pin"},
+            "waypoints": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/point"}}
+          }
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["page_id", "name", "nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "page_id": {"$ref": "#/$defs/nonEmpty"},
+        "name": {"type": "string"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+    },
+    "pin": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "assumption": {
+      "type": "object",
+      "required": ["assumption_id", "text", "source_id"],
+      "additionalProperties": false,
+      "properties": {
+        "assumption_id": {"$ref": "#/$defs/nonEmpty"},
+        "text": {"$ref": "#/$defs/nonEmpty"},
+        "source_id": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "change": {
+      "type": "object",
+      "required": ["field", "before", "after"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {"enum": ["label", "semantic_type", "style_hint", "parent", "source", "target", "relationship", "element"]},
+        "before": {"$ref": "#/$defs/jsonValue"},
+        "after": {"$ref": "#/$defs/jsonValue"}
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["operation_id", "operation_type", "element_kind", "target", "changes"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {"type": "string", "pattern": "^op-[a-f0-9]{20}$"},
+        "operation_type": {"enum": ["add", "remove", "update", "relationship", "parent"]},
+        "element_kind": {"enum": ["node", "edge", "group"]},
+        "target": {"$ref": "#/$defs/identity"},
+        "changes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/change"}}
+      }
+    },
+    "delta": {
+      "type": "object",
+      "required": ["schema_version", "baseline_semantic_digest", "source_bundle_sha256", "operations"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": 2},
+        "baseline_semantic_digest": {"$ref": "#/$defs/sha"},
+        "source_bundle_sha256": {"$ref": "#/$defs/sha"},
+        "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}}
+      }
+    }
+  }
+}

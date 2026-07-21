@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/diagramspec.v2.schema.json",
+  "title": "Page-scoped preserved DiagramSpec v2",
+  "type": "object",
+  "required": ["schema_version", "diagram_id", "title", "artifact", "pages", "model_view", "semantic_digest"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "diagram_id": {"$ref": "#/$defs/nonEmpty"},
+    "title": {"type": "string"},
+    "artifact": {"$ref": "#/$defs/artifact"},
+    "source_bundle_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/preservedPage"}},
+    "model_view": {
+      "type": "object",
+      "required": ["technical_cells_excluded", "pages"],
+      "additionalProperties": false,
+      "properties": {
+        "technical_cells_excluded": {"const": true},
+        "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/modelPage"}}
+      }
+    },
+    "semantic_digest": {
+      "type": "object",
+      "required": ["algorithm", "canonicalization", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {"const": "sha256"},
+        "canonicalization": {"const": "diagramspec-model-view-v2"},
+        "value": {"$ref": "#/$defs/sha"}
+      }
+    }
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "identity": {
+      "type": "object",
+      "required": ["page_id", "cell_id"],
+      "additionalProperties": false,
+      "properties": {
+        "page_id": {"$ref": "#/$defs/nonEmpty"},
+        "cell_id": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "width": {"type": "number", "minimum": 0},
+        "height": {"type": "number", "minimum": 0},
+        "relative": {"type": "boolean"},
+        "source_point": {"$ref": "#/$defs/point"},
+        "target_point": {"$ref": "#/$defs/point"},
+        "waypoints": {"type": "array", "items": {"$ref": "#/$defs/point"}}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length", "format", "imported_at", "preservation_policy"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0},
+        "format": {"enum": ["drawio-xml", "drawio-compressed"]},
+        "imported_at": {"type": "string", "format": "date-time"},
+        "preservation_policy": {"const": "patch-original-xml"}
+      }
+    },
+    "preservedCell": {
+      "type": "object",
+      "required": ["id", "stable_identity", "kind", "semantic_type", "label", "technical", "raw_attributes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmpty"},
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "kind": {"enum": ["root", "layer", "wrapper", "vertex", "edge", "group", "other"]},
+        "semantic_type": {"$ref": "#/$defs/nonEmpty"},
+        "label": {"type": "string"},
+        "technical": {"type": "boolean"},
+        "business_element": {"type": "boolean"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "source": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "target": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "relationship": {"type": ["string", "null"]},
+        "style": {"type": "string"},
+        "geometry": {"$ref": "#/$defs/geometry"},
+        "raw_attributes": {"type": "object", "additionalProperties": {"type": "string"}},
+        "raw_xml_fragment": {"type": ["string", "null"]}
+      }
+    },
+    "preservedPage": {
+      "type": "object",
+      "required": ["id", "name", "cells"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmpty"},
+        "name": {"type": "string"},
+        "cells": {"type": "array", "items": {"$ref": "#/$defs/preservedCell"}}
+      }
+    },
+    "modelElement": {
+      "type": "object",
+      "required": ["stable_identity", "kind", "semantic_type", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "kind": {"enum": ["vertex", "edge", "group", "other"]},
+        "semantic_type": {"$ref": "#/$defs/nonEmpty"},
+        "label": {"type": "string"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "source": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "target": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "relationship": {"type": ["string", "null"]},
+        "style_hint": {"type": ["string", "null"]}
+      }
+    },
+    "modelPage": {
+      "type": "object",
+      "required": ["id", "name", "elements"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmpty"},
+        "name": {"type": "string"},
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/modelElement"}}
+      }
+    }
+  }
+}

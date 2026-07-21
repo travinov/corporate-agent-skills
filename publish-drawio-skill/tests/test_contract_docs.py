@@ -74,6 +74,23 @@ class ContractDocumentationTests(unittest.TestCase):
         self.assertIn("commands/drawio/review.md", skill)
         self.assertIn("scripts/diagram_host.py", skill)
 
+    def test_runtime_guidance_does_not_request_automatic_openspec_discovery(self):
+        skill = self.read("SKILL.md")
+        intake = self.read("references/diagram-intake.md")
+        workflow = self.read("references/diagram-supervisor.md")
+        routing = self.read("references/model-routing.md")
+
+        for text in (
+            "Search for a relevant OpenSpec",
+            "Search the current repository for relevant OpenSpec material",
+            "selected OpenSpec",
+            "OpenSpec reconciliation and semantic conflicts",
+        ):
+            self.assertNotIn(text, skill + intake + workflow + routing)
+        self.assertIn("explicitly supplied reference documents", skill)
+        self.assertIn("explicitly supplied specification or document", workflow)
+        self.assertIn("explicitly supplied reference document", routing)
+
     def test_supervisor_required_roles_are_advisory_and_host_policy_is_explicit(self):
         skill = self.read("SKILL.md")
         workflow = self.read("references/diagram-supervisor.md")
@@ -94,15 +111,19 @@ class ContractDocumentationTests(unittest.TestCase):
         workflow = self.read("references/diagram-supervisor.md")
         routing = self.read("references/model-routing.md")
         prompt = self.read("agents/diagram-reviewer.md")
-        schema = json.loads(self.read("data/reviewer-analysis.v1.schema.json"))
+        analysis_schema = json.loads(self.read("data/reviewer-analysis.v2.schema.json"))
+        verdict_schema = json.loads(self.read("data/reviewer-verdict.v2.schema.json"))
 
-        self.assertIn("reviewer-analysis.v1.schema.json", skill)
-        self.assertIn("binding_proof", skill)
+        self.assertIn("reviewer-verdict.v2", skill)
+        self.assertIn("legacy evidence", skill)
+        self.assertIn("reviewer-analysis.v2.schema.json", routing)
+        self.assertIn("reviewer-verdict.v2.schema.json", routing)
         self.assertIn("Read-only review persists", workflow)
-        self.assertIn("constructs and validates the final", routing)
         self.assertIn("Do not copy", prompt)
-        self.assertNotIn("run_id", schema["required"])
-        self.assertNotIn("receipt_sha256", schema["required"])
+        self.assertNotIn("run_id", analysis_schema["required"])
+        self.assertNotIn("receipt_sha256", analysis_schema["required"])
+        self.assertIn("run_id", verdict_schema["required"])
+        self.assertIn("receipt_sha256", verdict_schema["properties"]["bindings"]["required"])
 
 
 if __name__ == "__main__":

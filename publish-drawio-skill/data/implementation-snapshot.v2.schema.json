@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/implementation-snapshot.v2.schema.json",
+  "title": "Extension implementation snapshot v2",
+  "type": "object",
+  "required": ["schema_version", "snapshot_id", "run_id", "extension_name", "extension_version", "captured_at", "components", "trusted_validator", "transaction_id", "previous_snapshot_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "snapshot_id": {"$ref": "#/$defs/nonEmpty"},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "extension_name": {"$ref": "#/$defs/nonEmpty"},
+    "extension_version": {"$ref": "#/$defs/nonEmpty"},
+    "captured_at": {"type": "string", "format": "date-time"},
+    "components": {
+      "type": "object",
+      "required": ["orchestration_host", "review_host", "supervisor_toolchain", "role_runtime", "validator", "role_prompts", "output_schemas", "routing_policy", "extension_manifest"],
+      "additionalProperties": false,
+      "properties": {
+        "orchestration_host": {"$ref": "#/$defs/files"},
+        "review_host": {"$ref": "#/$defs/files"},
+        "supervisor_toolchain": {"$ref": "#/$defs/files"},
+        "role_runtime": {"$ref": "#/$defs/files"},
+        "validator": {"$ref": "#/$defs/files"},
+        "role_prompts": {"$ref": "#/$defs/files"},
+        "output_schemas": {"$ref": "#/$defs/files"},
+        "routing_policy": {"$ref": "#/$defs/files"},
+        "extension_manifest": {"$ref": "#/$defs/files"}
+      }
+    },
+    "trusted_validator": {
+      "type": "object",
+      "required": ["name", "version", "path", "file_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"const": "publish-drawio-validator"},
+        "version": {"$ref": "#/$defs/nonEmpty"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "file_sha256": {"$ref": "#/$defs/sha"}
+      }
+    },
+    "transaction_id": {"$ref": "#/$defs/nonEmpty"},
+    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableSha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0}
+      }
+    },
+    "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/file"}}
+  }
+}

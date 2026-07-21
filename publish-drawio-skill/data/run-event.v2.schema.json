@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/run-event.v2.schema.json",
+  "title": "Hash-bound diagram lifecycle event v2",
+  "type": "object",
+  "required": ["schema_version", "run_id", "event_id", "sequence", "timestamp", "event_type", "actor", "transaction_id", "previous_event_sha256", "snapshots", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "event_id": {"$ref": "#/$defs/nonEmpty"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "event_type": {"enum": ["run_created", "implementation_captured", "source_revision", "state_transition", "checkpoint_created", "decision_committed", "semantic_approval", "role_attempt", "tool_attempt", "candidate_accepted", "candidate_rejected", "validation_receipt", "review_verdict", "publication_prepared", "publication_staged", "publication_bytes_written", "publication_committed", "publication_conflict", "recovery", "terminal_state"]},
+    "actor": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["agent", "tool", "human", "system"]},
+        "id": {"$ref": "#/$defs/nonEmpty"},
+        "model": {"type": ["string", "null"]}
+      }
+    },
+    "transaction_id": {"$ref": "#/$defs/nonEmpty"},
+    "previous_event_sha256": {"$ref": "#/$defs/nullableSha"},
+    "snapshots": {"type": "array", "items": {"$ref": "#/$defs/snapshot"}},
+    "payload": {"type": "object"}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableSha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "snapshot": {
+      "type": "object",
+      "required": ["schema_version", "schema_kind", "path", "sha256", "canonical_sha256", "byte_length", "previous_snapshot_sha256", "transaction_id"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": 2},
+        "schema_kind": {"$ref": "#/$defs/nonEmpty"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha"},
+        "canonical_sha256": {"$ref": "#/$defs/sha"},
+        "byte_length": {"type": "integer", "minimum": 0},
+        "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"},
+        "transaction_id": {"$ref": "#/$defs/nonEmpty"}
+      }
+    }
+  }
+}

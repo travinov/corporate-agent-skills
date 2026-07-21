@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/reviewer-analysis.v2.schema.json",
+  "title": "Independent Reviewer analytical output v2",
+  "type": "object",
+  "required": ["schema_version", "role", "status", "analysis_id", "verdict", "reviewed_at", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "role": {"const": "reviewer"},
+    "status": {"enum": ["ok", "needs_human"]},
+    "analysis_id": {"$ref": "#/$defs/nonEmpty"},
+    "verdict": {"enum": ["approve", "reject", "needs_human"]},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "identity": {
+      "type": "object",
+      "required": ["page_id", "cell_id"],
+      "additionalProperties": false,
+      "properties": {"page_id": {"$ref": "#/$defs/nonEmpty"}, "cell_id": {"$ref": "#/$defs/nonEmpty"}}
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "path", "sha256", "pointer", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["artifact", "validation_report", "validation_receipt", "semantic_plan", "semantic_delta", "source_bundle", "comparison", "runtime_proof"]},
+        "path": {"type": ["string", "null"], "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "pointer": {"type": ["string", "null"]},
+        "message": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "required": ["class", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "class": {"enum": ["repair", "regenerate", "clarify", "manual", "none"]},
+        "action": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["finding_id", "category", "severity", "summary", "elements", "evidence", "remediation"],
+      "additionalProperties": false,
+      "properties": {
+        "finding_id": {"$ref": "#/$defs/nonEmpty"},
+        "category": {"enum": ["semantic", "layout", "routing", "validation", "source", "integrity"]},
+        "severity": {"enum": ["info", "warning", "error"]},
+        "summary": {"$ref": "#/$defs/nonEmpty"},
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/identity"}},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}},
+        "remediation": {"$ref": "#/$defs/remediation"}
+      }
+    }
+  }
+}

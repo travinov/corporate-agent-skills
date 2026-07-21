@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/semantic-analysis.v2.schema.json",
+  "title": "Semantic Analyst analysis-only result v2",
+  "type": "object",
+  "required": ["schema_version", "role", "status", "result"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "role": {"const": "semantic_analyst"},
+    "status": {"enum": ["ok", "needs_human"]},
+    "result": {
+      "type": "object",
+      "required": ["mode", "diagram_type", "title", "direction", "pages", "assumptions", "requires_human", "human_questions"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["create", "improve"]},
+        "diagram_type": {"$ref": "#/$defs/nonEmpty"},
+        "title": {"$ref": "#/$defs/nonEmpty"},
+        "direction": {"enum": ["TB", "LR"]},
+        "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/page"}},
+        "assumptions": {"type": "array", "items": {"$ref": "#/$defs/nonEmpty"}},
+        "requires_human": {"type": "boolean"},
+        "human_questions": {"type": "array", "items": {"$ref": "#/$defs/nonEmpty"}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "needs_human"}}, "required": ["status"]},
+      "then": {"properties": {"result": {"properties": {"requires_human": {"const": true}, "human_questions": {"minItems": 1}}}}}
+    }
+  ],
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "identity": {
+      "type": "object",
+      "required": ["page_id", "cell_id"],
+      "additionalProperties": false,
+      "properties": {
+        "page_id": {"$ref": "#/$defs/nonEmpty"},
+        "cell_id": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["stable_identity", "label", "semantic_type"],
+      "additionalProperties": false,
+      "properties": {
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "label": {"type": "string"},
+        "semantic_type": {"$ref": "#/$defs/nonEmpty"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "style_hint": {"type": ["string", "null"]}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["stable_identity", "source", "target", "label", "relationship"],
+      "additionalProperties": false,
+      "properties": {
+        "stable_identity": {"$ref": "#/$defs/identity"},
+        "source": {"$ref": "#/$defs/identity"},
+        "target": {"$ref": "#/$defs/identity"},
+        "label": {"type": "string"},
+        "relationship": {"$ref": "#/$defs/nonEmpty"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "style_hint": {"type": ["string", "null"]},
+        "route": {"$ref": "#/$defs/route"}
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["page_id", "name", "nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "page_id": {"$ref": "#/$defs/nonEmpty"},
+        "name": {"type": "string"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+    },
+    "pin": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": ["orthogonal", "source_pin", "target_pin", "waypoints"],
+      "additionalProperties": false,
+      "properties": {
+        "orthogonal": {"const": true},
+        "source_pin": {"$ref": "#/$defs/pin"},
+        "target_pin": {"$ref": "#/$defs/pin"},
+        "waypoints": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/point"}}
+      }
+    }
+  }
+}

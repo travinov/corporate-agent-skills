@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents365.local/drawio-skill/schemas/semantic-approval.v2.schema.json",
+  "title": "Exact human semantic approval v2",
+  "type": "object",
+  "required": ["schema_version", "approval_id", "decision_id", "run_id", "checkpoint_id", "decision", "decided_at", "approver", "baseline_semantic_digest", "semantic_plan_sha256", "source_bundle_sha256", "semantic_delta_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 2},
+    "approval_id": {"$ref": "#/$defs/nonEmpty"},
+    "decision_id": {"$ref": "#/$defs/nonEmpty"},
+    "run_id": {"$ref": "#/$defs/nonEmpty"},
+    "checkpoint_id": {"$ref": "#/$defs/nonEmpty"},
+    "decision": {"enum": ["approve", "reject"]},
+    "decided_at": {"type": "string", "format": "date-time"},
+    "approver": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "properties": {"kind": {"const": "human"}, "id": {"$ref": "#/$defs/nonEmpty"}}
+    },
+    "baseline_semantic_digest": {"$ref": "#/$defs/sha"},
+    "semantic_plan_sha256": {"$ref": "#/$defs/sha"},
+    "source_bundle_sha256": {"$ref": "#/$defs/sha"},
+    "semantic_delta_sha256": {"$ref": "#/$defs/sha"}
+  },
+  "$defs": {
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

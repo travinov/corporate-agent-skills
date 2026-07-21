@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,61 +92,50 @@ if model == "GigaChat-3-Ultra":
 elif model == "vllm/Qwen3.6-35B-262k":
     requires_human = payload["mode"] == "improve"
     emit({
-        "schema_version": 1,
+        "schema_version": 2,
         "role": "semantic_analyst",
         "status": "needs_human" if requires_human else "ok",
         "result": {
             "mode": payload["mode"],
-            "diagram_type": "flowchart",
-            "title": f"Test {payload['mode']} plan",
+            "diagram_type": "generic",
+            "title": f"Test {payload['mode']} analysis",
             "direction": "LR",
-            "nodes": [
-                {"id": "start", "label": "Start", "semantic_type": "start"},
-                {"id": "end", "label": "End", "semantic_type": "end"},
-            ],
-            "edges": [
+            "pages": [
                 {
-                    "id": "flow",
-                    "source_id": "start",
-                    "target_id": "end",
-                    "label": "flow",
-                    "relationship": "sequence",
+                    "page_id": "page-1",
+                    "name": "Page 1",
+                    "nodes": [
+                        {
+                            "stable_identity": {"page_id": "page-1", "cell_id": "node-a"},
+                            "label": "A",
+                            "semantic_type": "task",
+                            "parent": None,
+                            "style_hint": None,
+                        },
+                        {
+                            "stable_identity": {"page_id": "page-1", "cell_id": "node-b"},
+                            "label": "B",
+                            "semantic_type": "task",
+                            "parent": None,
+                            "style_hint": None,
+                        },
+                    ],
+                    "edges": [],
                 }
             ],
-            "source_refs": [],
             "assumptions": [],
-            "semantic_changes": ["Add approval branch"] if requires_human else [],
             "requires_human": requires_human,
+            "human_questions": ["Add approval branch"] if requires_human else [],
         },
     })
 elif model == "vllm/DeepSeek-V4-Flash-262k":
-    candidate = payload.get("candidate")
-    if isinstance(candidate, dict) and isinstance(candidate.get("artifact"), dict):
-        candidate_sha256 = candidate["artifact"]["sha256"]
-        report_sha256 = candidate["report"]["sha256"]
-        receipt_sha256 = candidate["receipt"]["sha256"]
-    elif isinstance(candidate, dict) and "sha256" in candidate:
-        candidate_sha256 = candidate["sha256"]
-        report_sha256 = payload["validation_report"]["sha256"]
-        receipt_sha256 = payload["validation_receipt"]["sha256"]
-    else:
-        candidate_sha256 = payload["artifact"]["sha256"]
-        report_sha256 = payload["report"]["sha256"]
-        receipt_sha256 = payload["receipt"]["sha256"]
     emit({
-        "schema_version": 1,
-        "verdict_id": "review-test",
-        "run_id": payload["run_id"],
-        "candidate_sha256": candidate_sha256,
-        "report_sha256": report_sha256,
-        "receipt_sha256": receipt_sha256,
+        "schema_version": 2,
+        "role": "reviewer",
+        "status": "ok",
+        "analysis_id": "review-test",
         "verdict": "approve",
         "reviewed_at": "2026-07-20T12:00:00Z",
-        "reviewer": {
-            "resolved_model": model,
-            "provider": "vllm",
-            "resolution_mode": "isolated_cli",
-        },
         "findings": [],
     })
 else:
@@ -199,6 +189,50 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertEqual(result["next_commands"]["short"]["approve"], "/drawio:resume approve")
         self.assertFalse(Path(result["command_resolution"]["diagram"]).exists())
 
+    def test_create_does_not_discover_workspace_openspec_as_source(self):
+        root, workspace, cli = self.create_workspace()
+        spec = workspace / "openspec" / "specs" / "payment-routing" / "spec.md"
+        spec.parent.mkdir(parents=True)
+        spec.write_text(
+            """# Payment Routing Specification
+
+## Purpose
+Route approved payments to settlement.
+
+## Requirements
+- OPEN_SPEC_DISCOVERY_SENTINEL must appear in the settlement node.
+""",
+            encoding="utf-8",
+        )
+        request = "Create a two-step customer onboarding diagram."
+
+        completed = self.run_host(
+            "create",
+            "--workspace",
+            workspace,
+            "--cli",
+            cli,
+            "--diagram",
+            workspace / "onboarding.drawio",
+            "--request",
+            request,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        source_bundle, _ = orchestrator.lifecycle_v2.latest_document(
+            Path(result["run_dir"]), "source-bundle"
+        )
+        self.assertEqual(
+            [source["kind"] for source in source_bundle["sources"]],
+            ["original_user_request"],
+        )
+        self.assertEqual(source_bundle["sources"][0]["content"], request)
+        serialized_sources = json.dumps(source_bundle["sources"], ensure_ascii=False)
+        self.assertNotIn("explicit_user_document", serialized_sources)
+        self.assertNotIn("OPEN_SPEC_DISCOVERY_SENTINEL", serialized_sources)
+        self.assertNotIn("openspec/specs/payment-routing/spec.md", serialized_sources)
+
     def test_conversational_improve_fails_before_preflight_when_diagram_is_ambiguous(self):
         root, workspace, cli = self.create_workspace()
         (workspace / "one.drawio").write_text(clean_diagram(), encoding="utf-8")
@@ -242,6 +276,21 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertEqual(
             resolution["review_handoff"]["artifact_sha256"],
             hashlib.sha256(reviewed.read_bytes()).hexdigest(),
+        )
+        source_bundle, _ = orchestrator.lifecycle_v2.latest_document(Path(result["run_dir"]), "source-bundle")
+        handoff = source_bundle["evidence"]["eligible_review_handoff"]
+        self.assertIsNotNone(handoff)
+        self.assertEqual(
+            handoff["artifact"]["path"],
+            "inputs/review-handoff/artifact.drawio",
+        )
+        self.assertEqual(
+            handoff["verdict"]["path"],
+            "inputs/review-handoff/verdict.json",
+        )
+        self.assertNotIn(
+            "explicit_user_document",
+            [source["kind"] for source in source_bundle["sources"]],
         )
 
     def test_bare_improve_falls_back_to_only_workspace_diagram(self):
@@ -610,6 +659,14 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertTrue(target.is_file())
         self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), hashlib.sha256(accepted.read_bytes()).hexdigest())
 
+        resumed_again = orchestrator.resume_run(run_dir, "approve", "", workspace, cli)
+        self.assertIn(resumed_again["status"], {"completed", "already_applied"})
+        self.assertEqual(resumed_again["accepted_artifact"]["path"], resumed["accepted_artifact"]["path"])
+        self.assertEqual(
+            hashlib.sha256(Path(resumed_again["accepted_artifact"]["path"]).read_bytes()).hexdigest(),
+            hashlib.sha256(target.read_bytes()).hexdigest(),
+        )
+
         trace = orchestrator.trace_run(run_dir, workspace)
         self.assertTrue(trace["valid"])
         self.assertEqual(
@@ -620,6 +677,214 @@ class DiagramOrchestratorTests(unittest.TestCase):
                 ("reviewer", "vllm/DeepSeek-V4-Flash-262k", False),
             ],
         )
+
+    def test_create_with_explicit_roadmap_source_uses_roadmap_local_and_publishes(self):
+        root, workspace, _ = self.create_workspace()
+        target = workspace / "roadmap.drawio"
+        source = workspace / "roadmap.yaml"
+        source.write_text(
+            (ROOT / "tests" / "fixtures" / "roadmap" / "basic.yaml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        cli = root / "roadmap-gigacode.py"
+        cli.write_text(
+            FAKE_GIGACODE.replace('"diagram_type": "generic"', '"diagram_type": "roadmap"', 1),
+            encoding="utf-8",
+        )
+        cli.chmod(0o755)
+
+        created = self.run_host(
+            "create",
+            "--workspace",
+            workspace,
+            "--cli",
+            cli,
+            "--diagram",
+            target,
+            "--renderer-source",
+            source,
+            "--request",
+            "Create a roadmap diagram from an explicit roadmap source.",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        result = json.loads(created.stdout)
+        self.assertEqual(result["status"], "awaiting_human")
+        self.assertEqual(result["checkpoint"]["kind"], "final_acceptance")
+        self.assertEqual(result["command_resolution"]["renderer_source"], str(source.resolve()))
+        workflow = json.loads((Path(result["run_dir"]) / "workflow.json").read_text(encoding="utf-8"))
+        renderer = workflow["renderer_adapter"]
+        self.assertEqual(renderer["adapter_id"], "roadmap-local")
+        self.assertFalse(renderer["fallback"])
+        self.assertEqual(renderer["validation_profile"], "roadmap")
+        self.assertEqual(renderer["requested_semantic_diagram_type"], "roadmap")
+        self.assertTrue(renderer["source_path"].endswith(".json"))
+        self.assertIn("/inputs/renderer-sources/", renderer["source_path"])
+        self.assertEqual(renderer["source_binding"]["kind"], "explicit_user_document")
+        rendered_source = json.loads(Path(renderer["source_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(
+            renderer["source_binding"]["content_sha256"],
+            hashlib.sha256(
+                json.dumps(
+                    rendered_source,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+        self.assertTrue((Path(result["run_dir"]) / "attempts" / "baseline" / "validation-report.json").is_file())
+
+        resumed = self.run_host(
+            "resume",
+            "--workspace",
+            workspace,
+            "--cli",
+            cli,
+            "--run",
+            result["run_id"],
+            "approve",
+        )
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        resumed_result = json.loads(resumed.stdout)
+        self.assertEqual(resumed_result["status"], "completed")
+        self.assertTrue(target.is_file())
+        trace = orchestrator.trace_run(result["run_dir"], workspace)
+        self.assertTrue(trace["valid"])
+        self.assertTrue(all(not role["fallback_used"] for role in trace["roles"]))
+
+    def test_publication_recovery_continues_an_interrupted_publish_transaction(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "recoverable.drawio"
+
+        created = orchestrator.start_run(
+            "create",
+            target,
+            "Create a publication recovery diagram.",
+            workspace,
+            cli,
+            run_id="recoverable-run",
+            max_iterations=1,
+        )
+        self.assertEqual(created["checkpoint"]["kind"], "final_acceptance")
+        run_dir = workspace / ".diagram-runs" / "recoverable-run"
+
+        with mock.patch.object(
+            orchestrator.lifecycle_v2,
+            "_continue_publication",
+            side_effect=RuntimeError("simulated publication crash"),
+        ):
+            with self.assertRaises(RuntimeError):
+                orchestrator.resume_run(run_dir, "approve", "", workspace, cli)
+
+        replayed = orchestrator.lifecycle_v2.replay(run_dir)
+        self.assertTrue(replayed["valid"])
+        self.assertIn("publication-transaction", replayed["latest_snapshots"])
+
+        recovered = orchestrator.lifecycle_v2.recover_publication(run_dir)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered["status"], "committed")
+        self.assertTrue(target.is_file())
+        self.assertEqual(
+            hashlib.sha256(target.read_bytes()).hexdigest(),
+            recovered["published_sha256"],
+        )
+
+    def test_publication_recovery_commits_bytes_published_transaction_without_rewriting_target(self):
+        _, workspace, _ = self.create_workspace()
+        target = workspace / "bytes-published.drawio"
+        run_dir = workspace / ".diagram-runs" / "bytes-published-run"
+        orchestrator.lifecycle_v2.initialize(
+            run_dir=run_dir,
+            workspace=workspace,
+            target=target,
+            run_id="bytes-published-run",
+            mode="create",
+            request="Create a bytes-published recovery diagram.",
+            extension_root=ROOT,
+            explicit_documents=(),
+        )
+        accepted = run_dir / "accepted" / "baseline.drawio"
+        accepted.parent.mkdir(parents=True, exist_ok=True)
+        accepted.write_text(clean_diagram(), encoding="utf-8")
+        orchestrator.supervisor.run_validation(accepted, run_dir, attempt_id="baseline")
+        report = run_dir / "attempts" / "baseline" / "validation-report.json"
+        legacy_receipt = run_dir / "attempts" / "baseline" / "validation-receipt.json"
+        receipt_v2, receipt_v2_path = orchestrator.lifecycle_v2.mirror_validation_receipt(
+            run_dir,
+            legacy_receipt_path=legacy_receipt,
+        )
+        receipt_v2["run_id"] = "bytes-published-run"
+        receipt_v2_path.write_text(json.dumps(receipt_v2, ensure_ascii=False), encoding="utf-8")
+        receipt_v2_verification = orchestrator.lifecycle_v2.verify_v2_receipt(run_dir, receipt_v2_path)
+        accepted_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(accepted, root=run_dir)
+        report_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(report, root=run_dir)
+        receipt_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(receipt_v2_path, root=run_dir)
+        orchestrator.lifecycle_v2.transition(
+            run_dir,
+            "final_review",
+            accepted_artifact=accepted_descriptor,
+            validation_report=report_descriptor,
+            validation_receipt=receipt_descriptor,
+        )
+        workflow, _ = orchestrator.lifecycle_v2.latest_document(run_dir, "workflow")
+        workflow["status"] = "final_review"
+        workflow["accepted_artifact"] = accepted_descriptor
+        workflow["accepted_validation"] = {
+            "report": str(report.resolve()),
+            "receipt": str(receipt_v2_path.resolve()),
+            "report_sha256": report_descriptor["sha256"],
+            "receipt_sha256": receipt_descriptor["sha256"],
+            "strict_passed": receipt_v2_verification["strict_passed"],
+        }
+        workflow["validation_receipt_v2"] = receipt_descriptor
+        orchestrator.write_workflow(run_dir, workflow)
+
+        real_advance_publication = orchestrator.lifecycle_v2._advance_publication
+
+        def advance_publication_with_crash(run_dir, publication, *, status, event_type, payload=None):
+            result = real_advance_publication(
+                run_dir,
+                publication,
+                status=status,
+                event_type=event_type,
+                payload=payload,
+            )
+            if status == "bytes_published":
+                raise RuntimeError("simulated publication crash after bytes were written")
+            return result
+
+        with mock.patch.object(
+            orchestrator.lifecycle_v2,
+            "_advance_publication",
+            side_effect=advance_publication_with_crash,
+        ):
+            with self.assertRaises(RuntimeError):
+                orchestrator.lifecycle_v2.publish_transaction(
+                    run_dir,
+                    accepted_artifact=accepted,
+                    validation_report=report,
+                    validation_receipt=receipt_v2_path,
+                    decision="approve",
+                )
+
+        replayed = orchestrator.lifecycle_v2.replay(run_dir)
+        self.assertTrue(replayed["valid"])
+        publication, _ = orchestrator.lifecycle_v2.latest_document(run_dir, "publication-transaction", replayed)
+        self.assertEqual(publication["status"], "bytes_published")
+        target_hash_before = hashlib.sha256(target.read_bytes()).hexdigest()
+        target_mtime_before = target.stat().st_mtime_ns
+
+        trace_before = orchestrator.trace_run(run_dir, workspace)
+        self.assertTrue(trace_before["control_plane_v2"]["valid"])
+        self.assertTrue(trace_before["control_plane_v2"]["publication_valid"])
+        self.assertEqual(trace_before["control_plane_v2"]["status"], "verified")
+
+        recovered = orchestrator.lifecycle_v2.recover_publication(run_dir)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered["status"], "committed")
+        self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), target_hash_before)
+        self.assertEqual(target.stat().st_mtime_ns, target_mtime_before)
+        self.assertEqual(recovered["published_sha256"], target_hash_before)
 
     def test_improve_pauses_for_semantic_approval_without_overwriting_source(self):
         root, workspace, cli = self.create_workspace()
@@ -669,6 +934,41 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertFalse(trace["valid"])
         self.assertEqual(trace["status"], "tampered_or_incomplete")
         self.assertTrue(any(not item["valid"] for item in trace["artifact_checks"]))
+
+    def test_trace_does_not_attempt_recovery_or_mutate_run_artifacts(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "read-only-trace.drawio"
+
+        orchestrator.start_run(
+            "create",
+            target,
+            "Create a read-only trace diagram.",
+            workspace,
+            cli,
+            run_id="read-only-trace-run",
+            max_iterations=1,
+        )
+        run_dir = workspace / ".diagram-runs" / "read-only-trace-run"
+        manifest = run_dir / "run-manifest.jsonl"
+        workflow = run_dir / "workflow.json"
+        manifest_before = manifest.read_text(encoding="utf-8")
+        workflow_before = workflow.read_text(encoding="utf-8")
+        manifest_mtime_before = manifest.stat().st_mtime_ns
+        workflow_mtime_before = workflow.stat().st_mtime_ns
+
+        with mock.patch.object(
+            orchestrator.supervisor,
+            "recover_pending_transaction",
+            side_effect=AssertionError("trace must not recover transactions"),
+        ):
+            trace = orchestrator.trace_run(run_dir, workspace)
+
+        self.assertTrue(trace["integrity_valid"])
+        self.assertEqual(trace["status"], "verified")
+        self.assertEqual(manifest.read_text(encoding="utf-8"), manifest_before)
+        self.assertEqual(workflow.read_text(encoding="utf-8"), workflow_before)
+        self.assertEqual(manifest.stat().st_mtime_ns, manifest_mtime_before)
+        self.assertEqual(workflow.stat().st_mtime_ns, workflow_mtime_before)
 
     def test_trace_verifies_failed_turn_limit_capture_and_isolation_evidence(self):
         root, workspace, _ = self.create_workspace()
@@ -777,7 +1077,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'fallback approval', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}})\n"
             "elif model == 'vllm/Qwen3.6-35B-262k':\n"
             "    requires_human = payload['mode'] == 'improve'\n"
-            "    emit_stream(model, {'schema_version': 1, 'role': 'semantic_analyst', 'status': 'needs_human' if requires_human else 'ok', 'result': {'mode': payload['mode'], 'diagram_type': 'flowchart', 'title': f\"Test {payload['mode']} plan\", 'direction': 'LR', 'nodes': [{'id': 'start', 'label': 'Start', 'semantic_type': 'start'}, {'id': 'end', 'label': 'End', 'semantic_type': 'end'}], 'edges': [{'id': 'flow', 'source_id': 'start', 'target_id': 'end', 'label': 'flow', 'relationship': 'sequence'}], 'source_refs': [], 'assumptions': [], 'semantic_changes': ['Add approval branch'] if requires_human else [], 'requires_human': requires_human}})\n"
+            "    emit_stream(model, {'schema_version': 2, 'role': 'semantic_analyst', 'status': 'needs_human' if requires_human else 'ok', 'result': {'mode': payload['mode'], 'diagram_type': 'generic', 'title': f\"Test {payload['mode']} analysis\", 'direction': 'LR', 'pages': [{'page_id': 'page-1', 'name': 'Page 1', 'nodes': [{'stable_identity': {'page_id': 'page-1', 'cell_id': 'node-a'}, 'label': 'A', 'semantic_type': 'task', 'parent': None, 'style_hint': None}, {'stable_identity': {'page_id': 'page-1', 'cell_id': 'node-b'}, 'label': 'B', 'semantic_type': 'task', 'parent': None, 'style_hint': None}], 'edges': []}], 'assumptions': [], 'requires_human': requires_human, 'human_questions': ['Add approval branch'] if requires_human else []}})\n"
             "elif model == 'vllm/DeepSeek-V4-Flash-262k':\n"
             "    candidate = payload.get('candidate')\n"
             "    if isinstance(candidate, dict) and isinstance(candidate.get('artifact'), dict):\n"
