@@ -83,4 +83,4 @@
 - [x] 12.2 Implement Reviewer analytical output normalization with preserved raw and binding evidence
 - [x] 12.3 Persist review workflow state and resolve trace references by directory or persisted run ID
 - [x] 12.4 Add corporate-export regressions, verifier markers, and operator documentation
-- [ ] 12.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.12` ZIP
+- [x] 12.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.12` ZIP
