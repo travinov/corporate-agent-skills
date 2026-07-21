@@ -187,7 +187,7 @@ class DiagramHostTests(unittest.TestCase):
                 """#!/usr/bin/env python3
 import json, sys
 if '--help' in sys.argv:
-    print('GigaCode --model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')
+    print('GigaCode --model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')
     raise SystemExit(0)
 if '--version' in sys.argv:
     print('26.5.17-test')

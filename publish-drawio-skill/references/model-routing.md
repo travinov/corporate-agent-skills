@@ -52,7 +52,9 @@ The adapter probes the CLI for the required headless/model/output/approval and
 isolation flags, builds an argument array, disables extensions with
 `--extensions none`, supplies the immutable role contract through
 `--system-prompt`, removes every core tool from discovery with a non-empty
-`--core-tools` sentinel, excludes fork/MCP tools with `--exclude-tools`, applies
+`--core-tools` sentinel, passes `--allowed-mcp-server-names ""` so globally
+configured MCP servers are filtered before discovery, excludes fork/MCP tools
+with `--exclude-tools` as defense in depth, applies
 `--max-session-turns`, uses non-interactive default approval, captures output,
 and never executes model output. The canonical runtime JSON alone is supplied
 on stdin. Never concatenate a shell command and never interpolate diagram
@@ -73,10 +75,18 @@ python3 scripts/agent_runtime.py reviewer reviewer-input.json \
 
 The verified upstream Qwen Code 0.13.1 contract supports `--model`, `--prompt`,
 `--output-format json`, `--output-format stream-json`, `--approval-mode default`, `--extensions none`,
-`--system-prompt`, `--max-session-turns`, `--core-tools`, and `--exclude-tools`. Corporate
+`--system-prompt`, `--max-session-turns`, `--core-tools`,
+`--allowed-mcp-server-names`, and `--exclude-tools`. Corporate
 GigaCode must advertise the same required isolation controls before a role is
 started. It also supports `--auth-type gigacode`; the adapter adds that auth
 type when CLI help identifies GigaCode.
+
+The empty value after `--allowed-mcp-server-names` is intentional and must stay
+as a separate argv item. In Qwen Code 0.13.1, a present option with that empty
+value creates an empty MCP allowlist; therefore Jira, Bitbucket, and other MCP
+servers configured in the parent profile do not contribute tool schemas to the
+child role. If the corporate fork does not advertise this flag, preflight and
+the installer verifier fail before any model process starts.
 
 Do not use `--approval-mode plan` for these tool-free JSON roles. Qwen Code
 0.13.1 injects a Plan-mode reminder that requires the model to call

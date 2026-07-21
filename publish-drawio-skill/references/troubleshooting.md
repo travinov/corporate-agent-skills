@@ -14,6 +14,7 @@ Read this when something looks wrong in the output (rendering, export, layout, e
 | Edges crossing through shapes | Add waypoints, distribute entry/exit points, or increase spacing |
 | Arrowhead overlaps bend | Final edge segment before target must be ≥20px — increase spacing or add waypoints |
 | Iteration loop never ends | After 5 rounds, suggest user open .drawio in draw.io desktop for fine-tuning |
+| Isolated role calls global Jira/Bitbucket MCP and then reaches exit 53 | Reinstall a release whose role command contains `--allowed-mcp-server-names ""`. Run the bundled verifier; it must confirm the flag before a role starts. Do not resume a run that failed before its first checkpoint; start a fresh `/drawio:review` or `/drawio:improve`. |
 | `command not found: draw.io` on macOS | The command is usually `drawio` (no dot). Use `drawio --version`, not `draw.io --version`. The dot-name exists inside the `.app` bundle (`/Applications/draw.io.app/Contents/MacOS/draw.io`) and on Windows (`draw.io.exe`). In corporate environments, install draw.io Desktop from SberUserSoft first. |
 | Export command not found on macOS | Try full path `/Applications/draw.io.app/Contents/MacOS/draw.io` |
 | Corporate / Windows install path is non-standard | Set `DRAWIO_BIN` to the exact executable path, or create `~/.drawio-skill/config.json` / `%USERPROFILE%\.drawio-skill\config.json` with `{"drawio_bin": "C:\\Program Files\\draw.io\\draw.io.exe"}`. Try `%LOCALAPPDATA%\Programs\draw.io\draw.io.exe` for per-user installs. |

@@ -17,7 +17,11 @@ The lifecycle host SHALL treat every isolated Supervisor, Semantic Analyst, Repa
 
 #### Scenario: Denied tools consume the bounded turn budget
 - **WHEN** a corporate model would repeatedly select denied tools instead of returning its JSON decision
-- **THEN** the role invocation advertises no core tools, remains bounded, and preserves the failed runtime if the model still exhausts the limit
+- **THEN** the role invocation advertises no core tools or globally configured MCP servers, remains bounded, and preserves the failed runtime if the model still exhausts the limit
+
+#### Scenario: Supervisor parent profile contains Jira or Bitbucket MCP
+- **WHEN** the interactive GigaCode session has global MCP servers but starts an isolated Supervisor role
+- **THEN** the role process filters all MCP servers before discovery and proceeds directly to its bounded JSON decision without selecting an MCP tool
 
 #### Scenario: Plan mode conflicts with the empty tool registry
 - **WHEN** Qwen Code Plan mode would instruct the isolated model to finish through `exit_plan_mode`

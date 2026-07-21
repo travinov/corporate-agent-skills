@@ -2,7 +2,7 @@
 
 `agent_runtime.py` currently starts a headless GigaCode process with a generic `--prompt` and sends the role definition, output schema, and input together on stdin. The captured GigaCode 26.5.17 / Qwen Code 0.13.1 event stream proves that this process loaded the installed Draw.io extension, exposed `diagram-supervisor`, and let the root model invoke that same agent recursively. Plan mode still allows read-only and agent tools, so it did not prevent the 99-call loop.
 
-Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--extensions none`, `--system-prompt`, `--max-session-turns`, and `--exclude-tools`. The extension must capability-detect these controls because GigaCode is a fork and must fail closed if its supported surface differs.
+Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--extensions none`, `--system-prompt`, `--max-session-turns`, `--exclude-tools`, and `--allowed-mcp-server-names`. In that runtime, passing the MCP option with one empty value creates an empty allowlist and filters every configured MCP server before tool discovery. The extension must capability-detect these controls because GigaCode is a fork and must fail closed if its supported surface differs.
 
 ## Goals / Non-Goals
 
@@ -35,6 +35,7 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 12. **Treat `{{args}}` as a transport string, not argv.** Qwen shell-escapes a custom-command `{{args}}` expansion as one argument. Each command template assigns that value to `DRAWIO_COMMAND_ARGS`; the Python host parses it with `shlex.split`, normalizes a leading Draw.io `@` reference, rejects host-owned options and `--`, then inserts the reconstructed user tokens before fixed host arguments. No input is evaluated as shell code.
 13. **Keep generated commands executable.** `next_commands` uses the same documented grammar as the bridge. A review result carries its selected diagram into the improve command, and explicit resume/trace commands remain valid even when multiple diagrams or runs exist.
 14. **Persist a zero-argument review handoff.** A bare improve command first selects the latest completed read-only review whose artifact is still inside the workspace and whose current SHA-256 matches the reviewed hash. If no eligible handoff exists, the only root-level `.drawio` is deterministic; otherwise the host returns selection-required without starting a run. The host supplies the stable default request `Исправь найденные валидатором и Reviewer замечания`, records how both values were resolved, and retains explicit arguments as overrides.
+15. **Remove global MCP servers before discovery.** Pass `--allowed-mcp-server-names` with one empty string on every isolated role invocation. Qwen Code 0.13.1 interprets the present-but-empty CLI allowlist as allowing no MCP servers, so globally configured Jira, Bitbucket, and other MCP tool schemas never enter the child role registry. Require the flag in capability detection and installer verification; retain `mcp__*` exclusion plus event auditing as defense in depth.
 
 ## Risks / Trade-offs
 
@@ -50,11 +51,13 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 - **Internal tokenization could reintroduce shell injection** -> use `shlex.split` only as a parser, never pass its result through `eval` or `shell=True`, reject host-owned options, and keep subprocess calls as argument arrays.
 - **Qwen changes custom-command escaping** -> package tests cover the documented one-value transport and verifier checks every command template for the bridge marker; corporate retest remains required.
 - **A previous review points at stale or moved content** -> verify workspace containment, run binding, reviewer completion, and current artifact hash before accepting the handoff; otherwise fall back only when one workspace diagram is unambiguous.
+- **The GigaCode fork omits or changes the empty MCP allowlist flag** -> require the exact option in CLI capability detection and installation verification, fail before invoking a role, and require a corporate runtime retest before acceptance.
+- **A fork exposes an MCP tool despite the empty allowlist** -> retain wildcard MCP exclusion and reject every observed role tool call through the existing event audit.
 
 ## Migration Plan
 
-1. Ship the follow-up as a new side-by-side `1.23.0-corporate.8` release ZIP and preserve
-   `1.23.0-corporate.7` plus the earlier packages for rollback.
+1. Ship the follow-up as a new side-by-side `1.23.0-corporate.9` release ZIP and preserve
+   `1.23.0-corporate.8` plus the earlier packages for rollback.
 2. Reinstall from the approved local archive on the corporate Mac.
 3. Re-run the captured review/improve argument cases, then the same `/drawio:create` smoke test, and inspect the per-attempt `runtime-output.jsonl` captures plus `/drawio:trace`.
 4. Roll back by reinstalling the previous ZIP if capability detection reports that the corporate fork lacks a required flag.

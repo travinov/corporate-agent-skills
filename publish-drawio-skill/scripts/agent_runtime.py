@@ -35,6 +35,7 @@ SAFE_ENV_KEYS = {
 ROLE_MAX_SESSION_TURNS = 4
 ROLE_APPROVAL_MODE = "default"
 ROLE_CORE_TOOL_SENTINEL = "__drawio_isolated_role_has_no_tools__"
+ROLE_ALLOWED_MCP_SERVERS = ()
 ROLE_EXCLUDED_TOOLS = (
     "agent",
     "task",
@@ -76,6 +77,7 @@ def role_isolation_controls():
         "approval_mode": ROLE_APPROVAL_MODE,
         "extensions": ["none"],
         "core_tools": [ROLE_CORE_TOOL_SENTINEL],
+        "allowed_mcp_servers": list(ROLE_ALLOWED_MCP_SERVERS),
         "excluded_tools": list(ROLE_EXCLUDED_TOOLS),
         "max_session_turns": ROLE_MAX_SESSION_TURNS,
     }
@@ -184,6 +186,10 @@ def build_gemini_command(
         "--system-prompt", system_prompt,
         "--max-session-turns", str(ROLE_MAX_SESSION_TURNS),
         "--core-tools", ROLE_CORE_TOOL_SENTINEL,
+        # Qwen Code 0.13.1 treats a present flag with one empty value as an
+        # explicit empty allowlist. This removes globally configured MCP
+        # servers before their tool schemas are advertised to the role.
+        "--allowed-mcp-server-names", "",
         "--exclude-tools", ",".join(ROLE_EXCLUDED_TOOLS),
         "--prompt", (
             "Process the canonical runtime JSON supplied on standard input. "
@@ -279,7 +285,7 @@ def detect_cli_capabilities(cli):
     help_text = completed.stdout + completed.stderr
     isolation_required = (
         "--extensions", "--system-prompt", "--max-session-turns", "--core-tools",
-        "--exclude-tools",
+        "--allowed-mcp-server-names", "--exclude-tools",
     )
     base_required = (
         "--prompt", "--output-format", "--approval-mode", *isolation_required,

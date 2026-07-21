@@ -34,7 +34,7 @@ import sys
 
 HELP = (
     "GigaCode --model --prompt --output-format --approval-mode --auth-type "
-    "--extensions --system-prompt --max-session-turns --core-tools --exclude-tools"
+    "--extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools"
 )
 
 
@@ -67,6 +67,11 @@ if "--help" in sys.argv:
 if "--version" in sys.argv:
     print("26.5.17-test")
     raise SystemExit(0)
+
+mcp_flag = "--allowed-mcp-server-names"
+if mcp_flag not in sys.argv or sys.argv[sys.argv.index(mcp_flag) + 1] != "":
+    print("global MCP registry was not disabled", file=sys.stderr)
+    raise SystemExit(53)
 
 payload = runtime_input()
 model = sys.argv[sys.argv.index("--model") + 1]
@@ -548,7 +553,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
             f"#!{sys.executable}\n"
             "import json, sys\n"
             "if '--help' in sys.argv:\n"
-            "    print('GigaCode --model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+            "    print('GigaCode --model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
             "    raise SystemExit(0)\n"
             "if '--version' in sys.argv:\n"
             "    print('26.5.17-test')\n"
@@ -611,7 +616,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
             f"#!{sys.executable}\n"
             "import json\n"
             "import sys\n"
-            "HELP = 'GigaCode --model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools'\n"
+            "HELP = 'GigaCode --model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools'\n"
             "def runtime_input():\n"
             "    raw = sys.stdin.read()\n"
             "    if not raw.strip():\n"

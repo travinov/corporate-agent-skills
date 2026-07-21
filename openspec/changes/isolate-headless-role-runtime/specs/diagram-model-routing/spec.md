@@ -17,7 +17,11 @@ The extension SHALL resolve Supervisor, Reviewer, Repair, and Semantic Analyst m
 
 #### Scenario: Isolated role excludes extension context and tools
 - **WHEN** the main host invokes an isolated diagram role
-- **THEN** the headless process disables installed extensions, supplies the role contract as a system prompt, uses default non-interactive approval without a Plan-mode reminder, uses a non-empty allowlist sentinel that removes every core tool from the model registry, excludes fork-specific and MCP tools, and applies a bounded turn limit
+- **THEN** the headless process disables installed extensions, supplies the role contract as a system prompt, uses default non-interactive approval without a Plan-mode reminder, uses a non-empty allowlist sentinel that removes every core tool from the model registry, uses an explicitly empty MCP-server allowlist that removes globally configured MCP servers before discovery, excludes fork-specific and MCP tools as defense in depth, and applies a bounded turn limit
+
+#### Scenario: Corporate profile configures global MCP servers
+- **WHEN** Jira, Bitbucket, or another MCP server is configured in the parent GigaCode profile
+- **THEN** the isolated role starts with no allowed MCP servers and the configured server names and tool schemas are absent from the child event stream
 
 #### Scenario: Tool-free role runs on Qwen Code 0.13.1
 - **WHEN** the isolated role starts on a runtime where Plan approval injects a reminder requiring `exit_plan_mode`
@@ -28,8 +32,12 @@ The extension SHALL resolve Supervisor, Reviewer, Repair, and Semantic Analyst m
 - **THEN** the role fails closed without publishing its output or invoking the next lifecycle role
 
 #### Scenario: Required isolation controls are unavailable
-- **WHEN** the CLI does not advertise the required extension-disable, system-prompt, core-tool allowlist, tool-exclusion, or turn-limit control
+- **WHEN** the CLI does not advertise the required extension-disable, system-prompt, core-tool allowlist, empty MCP-server allowlist, tool-exclusion, or turn-limit control
 - **THEN** capability detection fails before model execution with an actionable diagnostic
+
+#### Scenario: MCP tool still leaks through a fork
+- **WHEN** the isolated event stream contains an MCP tool call despite the empty server allowlist
+- **THEN** the wildcard deny and zero-tool event audit fail the role closed without accepting its JSON result or invoking a fallback
 
 #### Scenario: Isolated role exits before returning a decision
 - **WHEN** the CLI exits non-zero, reports `FatalTurnLimitedError`, or returns invalid role output

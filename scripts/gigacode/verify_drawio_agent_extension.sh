@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.8}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.9}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -42,7 +42,7 @@ extensions_supports_validate() {
 verify_role_runtime_capabilities() {
   local help_text flag missing=()
   help_text="$($GIGACODE_BIN --help 2>&1 || true)"
-  for flag in --model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools; do
+  for flag in --model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools; do
     grep -Fq -- "$flag" <<<"$help_text" || missing+=("$flag")
   done
   ((${#missing[@]} == 0)) || die "GigaCode CLI lacks required isolated-role flags: ${missing[*]}"
@@ -139,6 +139,7 @@ def verify_tree(root, label):
     for relative in (
         "scripts/diagram_host.py",
         "scripts/diagram_orchestrator.py",
+        "scripts/agent_runtime.py",
         "scripts/command_ux.py",
         "data/reviewer-audit-input.v1.schema.json",
         "data/supervisor-decision.v1.schema.json",
@@ -167,6 +168,14 @@ def verify_tree(root, label):
     review_host = (root / "scripts" / "diagram_host.py").read_text(encoding="utf-8")
     if '"improve": "/drawio:improve"' not in review_host:
         fail(f"Missing {label} zero-argument review-to-improve handoff")
+    agent_runtime = (root / "scripts" / "agent_runtime.py").read_text(encoding="utf-8")
+    for marker in (
+        '"--allowed-mcp-server-names", ""',
+        '"allowed_mcp_servers": list(ROLE_ALLOWED_MCP_SERVERS)',
+        '"--allowed-mcp-server-names", "--exclude-tools"',
+    ):
+        if marker not in agent_runtime:
+            fail(f"Missing {label} empty MCP discovery marker: {marker}")
     manifest = load_json(root / "gemini-extension.json")
     if manifest.get("name") != "publish-drawio-skill":
         fail(f"Unexpected {label} manifest name: {manifest.get('name')!r}")

@@ -20,7 +20,9 @@ interactive session only invokes the command and presents its result.
 Every isolated role is a bounded, tool-free JSON decision. The adapter disables
 installed extensions for that child process, supplies a nonexistent non-empty
 `--core-tools` allowlist so no core tool is advertised to the model, retains a
-deny list for fork/MCP tools, and rejects the raw event stream if any tool call
+deliberately empty `--allowed-mcp-server-names` allowlist so global MCP servers
+are removed before discovery, retains a deny list for fork/MCP tools, and
+rejects the raw event stream if any tool call
 or Draw.io custom agent/command still appears. A role must not ask for confirmation inside the
 headless child; required human input is returned as a typed checkpoint for the
 main lifecycle host.

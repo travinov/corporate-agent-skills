@@ -1849,7 +1849,7 @@ class AgentRuntimeTests(unittest.TestCase):
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "if '--help' in sys.argv:\n"
-            "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+            "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
             "    raise SystemExit(0)\n"
             "def emit(value):\n"
             "    model=sys.argv[sys.argv.index('--model')+1]\n"
@@ -2070,7 +2070,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json, sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "model = sys.argv[sys.argv.index('--model') + 1]\n"
                 "payload = json.loads(sys.stdin.read())\n"
@@ -2133,6 +2133,40 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertTrue(output_path.exists())
             self.assertEqual(json.loads(output_path.read_text())["role"], "supervisor")
 
+    def test_global_mcp_servers_are_removed_before_role_discovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = self.fake_cli(
+                temp / "global-mcp-cli",
+                "flag='--allowed-mcp-server-names'\n"
+                "if flag not in sys.argv or sys.argv[sys.argv.index(flag)+1] != '':\n"
+                "    print(json.dumps([{'type':'assistant','message':{'model':sys.argv[sys.argv.index('--model')+1],'content':[{'type':'tool_use','name':'mcp__AtlassianBitbucket__jira_get_issue','input':{}}]}}]))\n"
+                "    print('FatalTurnLimitedError after denied global MCP tool', file=sys.stderr)\n"
+                "    raise SystemExit(53)\n"
+                "payload=json.loads(sys.stdin.read())\n"
+                "d=payload['candidate']['sha256']\n"
+                "emit({'schema_version':1,'verdict_id':'mcp-isolated','run_id':payload['run_id'],'candidate_sha256':d,'report_sha256':payload['validation_report']['sha256'],'receipt_sha256':payload['validation_receipt']['sha256'],'verdict':'approve','reviewed_at':'2026-07-21T00:00:00Z','findings':[]})\n",
+            )
+            result = agent_runtime.invoke_role(
+                "reviewer",
+                write_json(temp / "input.json", self.reviewer_input()),
+                temp / "verdict.json",
+                cli=str(cli),
+                run_dir=temp / "run",
+            )
+
+            flag_index = result["command"].index("--allowed-mcp-server-names")
+            self.assertEqual(result["command"][flag_index + 1], "")
+            self.assertEqual(result["isolation_controls"]["allowed_mcp_servers"], [])
+            self.assertEqual(
+                result["runtime_metadata"]["isolation_proof"]["tool_calls"], 0
+            )
+            self.assertTrue(result["runtime_metadata"]["isolation_proof"]["verified"])
+            self.assertEqual(
+                json.loads((temp / "verdict.json").read_text())["verdict"],
+                "approve",
+            )
+
     def test_supervisor_turn_limit_fallback_failure_is_terminal(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
@@ -2141,7 +2175,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json, sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "model = sys.argv[sys.argv.index('--model') + 1]\n"
                 "print('\\n'.join([\n"
@@ -2190,7 +2224,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json, sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "model = sys.argv[sys.argv.index('--model') + 1]\n"
                 "print('\\n'.join([\n"
@@ -2324,7 +2358,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json, sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "payload=json.loads(sys.stdin.read())\n"
                 "d=payload['candidate']['sha256']\n"
@@ -2355,7 +2389,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "raise SystemExit(99)\n",
             )
@@ -2392,6 +2426,12 @@ class AgentRuntimeTests(unittest.TestCase):
                 result["command"][result["command"].index("--core-tools") + 1],
                 agent_runtime.ROLE_CORE_TOOL_SENTINEL,
             )
+            self.assertEqual(
+                result["command"][
+                    result["command"].index("--allowed-mcp-server-names") + 1
+                ],
+                "",
+            )
             excluded = result["command"][
                 result["command"].index("--exclude-tools") + 1
             ].split(",")
@@ -2417,6 +2457,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 result["isolation_controls"]["core_tools"],
                 [agent_runtime.ROLE_CORE_TOOL_SENTINEL],
             )
+            self.assertEqual(result["isolation_controls"]["allowed_mcp_servers"], [])
             self.assertEqual(
                 result["isolation_controls"]["excluded_tools"],
                 list(agent_runtime.ROLE_EXCLUDED_TOOLS),
@@ -2435,7 +2476,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json, sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "if '--version' in sys.argv:\n"
                 "    print('26.5.17-test')\n"
@@ -2492,6 +2533,10 @@ class AgentRuntimeTests(unittest.TestCase):
                 [agent_runtime.ROLE_CORE_TOOL_SENTINEL],
             )
             self.assertEqual(
+                finished["payload"]["isolation_controls"]["allowed_mcp_servers"],
+                [],
+            )
+            self.assertEqual(
                 finished["payload"]["isolation_controls"]["excluded_tools"],
                 list(agent_runtime.ROLE_EXCLUDED_TOOLS),
             )
@@ -2502,13 +2547,13 @@ class AgentRuntimeTests(unittest.TestCase):
         for executable, help_text in (
             (
                 "gigacode",
-                "--model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools",
+                "--model --prompt --output-format --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools",
             ),
             (
                 "corporate-wrapper",
                 "GigaCode - CLI --model --prompt --output-format --approval-mode "
                 "--auth-type choices: gigacode --extensions --system-prompt "
-                "--max-session-turns --core-tools --exclude-tools",
+                "--max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools",
             ),
         ):
             with self.subTest(executable=executable), tempfile.TemporaryDirectory() as temp:
@@ -2541,7 +2586,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import sys\n"
                 "if '--help' in sys.argv:\n"
-                "    print('GigaCode --model --prompt --output-format --approval-mode --auth-type gigacode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    print('GigaCode --model --prompt --output-format --approval-mode --auth-type gigacode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools')\n"
                 "    raise SystemExit(0)\n"
                 "raise SystemExit(99)\n",
             )
@@ -2575,6 +2620,35 @@ class AgentRuntimeTests(unittest.TestCase):
                     "reviewer", input_path, temp / "output.json",
                     cli=str(cli), dry_run=True,
                 )
+
+    def test_role_does_not_start_without_empty_mcp_allowlist_capability(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            executed = temp / "executed"
+            cli = write_text(
+                temp / "mcp-limited-cli",
+                f"#!{sys.executable}\n"
+                "import pathlib, sys\n"
+                "if '--help' in sys.argv:\n"
+                "    print('--model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    raise SystemExit(0)\n"
+                f"pathlib.Path({str(executed)!r}).write_text('started')\n",
+            )
+            os.chmod(cli, 0o755)
+
+            with self.assertRaisesRegex(
+                supervisor.SupervisorError,
+                "--allowed-mcp-server-names",
+            ):
+                agent_runtime.invoke_role(
+                    "reviewer",
+                    write_json(temp / "input.json", {}),
+                    temp / "output.json",
+                    cli=str(cli),
+                    dry_run=True,
+                )
+
+            self.assertFalse(executed.exists())
 
     def test_cli_end_to_end_supervisor_sequence_creates_all_evidence(self):
         with tempfile.TemporaryDirectory() as temp:

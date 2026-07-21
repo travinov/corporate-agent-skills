@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
 ARCHIVE_NAME="drawio-skill-agent-extension.zip"
-DEFAULT_VERSION="1.23.0-corporate.8"
-DEFAULT_BRANCH="codex/drawio-bare-improve-v1.23.0-corporate.8"
+DEFAULT_VERSION="1.23.0-corporate.9"
+DEFAULT_BRANCH="codex/drawio-empty-mcp-registry-v1.23.0-corporate.9"
 DEFAULT_BASE_URL="https://raw.githubusercontent.com/travinov/corporate-agent-skills/refs/heads/${DEFAULT_BRANCH}/dist"
 
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
@@ -143,7 +143,7 @@ extensions_supports_validate() {
 verify_role_runtime_capabilities() {
   local help_text flag missing=()
   help_text="$($GIGACODE_BIN --help 2>&1 || true)"
-  for flag in --model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --exclude-tools; do
+  for flag in --model --prompt --output-format --approval-mode --extensions --system-prompt --max-session-turns --core-tools --allowed-mcp-server-names --exclude-tools; do
     grep -Fq -- "$flag" <<<"$help_text" || missing+=("$flag")
   done
   ((${#missing[@]} == 0)) || die "GigaCode CLI lacks required isolated-role flags: ${missing[*]}"
@@ -338,6 +338,7 @@ if [[ -n "$source_dir" ]]; then
     commands/drawio/trace.md \
     scripts/diagram_host.py \
     scripts/diagram_orchestrator.py \
+    scripts/agent_runtime.py \
     scripts/command_ux.py; do
     [[ -f "$extension_root/$required" ]] || die "Extracted extension is missing: $required"
   done

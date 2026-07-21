@@ -54,3 +54,11 @@
 - [x] 8.3 Add regression coverage for fresh, stale, missing, ambiguous, and explicitly overridden improve inputs
 - [x] 8.4 Update command, operator, installer, and verifier contracts for the zero-argument workflow
 - [x] 8.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.8` ZIP
+
+## 9. Empty MCP discovery for isolated roles
+
+- [x] 9.1 Specify an explicitly empty MCP-server allowlist, required capability detection, fail-closed leakage behavior, and corporate retest contract
+- [x] 9.2 Add the empty allowlist to every role command and record it in isolation evidence
+- [x] 9.3 Add regression coverage for global MCP configuration, missing CLI capability, exact command arguments, and defense-in-depth event rejection
+- [x] 9.4 Extend installer verification and operator documentation with the MCP-discovery isolation contract
+- [x] 9.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.9` ZIP

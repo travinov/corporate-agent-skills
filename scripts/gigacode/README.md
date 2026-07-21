@@ -50,6 +50,12 @@ from the extracted `drawio-skill` directory:
 ./install/verify_drawio_agent_extension.sh
 ```
 
+Verification requires `--allowed-mcp-server-names` in corporate
+`gigacode --help` and confirms that every isolated role passes that option with
+one empty value. This removes globally configured Jira, Bitbucket, and other MCP
+servers before the child model discovers tool schemas. A missing flag is a
+preflight failure; do not continue with an unisolated role process.
+
 After verification, restart GigaCode and run `/agents manage`. Expected extension agents:
 
 - `diagram-supervisor`
