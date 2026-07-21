@@ -69,3 +69,10 @@
 - [x] 10.2 Normalize only the already executed Supervisor role and preserve every sibling/action fail-closed invariant
 - [x] 10.3 Add regression coverage and operator diagnostics for the captured schema-valid self-omitting Supervisor decision
 - [x] 10.4 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.10` ZIP
+
+## 11. Host-owned lifecycle role policy
+
+- [x] 11.1 Specify phase-mandatory role authorization and separate model-versus-host evidence
+- [x] 11.2 Implement the phase role union while retaining action, schema, isolation, model-proof, and semantic-approval gates
+- [x] 11.3 Add exact corporate-output regressions plus command, operator, and installer verification contracts
+- [ ] 11.4 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.11` ZIP

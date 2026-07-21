@@ -19,7 +19,7 @@
         "required_roles": {
           "type": "array",
           "uniqueItems": true,
-          "description": "Downstream sibling roles requested by Supervisor. The host retains the already executed supervisor role in workflow bookkeeping even when omitted here.",
+          "description": "Advisory downstream roles declared by Supervisor. The host records this array unchanged, adds the roles required by deterministic phase policy, and records both sets separately.",
           "items": {"enum": ["supervisor", "semantic_analyst", "repair", "reviewer"]}
         },
         "max_iterations": {"type": "integer", "minimum": 1, "maximum": 12},

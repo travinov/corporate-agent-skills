@@ -15,13 +15,25 @@ The lifecycle host SHALL treat every isolated Supervisor, Semantic Analyst, Repa
 - **WHEN** the isolated role emits no tool calls, uses the configured model, and returns exactly one schema-valid JSON object
 - **THEN** the host records the role result and continues from the existing persisted workflow state
 
-#### Scenario: Supervisor omits itself from downstream required roles
-- **WHEN** a model-proven schema-valid Supervisor decision contains every mandatory sibling role for the phase but does not repeat `supervisor` in `result.required_roles`
-- **THEN** the host preserves the original decision, retains `supervisor` in host-owned workflow bookkeeping, and continues without treating the omission as a role failure
+#### Scenario: Initial improve Supervisor declares only Repair and Reviewer
+- **WHEN** a model-proven schema-valid initial improve decision selects `repair` and declares only Repair and Reviewer
+- **THEN** the host preserves those declared roles unchanged, adds Supervisor and Semantic Analyst plus its complete initial lifecycle policy, and continues through semantic analysis instead of rejecting the decision
 
-#### Scenario: Supervisor omits a mandatory sibling role
-- **WHEN** a Supervisor decision omits Semantic Analyst or Reviewer during the initial phase, or omits Repair or Reviewer during continuation
-- **THEN** the host fails closed before invoking an unrequested sibling and does not use Supervisor self-normalization to add that sibling
+#### Scenario: Initial create omits Repair
+- **WHEN** a model-proven schema-valid initial create decision does not declare Repair
+- **THEN** the host still authorizes Repair for later deterministic validation or Reviewer findings, records that host addition, and invokes Repair only if such findings require it
+
+#### Scenario: Resume uses the approved semantic plan
+- **WHEN** the user continues a persisted run after initial semantic analysis
+- **THEN** the host authorizes Supervisor, Repair, and Reviewer for continuation without automatically rerunning Semantic Analyst
+
+#### Scenario: Host and model role evidence remains distinguishable
+- **WHEN** the host applies a phase role policy to a schema-valid Supervisor result
+- **THEN** the workflow retains the raw Supervisor decision, records `supervisor_declared_roles` and `host_mandatory_roles` separately, and records their union as effective `required_roles`
+
+#### Scenario: Supervisor selects a phase-incompatible action
+- **WHEN** a schema-valid Supervisor decision selects an action that the current create, improve, or resume phase cannot execute
+- **THEN** the host fails closed before invoking another role even though host-mandatory roles are available
 
 #### Scenario: Denied tools consume the bounded turn budget
 - **WHEN** a corporate model would repeatedly select denied tools instead of returning its JSON decision

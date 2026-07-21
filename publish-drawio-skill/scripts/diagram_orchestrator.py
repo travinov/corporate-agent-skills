@@ -281,33 +281,26 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
     """Apply the typed Supervisor plan or fail closed before invoking sibling roles."""
     result = decision["result"]
     action = result["action"]
-    # required_roles selects downstream siblings. The already completed,
-    # model-proven Supervisor remains host-owned workflow bookkeeping and does
-    # not need to repeat its own identity in the model's sibling list.
-    roles = set(result["required_roles"])
-    roles.add("supervisor")
+    # The raw model declaration remains evidence, while executable lifecycle
+    # topology is deterministic and owned by the host. Repair is authorized in
+    # every lifecycle phase but is invoked only when validation/review findings
+    # reach repair_loop.
+    declared_roles = set(result["required_roles"])
     if phase == "initial":
         allowed_actions = {"create", "analyze"} if workflow["mode"] == "create" else {"analyze", "repair", "review"}
-        missing = {"semantic_analyst", "reviewer"} - roles
-        if missing:
-            raise supervisor.SupervisorError(
-                "Supervisor decision omitted mandatory initial roles: " + ", ".join(sorted(missing))
-            )
+        host_mandatory_roles = {"supervisor", "semantic_analyst", "repair", "reviewer"}
     else:
         allowed_actions = {"analyze", "repair", "review"}
-        missing = {"repair", "reviewer"} - roles
-        if missing:
-            raise supervisor.SupervisorError(
-                "Supervisor resume decision omitted mandatory continuation roles: " + ", ".join(sorted(missing))
-            )
+        host_mandatory_roles = {"supervisor", "repair", "reviewer"}
     if action not in allowed_actions:
         raise supervisor.SupervisorError(
             f"Supervisor action {action!r} is not executable during the {phase} phase"
         )
-    if action == "repair" and "repair" not in roles:
-        raise supervisor.SupervisorError("Supervisor selected repair without authorizing the Repair role")
+    roles = declared_roles | host_mandatory_roles
     proposed_max = result.get("max_iterations", requested_max_iterations)
     workflow["max_iterations"] = min(int(requested_max_iterations), int(proposed_max))
+    workflow["supervisor_declared_roles"] = sorted(declared_roles)
+    workflow["host_mandatory_roles"] = sorted(host_mandatory_roles)
     workflow["required_roles"] = sorted(roles)
     workflow["supervisor_action"] = action
     workflow["supervisor_decision"] = decision
@@ -374,6 +367,16 @@ def checkpoint(run_dir, workflow, kind, summary, findings, allowed, *, evidence=
     return host_result(run_dir, workflow)
 
 
+def role_policy_evidence(workflow):
+    """Expose model-declared and deterministic host role selection separately."""
+    return {
+        "supervisor_action": workflow.get("supervisor_action"),
+        "supervisor_declared_roles": workflow.get("supervisor_declared_roles", []),
+        "host_mandatory_roles": workflow.get("host_mandatory_roles", []),
+        "effective_required_roles": workflow.get("required_roles", []),
+    }
+
+
 def host_result(run_dir, workflow, *, error=None):
     state = supervisor.load_state(run_dir)
     role_runs = []
@@ -421,6 +424,7 @@ def host_result(run_dir, workflow, *, error=None):
         "model_diversity_degraded": any(
             bool(item.get("fallback_used")) for item in role_runs
         ),
+        "role_policy": role_policy_evidence(workflow),
         "checkpoint": workflow.get("checkpoint"),
         "evidence": {
             "manifest": str(manifest_path.resolve()),
@@ -1196,6 +1200,7 @@ def trace_run(reference, workspace):
             bool(role.get("fallback_used")) for role in roles
         ),
         "roles": roles, "terminal_result": workflow.get("status"),
+        "role_policy": role_policy_evidence(workflow),
         "trust_scope": "local runtime capture and configured routing policy; no external cryptographic attestation",
     }
     return result

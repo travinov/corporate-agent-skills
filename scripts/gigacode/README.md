@@ -98,10 +98,12 @@ run creates `.diagram-runs/<run-id>/host-preflight.json`,
 the user's project. The native supervisor entry remains visible for advisory
 planning compatibility only.
 
-In `1.23.0-corporate.10` and newer, Supervisor `required_roles` is a downstream
-sibling list. The host retains the already executed Supervisor itself; it does
-not reject a valid plan merely because the model omitted its own name. Missing
-mandatory sibling roles and incompatible actions still fail closed.
+In `1.23.0-corporate.11` and newer, Supervisor `required_roles` is an advisory
+downstream list. The host records the model-declared list separately, adds the
+phase-mandatory lifecycle roles, and records the effective union. Initial
+create/improve always authorizes Semantic Analyst, conditional Repair, and
+Reviewer; resume authorizes conditional Repair and Reviewer. Incompatible
+actions and all isolation, schema, and model-proof gates still fail closed.
 
 `./install/rollback_drawio_agent_extension.sh --backup PATH` selects a specific backup.
 Backups are stored under

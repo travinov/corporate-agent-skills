@@ -262,15 +262,19 @@ class DiagramOrchestratorTests(unittest.TestCase):
         )
         self.assertNotIn("review_handoff", resolution)
 
-    def test_improve_accepts_supervisor_downstream_roles_without_repeating_self(self):
+    def test_improve_applies_host_role_policy_to_captured_supervisor_decision(self):
         root, workspace, _ = self.create_workspace()
-        target = workspace / "self-omitting-supervisor.drawio"
+        target = workspace / "corporate-supervisor-output.drawio"
         target.write_text(clean_diagram(), encoding="utf-8")
-        cli = root / "self-omitting-supervisor-cli.py"
+        cli = root / "corporate-supervisor-output-cli.py"
         cli.write_text(
             FAKE_GIGACODE.replace(
+                '"action": "create" if payload["mode"] == "create" else "analyze",',
+                '"action": "repair",',
+                1,
+            ).replace(
                 '"required_roles": ["supervisor", "semantic_analyst", "reviewer"],',
-                '"required_roles": ["semantic_analyst", "reviewer"],',
+                '"required_roles": ["repair", "reviewer"],',
                 1,
             ),
             encoding="utf-8",
@@ -284,41 +288,103 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         result = json.loads(completed.stdout)
         self.assertNotEqual(result["status"], "error")
+        self.assertEqual(
+            result["role_policy"],
+            {
+                "supervisor_action": "repair",
+                "supervisor_declared_roles": ["repair", "reviewer"],
+                "host_mandatory_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
+                "effective_required_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
+            },
+        )
         workflow = json.loads(Path(result["evidence"]["workflow"]).read_text())
+        self.assertEqual(workflow["supervisor_decision"]["result"]["action"], "repair")
         self.assertEqual(
             workflow["supervisor_decision"]["result"]["required_roles"],
-            ["semantic_analyst", "reviewer"],
+            ["repair", "reviewer"],
+        )
+        self.assertEqual(
+            workflow["supervisor_declared_roles"], ["repair", "reviewer"]
+        )
+        self.assertEqual(
+            workflow["host_mandatory_roles"],
+            ["repair", "reviewer", "semantic_analyst", "supervisor"],
         )
         self.assertEqual(
             workflow["required_roles"],
-            ["reviewer", "semantic_analyst", "supervisor"],
+            ["repair", "reviewer", "semantic_analyst", "supervisor"],
+        )
+        trace = orchestrator.trace_run(result["run_dir"], workspace)
+        self.assertEqual(trace["role_policy"], result["role_policy"])
+
+    def test_initial_create_host_policy_authorizes_conditional_repair(self):
+        workflow = {"mode": "create"}
+        decision = {
+            "schema_version": 1,
+            "role": "supervisor",
+            "status": "ok",
+            "result": {
+                "action": "create",
+                "reason": "Create the requested diagram",
+                "required_roles": ["semantic_analyst", "reviewer"],
+            },
+        }
+
+        orchestrator.consume_supervisor_decision(
+            workflow, decision, phase="initial", requested_max_iterations=3,
         )
 
-    def test_supervisor_self_normalization_does_not_add_missing_siblings(self):
+        self.assertEqual(workflow["supervisor_declared_roles"], ["reviewer", "semantic_analyst"])
+        self.assertEqual(
+            workflow["host_mandatory_roles"],
+            ["repair", "reviewer", "semantic_analyst", "supervisor"],
+        )
+        self.assertIn("repair", workflow["required_roles"])
+
+    def test_resume_host_policy_does_not_rerun_semantic_analyst(self):
         workflow = {"mode": "improve"}
         decision = {
             "schema_version": 1,
             "role": "supervisor",
             "status": "ok",
             "result": {
-                "action": "analyze",
-                "reason": "Reviewer was omitted deliberately for the regression",
-                "required_roles": ["semantic_analyst"],
+                "action": "repair",
+                "reason": "Continue from the approved semantic plan",
+                "required_roles": ["reviewer"],
+            },
+        }
+
+        orchestrator.consume_supervisor_decision(
+            workflow, decision, phase="resume", requested_max_iterations=3,
+        )
+
+        self.assertEqual(
+            workflow["host_mandatory_roles"], ["repair", "reviewer", "supervisor"]
+        )
+        self.assertNotIn("semantic_analyst", workflow["required_roles"])
+
+    def test_host_role_policy_still_rejects_phase_incompatible_action(self):
+        workflow = {"mode": "create"}
+        decision = {
+            "schema_version": 1,
+            "role": "supervisor",
+            "status": "ok",
+            "result": {
+                "action": "repair",
+                "reason": "Repair is incompatible with initial create",
+                "required_roles": ["repair", "reviewer"],
             },
         }
 
         with self.assertRaisesRegex(
             orchestrator.supervisor.SupervisorError,
-            "omitted mandatory initial roles: reviewer",
+            "not executable during the initial phase",
         ):
             orchestrator.consume_supervisor_decision(
-                workflow,
-                decision,
-                phase="initial",
-                requested_max_iterations=3,
+                workflow, decision, phase="initial", requested_max_iterations=3,
             )
 
-        self.assertNotIn("required_roles", workflow)
+        self.assertNotIn("host_mandatory_roles", workflow)
 
     def test_bare_improve_rejects_stale_review_in_ambiguous_workspace(self):
         root, workspace, cli = self.create_workspace()

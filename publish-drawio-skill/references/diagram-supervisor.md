@@ -65,12 +65,15 @@ Create and improve invoke isolated Supervisor and Semantic Analyst, then
 deterministic rendering/import and strict validation. Repair is invoked only
 for findings, and Reviewer independently gates candidates. Resume continues
 the same persisted run from the last accepted candidate. Trace invokes no model.
-The host consumes Supervisor `action`, `required_roles`, and `max_iterations`;
-`required_roles` selects downstream siblings. The host retains the already
-executed, model-proven Supervisor in workflow bookkeeping even when the model
-does not repeat `supervisor` in that array. It does not synthesize any omitted
-sibling: an incomplete or phase-incompatible plan still fails closed before an
-unrequested role runs. At semantic approval, the checkpoint, semantic-plan file, exact
+The host consumes Supervisor `action`, `required_roles`, and `max_iterations`.
+It preserves the model array as `supervisor_declared_roles`, records its own
+phase policy as `host_mandatory_roles`, and records their union as effective
+`required_roles`. Initial create/improve authorizes Supervisor, Semantic
+Analyst, Repair, and Reviewer; continuation authorizes Supervisor, Repair, and
+Reviewer. Repair still runs only after validation or review findings. A
+`role_policy` copy of this split is included in `host-result.json` and trace
+output. A phase-incompatible action fails closed before another role runs. At semantic
+approval, the checkpoint, semantic-plan file, exact
 change list, and user decision are hash-bound and supplied unchanged to Repair.
 Trace re-parses each saved raw CLI result to derive the effective model and
 role output independently of manifest claims.
