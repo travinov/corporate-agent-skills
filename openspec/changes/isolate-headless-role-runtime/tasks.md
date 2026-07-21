@@ -45,4 +45,4 @@
 - [x] 7.2 Apply the bridge to create, improve, review, resume, and trace, and make every generated `next_commands` value executable through it
 - [x] 7.3 Add regression coverage for the exact quoted, `@`-prefixed, advanced-flag, resume-feedback, and explicit-trace cases captured on corporate GigaCode
 - [x] 7.4 Extend installer verification and operator documentation with the command-transport contract
-- [ ] 7.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.7` ZIP
+- [x] 7.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.7` ZIP
