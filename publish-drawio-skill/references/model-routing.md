@@ -11,12 +11,12 @@ The Diagram Supervisor uses portable role prompts and a runtime-neutral routing 
 
 Use `data/model-routing.default.json` as the default policy and validate custom policies against `data/model-routing.v1.schema.json`. The default assignments are:
 
-| Role | Requested model | Activation | Mutation policy |
-| --- | --- | --- | --- |
-| Supervisor | `GigaChat-3-Ultra` | permanent | orchestration only |
-| Reviewer | `vllm/DeepSeek-V4-Flash-262k` | permanent | read-only |
-| Repair | `vllm/MiniMax-M3-113k` | on demand | patch proposal only |
-| Semantic Analyst | `vllm/Qwen3.6-35B-262k` | on demand | patch proposal only |
+| Role | Requested model | Runtime fallback | Activation | Mutation policy |
+| --- | --- | --- | --- | --- |
+| Supervisor | `GigaChat-3-Ultra` | `vllm/DeepSeek-V4-Flash-262k`, once on `turn_limit` | permanent | orchestration only |
+| Reviewer | `vllm/DeepSeek-V4-Flash-262k` | none | permanent | read-only |
+| Repair | `vllm/MiniMax-M3-113k` | none | on demand | patch proposal only |
+| Semantic Analyst | `vllm/Qwen3.6-35B-262k` | none | on demand | patch proposal only |
 
 A normal layout run starts Supervisor and Reviewer. Start Repair only when structured findings need a patch proposal. Start Semantic Analyst only for process reconciliation, semantic ambiguity, or a conflict involving user input or OpenSpec.
 
@@ -72,7 +72,7 @@ python3 scripts/agent_runtime.py reviewer reviewer-input.json \
 ```
 
 The verified upstream Qwen Code 0.13.1 contract supports `--model`, `--prompt`,
-`--output-format json`, `--approval-mode default`, `--extensions none`,
+`--output-format json`, `--output-format stream-json`, `--approval-mode default`, `--extensions none`,
 `--system-prompt`, `--max-session-turns`, `--core-tools`, and `--exclude-tools`. Corporate
 GigaCode must advertise the same required isolation controls before a role is
 started. It also supports `--auth-type gigacode`; the adapter adds that auth
@@ -88,7 +88,17 @@ active, and the event audit rejects any observed tool call.
 
 Use a bounded timeout, explicit working directory, captured stdout/stderr, and a minimal allowlisted environment. Do not inherit arbitrary API keys, tokens, passwords, or unrelated process secrets. The Reviewer process must receive read-only inputs and no artifact-publication capability. A model response is data for the Supervisor or deterministic tools; it is not permission to run response text as a command.
 
-Publish role output atomically only after the process exits successfully and its JSON conforms to the role schema: Reviewer uses `reviewer-verdict.v1.schema.json`, Repair uses `diagram-patch.v1.schema.json`, Supervisor uses `supervisor-decision.v1.schema.json`, and Semantic Analyst uses `semantic-plan.v1.schema.json`. GigaCode JSON output is an event array: reject any `tool_use`, `diagram-*` custom agent, or `drawio:*` command leaked into the isolated process; then require one consistent primary model in the `system` init event, every assistant message, and `result.stats.models`, and JSON-decode the final result payload. Stock Gemini JSON output is an outer envelope: reject non-empty `error`/`errors`, extract and JSON-decode `response`, then validate only that inner role payload. Preserve redacted runtime stats/errors as evidence, not as the verdict. Direct top-level role JSON may be parsed for compatibility but cannot publish a successful isolated role because it lacks model proof. On timeout, non-zero exit, tool call, customization leak, invalid output, missing proof, or model mismatch, append `role_failed`; do not create the output file or any role-success event.
+Publish role output atomically only after the process exits successfully and its JSON conforms to the role schema: Reviewer uses `reviewer-verdict.v1.schema.json`, Repair uses `diagram-patch.v1.schema.json`, Supervisor uses `supervisor-decision.v1.schema.json`, and Semantic Analyst uses `semantic-plan.v1.schema.json`. Prefer GigaCode `stream-json` when CLI help advertises it and retain buffered event-array compatibility. Reject any `tool_use`, `diagram-*` custom agent, or `drawio:*` command leaked into either format; then require one consistent model in the `system` init event and every assistant message. When `result.stats.models` exists it must match too, but Qwen's streamed result may omit aggregate stats. Stock Gemini JSON output is an outer envelope: reject non-empty `error`/`errors`, extract and JSON-decode `response`, then validate only that inner role payload. Preserve redacted runtime stats/errors as evidence, not as the verdict. Direct top-level role JSON may be parsed for compatibility but cannot publish a successful isolated role because it lacks model proof. On timeout, non-zero exit, tool call, customization leak, invalid output, missing proof, or model mismatch, append `role_failed`; do not create the output file or any role-success event.
+
+The only lifecycle runtime-model recovery is declared in policy: after a
+model-proven, tool-free primary Supervisor attempt ends with
+`FatalTurnLimitedError`, invoke Supervisor exactly once on
+`vllm/DeepSeek-V4-Flash-262k`. Store primary and fallback captures separately,
+mark the primary `role_failed` as nonterminal, and publish fallback output only
+after the same schema, isolation, and model-proof checks. Never retry a tool
+call, customization leak, missing isolation proof, timeout, or any non-Supervisor
+failure. A recovered result is usable but must state that model diversity was
+degraded.
 
 Some approved models wrap an otherwise valid role object in exactly one
 Markdown `json` fence. The adapter may unwrap that single fence only when the
@@ -152,7 +162,8 @@ Append one `model_resolved` event per activated role to `run-manifest.jsonl`. Th
 
 Do not infer success from the requested value. A resolution is complete only after the role process succeeds, its output validates, and the runtime reports or the adapter can otherwise prove which model was used. Append `model_resolved` only at that point.
 
-Persist CLI stdout as `runtime-output.json` and redacted stderr as
+Persist CLI stdout as `runtime-output.jsonl` for streamed output or
+`runtime-output.json` for buffered output, and redacted stderr as
 `runtime-stderr.txt` before interpreting the exit code. Bind both hashes in
 `role_finished` or `role_failed`. `/drawio:trace` must re-parse a successful
 capture, re-derive the
@@ -160,8 +171,10 @@ reported model/proof, validate the typed role output and compare the model with
 `model-routing.default.json`. It must not accept edited `resolved_model` or
 `model_proof` manifest fields as independent evidence. This is a local evidence
 check, not a remote signature or hardware-backed attestation. A failed but
-untampered child appears as `failed_verified` with `valid: false`, its failure
+untampered terminal child appears as `failed_verified` with `valid: false`, its failure
 phase, capture integrity, and isolation evidence; this is not workflow success.
+A nonterminal primary Supervisor failure followed by its approved fallback is
+validated as part of the successful but model-diversity-degraded chain.
 
 `/stats model` in the parent session describes the parent process and is not
 proof for an isolated role. Inspect `run-manifest.jsonl` instead: a successful

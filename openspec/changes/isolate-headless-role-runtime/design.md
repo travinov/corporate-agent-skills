@@ -29,6 +29,9 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 6. **Audit customization leakage.** Reject a success stream if system initialization still advertises Draw.io extension commands or diagram custom agents. Preserve raw capture and failure evidence for traceability.
 7. **Capture before interpreting exit status.** Atomically persist stdout and redacted stderr immediately after every completed child process, including non-zero exits, and bind both files into `role_failed` or `role_finished` manifest evidence.
 8. **Do not put tool-free roles in Plan mode.** Use `--approval-mode default` for isolated JSON decisions. Qwen Code 0.13.1 injects an extra user-message reminder in Plan mode that orders the model to call `exit_plan_mode`; that conflicts with the empty tool registry and caused the corporate `.4` Supervisor to retry until exit 53. Default approval does not expose or approve tools because the core-tool sentinel, deny list, and event audit remain authoritative.
+9. **Capture streamed events when the CLI advertises them.** Prefer `--output-format stream-json` when `--help` names that value and retain the buffered JSON parser for compatible forks. Persist the JSONL stream before interpreting the exit code so a turn-limit failure still proves model identity, event count, tool use, and customization isolation when those events were emitted.
+10. **Recover only from a policy-approved Supervisor turn limit.** The primary Supervisor remains `GigaChat-3-Ultra`. After `FatalTurnLimitedError`, and only then, invoke Supervisor once with the configured `vllm/DeepSeek-V4-Flash-262k` runtime fallback. Do not retry capability, isolation, leakage, timeout, or integrity failures. The fallback must satisfy the same schema, model-proof, zero-tool, and evidence rules.
+11. **Preserve both attempts.** Store primary and fallback runtime captures under separate attempt directories. Mark the primary failure `terminal: false`, record its fallback target, and publish a single `role_finished` result with `fallback_used: true` only after the fallback succeeds. A failed fallback is terminal.
 
 ## Risks / Trade-offs
 
@@ -39,13 +42,15 @@ Upstream Qwen Code 0.13.1 provides the compatible controls needed here: `--exten
 - **Turn limit is consumed by denied-tool retries** -> the non-empty `--core-tools` sentinel removes core tool schemas before inference; the limit stays small and any remaining failure is preserved for diagnosis instead of hidden.
 - **Non-zero CLI exit loses structured events** -> capture stdout/stderr before checking the return code and expose their integrity plus isolation audit through `/drawio:trace`.
 - **Default approval appears less restrictive than Plan mode** -> tool availability is controlled independently by the empty core-tool allowlist and deny list; default approval only removes the contradictory Plan-mode reminder.
+- **Stream JSON omits aggregate model statistics** -> require one system-init model and one consistent assistant-message model; require aggregate `stats.models` only when the runtime actually supplies it.
+- **Supervisor fallback reduces model diversity** -> allow exactly one configured fallback, expose the degradation in `host-result.json` and `/drawio:trace`, and retain the primary attempt as hashed evidence.
 
 ## Migration Plan
 
-1. Ship the follow-up as a new side-by-side `1.23.0-corporate.5` release ZIP and preserve
-   `1.23.0-corporate.4` plus the earlier packages for rollback.
+1. Ship the follow-up as a new side-by-side `1.23.0-corporate.6` release ZIP and preserve
+   `1.23.0-corporate.5` plus the earlier packages for rollback.
 2. Reinstall from the approved local archive on the corporate Mac.
-3. Re-run the same `/drawio:create` smoke test and inspect `runtime-output.json` plus `/drawio:trace`.
+3. Re-run the same `/drawio:create` smoke test and inspect the per-attempt `runtime-output.jsonl` captures plus `/drawio:trace`.
 4. Roll back by reinstalling the previous ZIP if capability detection reports that the corporate fork lacks a required flag.
 
 ## Open Questions

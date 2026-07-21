@@ -30,3 +30,11 @@
 - [x] 5.2 Add regression coverage proving the command avoids the Qwen 0.13.1 `exit_plan_mode` reminder contract while retaining zero-tool isolation
 - [x] 5.3 Update the routing and operator contract with the verified Plan-mode root cause
 - [x] 5.4 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.5` ZIP
+
+## 6. Corporate streamed evidence and bounded Supervisor recovery
+
+- [x] 6.1 Capture capability-detected `stream-json` JSONL while preserving buffered JSON compatibility and partial failure evidence
+- [x] 6.2 Add one policy-controlled Supervisor fallback on `turn_limit`, separate attempt artifacts, and recovered-versus-terminal failure semantics
+- [x] 6.3 Teach host results and `/drawio:trace` to verify and expose the approved degraded path without weakening isolation checks
+- [x] 6.4 Add regression coverage for JSONL model proof, partial turn-limit evidence, one fallback only, fail-closed isolation, and trace integrity
+- [x] 6.5 Bump, build, verify, commit, and publish the side-by-side `1.23.0-corporate.6` ZIP

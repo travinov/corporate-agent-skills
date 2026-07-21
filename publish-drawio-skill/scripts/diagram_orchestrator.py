@@ -261,7 +261,19 @@ def role_call(role, payload, run_dir, workspace, cli, timeout, label):
     )
     resolution = runtime["resolution"]
     if resolution["fallback_used"] or resolution["resolved_model"] != resolution["requested_model"]:
-        raise supervisor.SupervisorError(f"lifecycle role {role} did not use its exact isolated model")
+        policy = supervisor.load_json(agent_runtime.DEFAULT_POLICY)
+        allowed = {
+            item["model"]
+            for item in policy["roles"].get(role, {}).get("runtime_fallbacks", [])
+        }
+        if (
+            role != "supervisor"
+            or resolution["resolved_model"] not in allowed
+            or resolution.get("resolution_mode") != "isolated_cli"
+        ):
+            raise supervisor.SupervisorError(
+                f"lifecycle role {role} used an unapproved degraded model"
+            )
     return supervisor.load_json(output_path), runtime, input_path, output_path
 
 
@@ -377,6 +389,8 @@ def host_result(run_dir, workflow, *, error=None):
                         "runtime_capture", "runtime_capture_sha256", "stderr_capture",
                         "stderr_capture_sha256", "isolation_controls",
                         "isolation_proof", "exit_code",
+                        "attempted_model", "attempt_id", "output_format",
+                        "degradation_reason",
                     )
                 })
             elif event.get("event_type") == "role_failed":
@@ -389,6 +403,8 @@ def host_result(run_dir, workflow, *, error=None):
                         "runtime_capture_sha256", "stderr_capture",
                         "stderr_capture_sha256", "isolation_controls",
                         "isolation_proof",
+                        "attempted_model", "fallback_model", "attempt_id",
+                        "output_format", "terminal",
                     )
                 })
     result = {
@@ -400,6 +416,9 @@ def host_result(run_dir, workflow, *, error=None):
         "accepted_validation": workflow.get("accepted_validation"),
         "role_runs": role_runs,
         "failed_role_runs": failed_role_runs,
+        "model_diversity_degraded": any(
+            bool(item.get("fallback_used")) for item in role_runs
+        ),
         "checkpoint": workflow.get("checkpoint"),
         "evidence": {
             "manifest": str(manifest_path.resolve()),
@@ -914,6 +933,7 @@ def trace_run(reference, workspace):
     artifact_checks = []
     role_checks = []
     failed_roles = []
+    recovered_failures_by_role = {}
     started_by_role = {}
     policy = supervisor.load_json(agent_runtime.DEFAULT_POLICY)
     expected_isolation_controls = agent_runtime.role_isolation_controls()
@@ -952,20 +972,45 @@ def trace_run(reference, workspace):
                 if parsed != supervisor.load_json(output_path):
                     raise supervisor.SupervisorError("normalized role output differs from runtime capture")
                 expected_model = policy["roles"][role]["requested_model"]
+                resolved_model = payload.get("resolved_model")
+                configured_fallbacks = {
+                    item["model"]
+                    for item in policy["roles"][role].get("runtime_fallbacks", [])
+                }
+                fallback_used = bool(payload.get("fallback_used"))
+                approved_fallback = (
+                    role == "supervisor"
+                    and fallback_used
+                    and resolved_model in configured_fallbacks
+                    and any(
+                        failure.get("terminal") is False
+                        and failure.get("attempted_model") == expected_model
+                        and failure.get("fallback_model") == resolved_model
+                        and failure.get("failure_kind") == "turn_limit"
+                        and failure.get("isolation_proof", {}).get("system_models")
+                        == [expected_model]
+                        and failure.get("isolation_proof", {}).get("assistant_models")
+                        in ([], [expected_model])
+                        for failure in recovered_failures_by_role.get(role, [])
+                    )
+                )
+                exact_primary = not fallback_used and resolved_model == expected_model
                 expected_proof = metadata.get("model_proof")
                 expected_isolation = metadata.get("isolation_proof")
                 recorded_isolation = payload.get("isolation_proof", expected_isolation)
                 proof_valid = all((
-                    metadata.get("reported_model") == expected_model,
+                    metadata.get("reported_model") == resolved_model,
                     bool(expected_proof and expected_proof.get("verified")),
                     payload.get("requested_model") == expected_model,
-                    payload.get("resolved_model") == expected_model,
+                    exact_primary or approved_fallback,
                     payload.get("resolution_mode") == "isolated_cli",
-                    payload.get("fallback_used") is False,
+                    payload.get("fallback_used") is (not exact_primary),
                     payload.get("model_proof") == expected_proof,
-                    event.get("actor", {}).get("model") == expected_model,
+                    event.get("actor", {}).get("model") == resolved_model,
                     start["payload"].get("requested_model") == expected_model,
-                    start["payload"].get("fallback_used") is False,
+                    start["payload"].get("attempted_model", expected_model)
+                    == resolved_model,
+                    start["payload"].get("fallback_used") is (not exact_primary),
                     start["payload"].get("isolation_controls")
                     == expected_isolation_controls,
                     payload.get("isolation_controls")
@@ -983,6 +1028,7 @@ def trace_run(reference, workspace):
                 "role": role, "valid": proof_valid,
                 "requested_model": payload.get("requested_model"),
                 "resolved_model": payload.get("resolved_model"),
+                "fallback_used": payload.get("fallback_used"),
                 "isolation_controls": payload.get("isolation_controls"),
                 "isolation_proof": payload.get("isolation_proof"),
                 "diagnostic": diagnostic,
@@ -1030,6 +1076,11 @@ def trace_run(reference, workspace):
                 "role": role,
                 "phase": payload.get("phase"),
                 "failure_kind": payload.get("failure_kind"),
+                "terminal": payload.get("terminal", True),
+                "attempted_model": payload.get("attempted_model"),
+                "fallback_model": payload.get("fallback_model"),
+                "attempt_id": payload.get("attempt_id"),
+                "output_format": payload.get("output_format"),
                 "exit_code": payload.get("exit_code"),
                 "diagnostic": payload.get("diagnostic"),
                 "runtime_capture": str(capture_path) if payload.get("runtime_capture") else None,
@@ -1054,6 +1105,7 @@ def trace_run(reference, workspace):
                     )
                 ),
             })
+            recovered_failures_by_role.setdefault(role, []).append(payload)
         if event["event_type"] == "validation_receipt" and event["payload"].get("receipt"):
             path = Path(event["payload"]["receipt"])
             verification = supervisor.verify_receipt(path) if path.is_file() else {"valid": False}
@@ -1106,9 +1158,12 @@ def trace_run(reference, workspace):
         and all(item["evidence_valid"] for item in failed_roles)
         and preflight["valid"]
     )
+    terminal_failed_roles = [
+        item for item in failed_roles if item.get("terminal", True)
+    ]
     valid = (
         integrity_valid
-        and not failed_roles
+        and not terminal_failed_roles
         and accepted_valid
         and accepted_receipt_valid
     )
@@ -1118,7 +1173,7 @@ def trace_run(reference, workspace):
     ]
     status = (
         "verified" if valid
-        else "failed_verified" if integrity_valid and failed_roles
+        else "failed_verified" if integrity_valid and terminal_failed_roles
         else "tampered_or_incomplete"
     )
     result = {
@@ -1129,6 +1184,10 @@ def trace_run(reference, workspace):
         "accepted_artifact_valid": accepted_valid, "accepted_receipt_valid": accepted_receipt_valid,
         "host_preflight": preflight, "role_checks": role_checks,
         "failed_roles": failed_roles, "integrity_valid": integrity_valid,
+        "terminal_failed_roles": terminal_failed_roles,
+        "model_diversity_degraded": any(
+            bool(role.get("fallback_used")) for role in roles
+        ),
         "roles": roles, "terminal_result": workflow.get("status"),
         "trust_scope": "local runtime capture and configured routing policy; no external cryptographic attestation",
     }

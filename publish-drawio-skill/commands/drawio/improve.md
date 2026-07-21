@@ -9,6 +9,7 @@ last accepted candidate, role models, validation and review evidence, and resume
 The source diagram remains unchanged until explicit final approval.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
+If `model_diversity_degraded` is true, identify the configured Supervisor fallback.
 
 Normal use when the workspace contains one `.drawio`:
 `/drawio:improve "requirements or corrections"`. Advanced form:

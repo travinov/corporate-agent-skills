@@ -142,11 +142,17 @@ Plan mode здесь намеренно не используется: в Qwen C
 завершить ответ через недоступный `exit_plan_mode` и может привести к
 `FatalTurnLimitedError`. Default approval не открывает инструменты, поскольку
 sentinel-allowlist оставляет registry пустым.
-Если в `runtime-output.json` всё же появился `tool_use`, `diagram-*` agent или
+Если в `runtime-output.json` / `runtime-output.jsonl` всё же появился `tool_use`, `diagram-*` agent или
 `drawio:*` command, роль завершается ошибкой до запуска следующего агента. Это
 защищает от рекурсивного вызова `diagram-supervisor` и циклов `list_directory`.
-Даже при ненулевом exit code сохраняются `runtime-output.json` и редактированный
+При поддержке `stream-json` события сохраняются построчно, поэтому при ненулевом
+exit code остаётся частичная трасса модели. Сохраняются runtime capture и редактированный
 `runtime-stderr.txt`; `/drawio:trace` показывает их целостность и isolation proof.
+Если только основной Supervisor (`GigaChat-3-Ultra`) получает подтверждённый
+`FatalTurnLimitedError` без утечки инструментов, host один раз запускает
+Supervisor на `vllm/DeepSeek-V4-Flash-262k`. Оба запуска остаются в evidence,
+а `host-result.json` показывает `model_diversity_degraded: true`. Для Reviewer,
+Repair, Semantic Analyst и любых нарушений изоляции автоматического повтора нет.
 
 В этой корпоративной сборке deterministic command host является хостом и
 исполнителем Supervisor-процесса. Он не передаёт весь цикл native

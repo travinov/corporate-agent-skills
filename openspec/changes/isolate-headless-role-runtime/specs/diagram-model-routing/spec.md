@@ -35,6 +35,10 @@ The extension SHALL resolve Supervisor, Reviewer, Repair, and Semantic Analyst m
 - **WHEN** the CLI exits non-zero, reports `FatalTurnLimitedError`, or returns invalid role output
 - **THEN** stdout, redacted stderr, their hashes, and any independently auditable isolation evidence are persisted and exposed by the run trace
 
+#### Scenario: CLI supports streamed JSON events
+- **WHEN** the CLI help advertises `stream-json`
+- **THEN** the adapter captures JSONL events incrementally, preserves partial events on failure, and retains compatibility with buffered JSON event arrays
+
 #### Scenario: Review slash command invokes isolated Reviewer
 - **WHEN** the user starts `/drawio:review` while any supported model is selected in the interactive session
 - **THEN** the command host invokes Reviewer with the routing policy model through the isolated CLI and returns its requested model, resolved model, and verified runtime model proof
@@ -48,7 +52,7 @@ Model resolution SHALL record `requested_model`, `resolved_model`, provider, res
 
 #### Scenario: GigaCode headless model is proven
 - **WHEN** an isolated role exits successfully without tools or customization leakage and with schema-valid output
-- **THEN** `system.model`, every `assistant.message.model`, and `result.stats.models` agree with the requested model before `model_resolved` is appended
+- **THEN** `system.model` and every `assistant.message.model` agree with the attempted explicit model, and `result.stats.models` also agrees when supplied, before `model_resolved` is appended
 
 #### Scenario: Model evidence is missing or inconsistent
 - **WHEN** any required GigaCode model evidence is absent or names a different primary model
@@ -57,3 +61,11 @@ Model resolution SHALL record `requested_model`, `resolved_model`, provider, res
 #### Scenario: Requested model is unavailable
 - **WHEN** a role cannot use its requested model
 - **THEN** the run records the fallback and the user-visible result states that model diversity was degraded
+
+#### Scenario: Primary Supervisor exhausts its turn budget
+- **WHEN** the explicitly requested Supervisor model reports `FatalTurnLimitedError` and policy declares one runtime fallback for that failure kind
+- **THEN** the adapter preserves the primary attempt as nonterminal evidence, invokes the configured fallback exactly once under the same isolation controls, and continues only after schema-valid model-proven output
+
+#### Scenario: Failure is not eligible for runtime fallback
+- **WHEN** capability detection, customization isolation, zero-tool enforcement, timeout, or evidence integrity fails
+- **THEN** the role fails closed without invoking a fallback model

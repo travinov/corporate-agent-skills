@@ -47,7 +47,23 @@
         "mutation_policy": {"enum": ["orchestration_only", "read_only", "patch_proposal_only"]},
         "fallback_order": {
           "const": ["isolated_cli", "native_per_agent", "inherited_current"]
+        },
+        "runtime_fallbacks": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/runtimeFallback"}
         }
+      }
+    },
+    "runtimeFallback": {
+      "type": "object",
+      "required": ["model", "provider", "on_failure", "max_attempts"],
+      "additionalProperties": false,
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "on_failure": {"const": ["turn_limit"]},
+        "max_attempts": {"const": 1}
       }
     },
     "resolution": {

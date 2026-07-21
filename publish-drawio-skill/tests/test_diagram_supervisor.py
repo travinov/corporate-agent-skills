@@ -1597,6 +1597,32 @@ class AgentRuntimeTests(unittest.TestCase):
             },
         ]
 
+    @staticmethod
+    def gigacode_stream_events(value, *, model="vllm/DeepSeek-V4-Flash-262k", include_stats=True):
+        encoded = json.dumps(value)
+        events = [
+            {
+                "type": "system", "subtype": "init", "model": model,
+                "qwen_code_version": "0.13.1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "model": model,
+                    "content": [{"type": "text", "text": encoded}],
+                },
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": encoded,
+            },
+        ]
+        if include_stats:
+            events[-1]["stats"] = {"models": {model: {}}}
+        return "\n".join(json.dumps(event, ensure_ascii=False) for event in events)
+
     def test_gigacode_event_parser_accepts_result_and_last_assistant_payload(self):
         verdict = self.reviewer_verdict()
         events = self.gigacode_events(verdict)
@@ -1624,6 +1650,45 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(metadata["isolation_proof"]["tool_calls"], 0)
         self.assertTrue(metadata["isolation_proof"]["verified"])
+
+    def test_gigacode_stream_json_accepts_missing_result_stats_and_rejects_conflicting_model_proof(self):
+        verdict = self.reviewer_verdict("stream-json-proof")
+        parsed, metadata = agent_runtime.parse_runtime_output(
+            "reviewer",
+            self.gigacode_stream_events(verdict, include_stats=False),
+        )
+        self.assertEqual(parsed, verdict)
+        self.assertEqual(metadata["format"], "gigacode_stream_json")
+        self.assertTrue(metadata["model_proof"]["verified"])
+        self.assertFalse(metadata["model_proof"]["stats_required"])
+        self.assertEqual(
+            metadata["model_proof"]["sources"],
+            ["system.init.model", "assistant.message.model"],
+        )
+
+        conflicting = [
+            {
+                "type": "system",
+                "subtype": "init",
+                "model": "vllm/DeepSeek-V4-Flash-262k",
+                "qwen_code_version": "0.13.1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "model": "vllm/Qwen3.6-35B-262k",
+                    "content": [{"type": "text", "text": json.dumps(verdict)}],
+                },
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": json.dumps(verdict),
+            },
+        ]
+        with self.assertRaisesRegex(supervisor.SupervisorError, "model proof mismatch"):
+            agent_runtime.parse_runtime_output("reviewer", "\n".join(json.dumps(event) for event in conflicting))
 
     def test_corporate_recursive_supervisor_fixture_is_rejected_as_isolation_leak(self):
         capture = (
@@ -1994,6 +2059,177 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             self.assertIn("FatalTurnLimitedError", stderr_capture.read_text())
             self.assertNotIn("must-not-survive", stderr_capture.read_text())
+            self.assertTrue(payload["terminal"])
+            self.assertNotIn("fallback_model", payload)
+
+    def test_supervisor_turn_limit_retries_exactly_once_with_deepseek_and_separate_captures(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = write_text(
+                temp / "supervisor-fallback-cli",
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "if '--help' in sys.argv:\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    raise SystemExit(0)\n"
+                "model = sys.argv[sys.argv.index('--model') + 1]\n"
+                "payload = json.loads(sys.stdin.read())\n"
+                "decision = {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'fallback approval', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}}\n"
+                "encoded = json.dumps(decision)\n"
+                "if model == 'GigaChat-3-Ultra':\n"
+                "    print('\\n'.join([\n"
+                "        json.dumps({'type': 'system', 'subtype': 'init', 'model': model, 'qwen_code_version': '0.13.1'}),\n"
+                "        json.dumps({'type': 'assistant', 'message': {'model': model, 'content': [{'type': 'text', 'text': 'still deciding'}]}}),\n"
+                "        json.dumps({'type': 'result', 'subtype': 'error', 'is_error': True, 'error': 'FatalTurnLimitedError'})\n"
+                "    ]))\n"
+                "    print('FatalTurnLimitedError', file=sys.stderr)\n"
+                "    raise SystemExit(2)\n"
+                "print('\\n'.join([\n"
+                "    json.dumps({'type': 'system', 'subtype': 'init', 'model': model, 'qwen_code_version': '0.13.1'}),\n"
+                "    json.dumps({'type': 'assistant', 'message': {'model': model, 'content': [{'type': 'text', 'text': encoded}]}}),\n"
+                "    json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': encoded})\n"
+                "]))\n",
+            )
+            os.chmod(cli, 0o755)
+            input_path = write_json(
+                temp / "input.json",
+                {
+                    "run_id": "supervisor-fallback-run",
+                    "mode": "create",
+                    "request": "Create a fallback test diagram.",
+                    "workspace": str(temp),
+                    "diagram": str(temp / "diagram.drawio"),
+                    "constraints": {"local_only": True, "deterministic_mutations": True, "max_iterations": 1},
+                },
+            )
+            output_path = temp / "decision.json"
+
+            result = agent_runtime.invoke_role(
+                "supervisor",
+                input_path,
+                output_path,
+                cli=str(cli),
+                run_dir=temp / "run",
+            )
+
+            self.assertEqual(result["resolution"]["resolved_model"], "vllm/DeepSeek-V4-Flash-262k")
+            self.assertTrue(result["resolution"]["fallback_used"])
+            self.assertEqual(result["recovered_from"]["failure_kind"], "turn_limit")
+            self.assertEqual(result["recovered_from"]["attempted_model"], "GigaChat-3-Ultra")
+            primary_capture = Path(result["recovered_from"]["runtime_capture"])
+            fallback_capture = Path(result["runtime_capture"])
+            self.assertTrue(primary_capture.is_file())
+            self.assertTrue(fallback_capture.is_file())
+            self.assertEqual(primary_capture.parent.name, "primary")
+            self.assertEqual(fallback_capture.parent.name, "fallback-1")
+            self.assertNotEqual(primary_capture, fallback_capture)
+            events = [json.loads(line) for line in (temp / "run/run-manifest.jsonl").read_text().splitlines()]
+            failed = [event for event in events if event["event_type"] == "role_failed"]
+            self.assertEqual(len(failed), 1)
+            self.assertFalse(failed[0]["payload"]["terminal"])
+            self.assertEqual(failed[0]["payload"]["fallback_model"], "vllm/DeepSeek-V4-Flash-262k")
+            started = [event for event in events if event["event_type"] == "role_started"]
+            self.assertEqual([event["payload"]["attempt_id"] for event in started], ["primary", "fallback-1"])
+            self.assertTrue(output_path.exists())
+            self.assertEqual(json.loads(output_path.read_text())["role"], "supervisor")
+
+    def test_supervisor_turn_limit_fallback_failure_is_terminal(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = write_text(
+                temp / "supervisor-fallback-failure-cli",
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "if '--help' in sys.argv:\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    raise SystemExit(0)\n"
+                "model = sys.argv[sys.argv.index('--model') + 1]\n"
+                "print('\\n'.join([\n"
+                "    json.dumps({'type': 'system', 'subtype': 'init', 'model': model, 'qwen_code_version': '0.13.1'}),\n"
+                "    json.dumps({'type': 'assistant', 'message': {'model': model, 'content': [{'type': 'text', 'text': 'still deciding'}]}}),\n"
+                "    json.dumps({'type': 'result', 'subtype': 'error', 'is_error': True, 'error': 'FatalTurnLimitedError'})\n"
+                "]))\n"
+                "print('FatalTurnLimitedError', file=sys.stderr)\n"
+                "raise SystemExit(2)\n",
+            )
+            os.chmod(cli, 0o755)
+            input_path = write_json(
+                temp / "input.json",
+                {
+                    "run_id": "supervisor-fallback-failure",
+                    "mode": "create",
+                    "request": "Create a failing fallback diagram.",
+                    "workspace": str(temp),
+                    "diagram": str(temp / "diagram.drawio"),
+                    "constraints": {"local_only": True, "deterministic_mutations": True, "max_iterations": 1},
+                },
+            )
+            with self.assertRaisesRegex(supervisor.SupervisorError, "exhausted its command-line turn budget"):
+                agent_runtime.invoke_role(
+                    "supervisor",
+                    input_path,
+                    temp / "decision.json",
+                    cli=str(cli),
+                    run_dir=temp / "run",
+                )
+
+            events = [json.loads(line) for line in (temp / "run/run-manifest.jsonl").read_text().splitlines()]
+            failed = [event for event in events if event["event_type"] == "role_failed"]
+            self.assertEqual(len(failed), 2)
+            self.assertFalse(failed[0]["payload"]["terminal"])
+            self.assertEqual(failed[0]["payload"]["fallback_model"], "vllm/DeepSeek-V4-Flash-262k")
+            self.assertTrue(failed[1]["payload"]["terminal"])
+            self.assertEqual(failed[1]["payload"]["attempted_model"], "vllm/DeepSeek-V4-Flash-262k")
+            self.assertNotIn("fallback_model", failed[1]["payload"])
+
+    def test_supervisor_turn_limit_with_tool_use_does_not_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = write_text(
+                temp / "supervisor-tool-use-cli",
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "if '--help' in sys.argv:\n"
+                "    print('--model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools')\n"
+                "    raise SystemExit(0)\n"
+                "model = sys.argv[sys.argv.index('--model') + 1]\n"
+                "print('\\n'.join([\n"
+                "    json.dumps({'type': 'system', 'subtype': 'init', 'model': model, 'qwen_code_version': '0.13.1'}),\n"
+                "    json.dumps({'type': 'assistant', 'message': {'model': model, 'content': [{'type': 'tool_use', 'name': 'agent', 'input': {}}]}}),\n"
+                "    json.dumps({'type': 'result', 'subtype': 'error', 'is_error': True, 'error': 'FatalTurnLimitedError'})\n"
+                "]))\n"
+                "print('FatalTurnLimitedError', file=sys.stderr)\n"
+                "raise SystemExit(2)\n",
+            )
+            os.chmod(cli, 0o755)
+            input_path = write_json(
+                temp / "input.json",
+                {
+                    "run_id": "supervisor-tool-use",
+                    "mode": "create",
+                    "request": "Create a tool-use leak diagram.",
+                    "workspace": str(temp),
+                    "diagram": str(temp / "diagram.drawio"),
+                    "constraints": {"local_only": True, "deterministic_mutations": True, "max_iterations": 1},
+                },
+            )
+            with self.assertRaisesRegex(supervisor.SupervisorError, "exhausted its command-line turn budget"):
+                agent_runtime.invoke_role(
+                    "supervisor",
+                    input_path,
+                    temp / "decision.json",
+                    cli=str(cli),
+                    run_dir=temp / "run",
+                )
+
+            events = [json.loads(line) for line in (temp / "run/run-manifest.jsonl").read_text().splitlines()]
+            self.assertEqual([event["event_type"] for event in events], ["role_started", "role_failed"])
+            payload = events[-1]["payload"]
+            self.assertTrue(payload["terminal"])
+            self.assertEqual(payload["attempt_id"], "primary")
+            self.assertNotIn("fallback_model", payload)
+            self.assertFalse(payload["isolation_proof"]["verified"])
+            self.assertEqual(payload["isolation_proof"]["tool_calls"], 1)
 
     def test_schema_failure_preserves_proven_model_without_publishing_invalid_json(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -9,6 +9,8 @@ status, findings, checkpoint, or resume contract. Never describe `awaiting_human
 `approved_with_findings`, `manual_handoff`, `stopped`, or `error` as strict success.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
+If `model_diversity_degraded` is true, state that Supervisor recovered once on
+the configured fallback model and preserve both attempt paths.
 
 Normal use: `/drawio:create "what the diagram must show"`. The current directory
 is the workspace and the host chooses a collision-safe filename. Advanced form:

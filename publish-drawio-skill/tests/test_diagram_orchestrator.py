@@ -404,9 +404,18 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         run_dir = workspace / ".diagram-runs" / "turn-limited-run"
         host_result = json.loads((run_dir / "host-result.json").read_text())
-        self.assertEqual(len(host_result["failed_role_runs"]), 1)
+        self.assertEqual(len(host_result["failed_role_runs"]), 2)
         self.assertEqual(
-            host_result["failed_role_runs"][0]["failure_kind"], "turn_limit"
+            [item["terminal"] for item in host_result["failed_role_runs"]],
+            [False, True],
+        )
+        self.assertEqual(
+            [item["attempted_model"] for item in host_result["failed_role_runs"]],
+            ["GigaChat-3-Ultra", "vllm/DeepSeek-V4-Flash-262k"],
+        )
+        self.assertEqual(
+            [item.get("fallback_model") for item in host_result["failed_role_runs"]],
+            ["vllm/DeepSeek-V4-Flash-262k", None],
         )
 
         trace = orchestrator.trace_run(run_dir, workspace)
@@ -415,15 +424,114 @@ class DiagramOrchestratorTests(unittest.TestCase):
         self.assertTrue(trace["integrity_valid"])
         self.assertEqual(trace["status"], "failed_verified")
         self.assertEqual(trace["roles"], [])
+        self.assertEqual(len(trace["failed_roles"]), 2)
+        self.assertEqual(len(trace["terminal_failed_roles"]), 1)
+        for failed in trace["failed_roles"]:
+            self.assertEqual(failed["role"], "supervisor")
+            self.assertTrue(failed["runtime_capture_valid"])
+            self.assertTrue(failed["stderr_capture_valid"])
+            self.assertTrue(failed["isolation_controls_valid"])
+            self.assertTrue(failed["isolation_evidence_valid"])
+            self.assertTrue(failed["isolation_proof"]["verified"])
+            self.assertEqual(failed["isolation_proof"]["tool_calls"], 0)
+        self.assertFalse(trace["failed_roles"][0]["terminal"])
+        self.assertTrue(trace["failed_roles"][1]["terminal"])
+
+    def test_trace_verifies_recovered_turn_limit_path(self):
+        root, workspace, _ = self.create_workspace()
+        cli = root / "recovered-turn-limit-gigacode.py"
+        cli.write_text(
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "import sys\n"
+            "HELP = 'GigaCode --model --prompt --output-format stream-json --approval-mode --auth-type --extensions --system-prompt --max-session-turns --core-tools --exclude-tools'\n"
+            "def runtime_input():\n"
+            "    raw = sys.stdin.read()\n"
+            "    if not raw.strip():\n"
+            "        raise SystemExit('missing runtime input')\n"
+            "    return json.loads(raw)\n"
+            "def emit_stream(model, payload):\n"
+            "    encoded = json.dumps(payload, ensure_ascii=False)\n"
+            "    print('\\n'.join([\n"
+            "        json.dumps({'type':'system','subtype':'init','model':model,'qwen_code_version':'0.13.1'}),\n"
+            "        json.dumps({'type':'assistant','message':{'model':model,'content':[{'type':'text','text':encoded}]}}),\n"
+            "        json.dumps({'type':'result','subtype':'success','is_error':False,'result':encoded})\n"
+            "    ]))\n"
+            "def emit_turn_limit(model):\n"
+            "    print('\\n'.join([\n"
+            "        json.dumps({'type':'system','subtype':'init','model':model,'qwen_code_version':'0.13.1'}),\n"
+            "        json.dumps({'type':'assistant','message':{'model':model,'content':[{'type':'text','text':'still deciding'}]}}),\n"
+            "        json.dumps({'type':'result','subtype':'error','is_error':True,'error':'FatalTurnLimitedError'})\n"
+            "    ]))\n"
+            "    print('FatalTurnLimitedError', file=sys.stderr)\n"
+            "    raise SystemExit(2)\n"
+            "if '--help' in sys.argv:\n"
+            "    print(HELP)\n"
+            "    raise SystemExit(0)\n"
+            "if '--version' in sys.argv:\n"
+            "    print('26.5.17-test')\n"
+            "    raise SystemExit(0)\n"
+            "payload = runtime_input()\n"
+            "model = sys.argv[sys.argv.index('--model') + 1]\n"
+            "if model == 'GigaChat-3-Ultra' and 'recovered-turn-limit' in payload.get('request', ''):\n"
+            "    emit_turn_limit(model)\n"
+            "if model == 'GigaChat-3-Ultra':\n"
+            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'schema-valid supervisor decision', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}})\n"
+            "elif model == 'vllm/DeepSeek-V4-Flash-262k' and 'recovered-turn-limit' in payload.get('request', ''):\n"
+            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'fallback approval', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}})\n"
+            "elif model == 'vllm/Qwen3.6-35B-262k':\n"
+            "    requires_human = payload['mode'] == 'improve'\n"
+            "    emit_stream(model, {'schema_version': 1, 'role': 'semantic_analyst', 'status': 'needs_human' if requires_human else 'ok', 'result': {'mode': payload['mode'], 'diagram_type': 'flowchart', 'title': f\"Test {payload['mode']} plan\", 'direction': 'LR', 'nodes': [{'id': 'start', 'label': 'Start', 'semantic_type': 'start'}, {'id': 'end', 'label': 'End', 'semantic_type': 'end'}], 'edges': [{'id': 'flow', 'source_id': 'start', 'target_id': 'end', 'label': 'flow', 'relationship': 'sequence'}], 'source_refs': [], 'assumptions': [], 'semantic_changes': ['Add approval branch'] if requires_human else [], 'requires_human': requires_human}})\n"
+            "elif model == 'vllm/DeepSeek-V4-Flash-262k':\n"
+            "    candidate = payload.get('candidate')\n"
+            "    if isinstance(candidate, dict) and isinstance(candidate.get('artifact'), dict):\n"
+            "        candidate_sha256 = candidate['artifact']['sha256']\n"
+            "        report_sha256 = candidate['report']['sha256']\n"
+            "        receipt_sha256 = candidate['receipt']['sha256']\n"
+            "    elif isinstance(candidate, dict) and 'sha256' in candidate:\n"
+            "        candidate_sha256 = candidate['sha256']\n"
+            "        report_sha256 = payload['validation_report']['sha256']\n"
+            "        receipt_sha256 = payload['validation_receipt']['sha256']\n"
+            "    else:\n"
+            "        candidate_sha256 = payload['artifact']['sha256']\n"
+            "        report_sha256 = payload['report']['sha256']\n"
+            "        receipt_sha256 = payload['receipt']['sha256']\n"
+            "    emit_stream(model, {'schema_version': 1, 'verdict_id': 'review-test', 'run_id': payload['run_id'], 'candidate_sha256': candidate_sha256, 'report_sha256': report_sha256, 'receipt_sha256': receipt_sha256, 'verdict': 'approve', 'reviewed_at': '2026-07-20T12:00:00Z', 'reviewer': {'resolved_model': model, 'provider': 'vllm', 'resolution_mode': 'isolated_cli'}, 'findings': []})\n"
+            "else:\n"
+            "    raise SystemExit(f'unexpected model: {model}')\n",
+            encoding="utf-8",
+        )
+        cli.chmod(0o755)
+        target = workspace / "recovered-turn-limit.drawio"
+        completed = self.run_host(
+            "create",
+            "--workspace",
+            workspace,
+            "--cli",
+            cli,
+            "--run-id",
+            "recovered-turn-limit-run",
+            "Create a recovered-turn-limit diagram.",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        run_dir = workspace / ".diagram-runs" / "recovered-turn-limit-run"
+        host_result = json.loads((run_dir / "host-result.json").read_text())
+        self.assertEqual(host_result["status"], "awaiting_human")
+        self.assertEqual(len(host_result["failed_role_runs"]), 1)
+        self.assertFalse(host_result["failed_role_runs"][0]["terminal"])
+        self.assertTrue(host_result["model_diversity_degraded"])
+        resumed = orchestrator.resume_run(run_dir, "approve", "", workspace, cli)
+        self.assertEqual(resumed["status"], "completed")
+        trace = orchestrator.trace_run(run_dir, workspace)
+        self.assertTrue(trace["valid"])
+        self.assertEqual(trace["status"], "verified")
+        self.assertEqual(trace["terminal_failed_roles"], [])
         self.assertEqual(len(trace["failed_roles"]), 1)
-        failed = trace["failed_roles"][0]
-        self.assertEqual(failed["role"], "supervisor")
-        self.assertTrue(failed["runtime_capture_valid"])
-        self.assertTrue(failed["stderr_capture_valid"])
-        self.assertTrue(failed["isolation_controls_valid"])
-        self.assertTrue(failed["isolation_evidence_valid"])
-        self.assertTrue(failed["isolation_proof"]["verified"])
-        self.assertEqual(failed["isolation_proof"]["tool_calls"], 0)
+        self.assertFalse(trace["failed_roles"][0]["terminal"])
+        self.assertTrue(trace["model_diversity_degraded"])
+        self.assertTrue(
+            any(role["role"] == "supervisor" and role["fallback_used"] for role in trace["roles"])
+        )
 
     def test_trace_detects_tampered_model_proof_after_manifest_chain_is_rehashed(self):
         root, workspace, cli = self.create_workspace()

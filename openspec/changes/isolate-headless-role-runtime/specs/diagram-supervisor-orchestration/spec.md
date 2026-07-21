@@ -26,3 +26,7 @@ The lifecycle host SHALL treat every isolated Supervisor, Semantic Analyst, Repa
 #### Scenario: Operator traces an unsuccessful role
 - **WHEN** `/drawio:trace` inspects a run containing `role_failed`
 - **THEN** it reports the failed role, failure phase, capture integrity, isolation evidence, and diagnostic without misclassifying an expected failed workflow as a successfully accepted artifact
+
+#### Scenario: Supervisor primary attempt is recovered by policy
+- **WHEN** a nonterminal `role_failed` event for Supervisor is followed by a schema-valid, model-proven fallback `role_finished` event
+- **THEN** the workflow continues, `/drawio:trace` validates both attempts, and host results report the run as model-diversity degraded rather than terminally failed

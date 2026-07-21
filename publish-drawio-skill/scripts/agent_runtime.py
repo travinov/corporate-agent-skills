@@ -171,7 +171,9 @@ def isolated_role_system_prompt(role, prompt_path, payload):
     )
 
 
-def build_gemini_command(cli, model=None, auth_type=None, *, system_prompt):
+def build_gemini_command(
+    cli, model=None, auth_type=None, *, system_prompt, output_format="json"
+):
     command = [cli]
     if auth_type:
         command.extend(["--auth-type", auth_type])
@@ -187,7 +189,7 @@ def build_gemini_command(cli, model=None, auth_type=None, *, system_prompt):
             "Process the canonical runtime JSON supplied on standard input. "
             "Return exactly one object satisfying the system contract."
         ),
-        "--output-format", "json",
+        "--output-format", output_format,
         "--approval-mode", ROLE_APPROVAL_MODE,
     ])
     return command
@@ -195,6 +197,39 @@ def build_gemini_command(cli, model=None, auth_type=None, *, system_prompt):
 
 def minimal_environment():
     return {key: value for key, value in os.environ.items() if key in SAFE_ENV_KEYS}
+
+
+def run_captured_process(command, stdin_text, *, timeout, cwd):
+    """Run with stdout/stderr written continuously to temporary files."""
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file, \
+            tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            cwd=cwd,
+            env=minimal_environment(),
+        )
+        try:
+            process.communicate(input=stdin_text, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            exc.stdout = stdout_file.read()
+            exc.stderr = stderr_file.read()
+            raise
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        return subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout=stdout_file.read(),
+            stderr=stderr_file.read(),
+        )
 
 
 def _atomic_write_text(path, text):
@@ -211,13 +246,22 @@ def _atomic_write_text(path, text):
     return path
 
 
-def persist_runtime_captures(output_path, stdout, stderr):
+def persist_runtime_captures(
+    output_path, stdout, stderr, *, output_format="json", attempt_id=None
+):
     output_path = Path(output_path)
+    capture_dir = output_path.parent
+    if attempt_id:
+        capture_dir = capture_dir / "attempts" / attempt_id
+    capture_name = (
+        "runtime-output.jsonl" if output_format == "stream-json"
+        else "runtime-output.json"
+    )
     runtime_capture = _atomic_write_text(
-        output_path.with_name("runtime-output.json"), stdout or ""
+        capture_dir / capture_name, stdout or ""
     )
     stderr_capture = _atomic_write_text(
-        output_path.with_name("runtime-stderr.txt"), redact(stderr or "")
+        capture_dir / "runtime-stderr.txt", redact(stderr or "")
     )
     return {
         "runtime_capture": str(runtime_capture.resolve()),
@@ -248,6 +292,7 @@ def detect_cli_capabilities(cli):
         "gigacode" in Path(cli).name.lower()
         or bool(re.search(r"(?i)\bGigaCode\b|--auth-type.{0,240}\bgigacode\b", help_text, re.DOTALL))
     )
+    supports_stream_json = bool(re.search(r"(?<![\w-])stream-json(?![\w-])", help_text))
     return {
         "available": completed.returncode == 0 and not missing,
         "inherited_available": completed.returncode == 0 and not inherited_missing,
@@ -260,6 +305,7 @@ def detect_cli_capabilities(cli):
         "isolation_available": completed.returncode == 0 and not [
             flag for flag in isolation_required if flag not in help_text
         ],
+        "supports_stream_json": supports_stream_json,
     }
 
 
@@ -312,9 +358,14 @@ def _gigacode_isolation_proof(role, events):
     leaked_commands = set()
     tool_calls = []
     init_events = 0
+    assistant_events = 0
+    system_models = set()
+    assistant_models = set()
     for event in events:
         if event.get("type") == "system" and event.get("subtype") == "init":
             init_events += 1
+            if event.get("model"):
+                system_models.add(event["model"])
             agents = event.get("agents") if isinstance(event.get("agents"), list) else []
             commands = (
                 event.get("slash_commands")
@@ -330,6 +381,9 @@ def _gigacode_isolation_proof(role, events):
                 if isinstance(value, str) and value.startswith("drawio:")
             )
         if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
+            assistant_events += 1
+            if event["message"].get("model"):
+                assistant_models.add(event["message"]["model"])
             content = event["message"].get("content")
         else:
             content = None
@@ -362,14 +416,51 @@ def _gigacode_isolation_proof(role, events):
         "drawio_agents": sorted(leaked_agents),
         "drawio_commands": sorted(leaked_commands),
         "system_init_events": init_events,
+        "event_count": len(events),
+        "assistant_events": assistant_events,
+        "last_event_type": events[-1].get("type"),
+        "system_models": sorted(system_models),
+        "assistant_models": sorted(assistant_models),
         "diagnostic": "; ".join(diagnostics) if diagnostics else None,
     }
 
 
-def inspect_runtime_isolation(role, output):
+def _decode_runtime_events(output):
+    """Decode either buffered JSON events or newline-delimited stream-json."""
     try:
         outer = json.loads(output)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError as buffered_error:
+        events = []
+        for line_number, line in enumerate((output or "").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SupervisorError(
+                    f"runtime capture JSONL line {line_number} is invalid: {exc}"
+                ) from exc
+            if not isinstance(event, dict):
+                raise SupervisorError(
+                    f"runtime capture JSONL line {line_number} is not an object"
+                )
+            events.append(event)
+        if not events:
+            raise SupervisorError(
+                f"runtime capture is neither buffered JSON nor JSONL: {buffered_error}"
+            ) from buffered_error
+        return events, "stream-json"
+    if isinstance(outer, list):
+        return outer, "json"
+    if isinstance(outer, dict) and outer.get("type") in {"system", "assistant", "result"}:
+        return [outer], "stream-json"
+    return outer, "json"
+
+
+def inspect_runtime_isolation(role, output):
+    try:
+        outer, _ = _decode_runtime_events(output)
+    except SupervisorError as exc:
         return {
             "verified": False,
             "tool_calls": None,
@@ -377,7 +468,7 @@ def inspect_runtime_isolation(role, output):
             "drawio_agents": [],
             "drawio_commands": [],
             "system_init_events": 0,
-            "diagnostic": f"runtime capture is not valid JSON: {exc}",
+            "diagnostic": str(exc),
         }
     if not isinstance(outer, list):
         return {
@@ -392,7 +483,7 @@ def inspect_runtime_isolation(role, output):
     return _gigacode_isolation_proof(role, outer)
 
 
-def _parse_gigacode_events(role, events):
+def _parse_gigacode_events(role, events, *, stream=False):
     isolation_proof = _gigacode_isolation_proof(role, events)
     if not isolation_proof["verified"]:
         raise SupervisorError(
@@ -441,7 +532,11 @@ def _parse_gigacode_events(role, events):
         )
     system_model = next(iter(system_models))
     assistant_model = next(iter(assistant_models))
-    if system_model != assistant_model or system_model not in stats_models:
+    stats_proof_required = not stream or bool(stats_models_value)
+    if (
+        system_model != assistant_model
+        or (stats_proof_required and system_model not in stats_models)
+    ):
         raise SupervisorError(
             f"isolated {role} GigaCode model proof mismatch: system={system_model!r}, "
             f"assistant={assistant_model!r}, stats={sorted(stats_models)!r}"
@@ -454,7 +549,7 @@ def _parse_gigacode_events(role, events):
         role_value = assistant_texts[-1]
     parsed = _parse_json_role_text(role, role_value, "GigaCode result")
     return parsed, {
-        "format": "gigacode_json_events",
+        "format": "gigacode_stream_json" if stream else "gigacode_json_events",
         "stats": sanitized_metadata(stats),
         "errors": sanitized_metadata(result.get("error")),
         "reported_model": system_model,
@@ -463,6 +558,11 @@ def _parse_gigacode_events(role, events):
             "system_model": system_model,
             "assistant_model": assistant_model,
             "stats_models": sorted(stats_models),
+            "stats_required": stats_proof_required,
+            "sources": [
+                "system.init.model", "assistant.message.model",
+                *(["result.stats.models"] if stats_models_value else []),
+            ],
         },
         "isolation_proof": isolation_proof,
         "runtime_version": next(
@@ -497,11 +597,11 @@ def sanitized_metadata(value):
 
 def parse_runtime_output(role, output):
     try:
-        outer = json.loads(output)
-    except json.JSONDecodeError as exc:
+        outer, encoding = _decode_runtime_events(output)
+    except SupervisorError as exc:
         raise SupervisorError(f"isolated {role} output is not valid JSON: {exc}") from exc
     if isinstance(outer, list):
-        return _parse_gigacode_events(role, outer)
+        return _parse_gigacode_events(role, outer, stream=encoding == "stream-json")
     if isinstance(outer, dict) and "response" in outer:
         errors = outer.get("errors")
         error = outer.get("error")
@@ -554,18 +654,35 @@ def model_unavailable(stderr):
     return bool(re.search(r"(?i)(unknown|unsupported|unavailable|not[ -]found|no access).{0,80}model|model.{0,80}(unknown|unsupported|unavailable|not[ -]found|no access)", stderr or ""))
 
 
+def runtime_fallback_for(config, failure_kind):
+    for fallback in config.get("runtime_fallbacks", []):
+        if failure_kind in fallback.get("on_failure", []):
+            return fallback
+    return None
+
+
 def record_failure(
     run_dir, role, phase, requested_model, *, exit_code=None, diagnostic=None,
     resolved_model=None, model_proof=None, reported_model=None, runtime_version=None,
     invalid_output_sha256=None, failure_kind=None, capture_evidence=None,
-    isolation_proof=None,
+    isolation_proof=None, terminal=True, attempted_model=None,
+    fallback_model=None, attempt_id=None, output_format=None,
 ):
     if run_dir:
         payload = {
             "role": role, "phase": phase, "requested_model": requested_model,
             "exit_code": exit_code, "diagnostic": redact(diagnostic or "")[-1000:],
             "isolation_controls": role_isolation_controls(),
+            "terminal": bool(terminal),
         }
+        if attempted_model is not None:
+            payload["attempted_model"] = attempted_model
+        if fallback_model is not None:
+            payload["fallback_model"] = fallback_model
+        if attempt_id is not None:
+            payload["attempt_id"] = attempt_id
+        if output_format is not None:
+            payload["output_format"] = output_format
         if resolved_model is not None:
             payload["resolved_model"] = resolved_model
         if model_proof is not None:
@@ -593,12 +710,19 @@ def invoke_role(
     role, input_path, output_path, *, cli=None, policy_path=DEFAULT_POLICY,
     run_dir=None, timeout=600, cwd=None, dry_run=False,
     current_model=None, current_provider=None, auth_type=None,
+    _attempted_model=None, _attempt_id=None, _allow_runtime_fallback=True,
 ):
     cli = cli or DEFAULT_CLI
     policy = load_json(policy_path)
     config = policy.get("roles", {}).get(role)
     if config is None:
         raise SupervisorError(f"unknown role {role!r}")
+    primary_model = config["requested_model"]
+    attempted_model = _attempted_model or primary_model
+    has_runtime_fallback = bool(config.get("runtime_fallbacks"))
+    if has_runtime_fallback and role != "supervisor":
+        raise SupervisorError("runtime model fallback is permitted only for supervisor")
+    attempt_id = _attempt_id or ("primary" if has_runtime_fallback else None)
     prompt_path = ROOT / config["prompt"]
     payload = load_json(input_path)
     stdin_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -619,23 +743,47 @@ def invoke_role(
         )
         raise SupervisorError(f"CLI {cli!r} does not support explicit --auth-type")
     auth_type = auth_type or capabilities["suggested_auth_type"]
+    output_format = "stream-json" if capabilities["supports_stream_json"] else "json"
     command = build_gemini_command(
         cli,
-        None if inherited_without_override else config["requested_model"],
+        None if inherited_without_override else attempted_model,
         auth_type=auth_type,
         system_prompt=system_prompt,
+        output_format=output_format,
     )
     resolution = resolve_model(
         policy_path, role, isolated_available=not inherited_without_override,
         current_model=("unknown/default" if inherited_without_override else None),
         current_provider=("unknown" if inherited_without_override else current_provider), run_dir=None,
     )
+    if attempted_model != primary_model:
+        fallback_config = next(
+            (
+                item for item in config.get("runtime_fallbacks", [])
+                if item.get("model") == attempted_model
+            ),
+            None,
+        )
+        if fallback_config is None:
+            raise SupervisorError(
+                f"isolated {role} attempted undeclared runtime fallback {attempted_model!r}"
+            )
+        resolution.update({
+            "resolved_model": attempted_model,
+            "provider": fallback_config["provider"],
+            "fallback_used": True,
+            "degradation_reason": (
+                f"primary {primary_model} exhausted its isolated turn budget"
+            ),
+        })
     result = {
         "role": role,
         "command": command,
         "resolution": resolution,
         "capabilities": capabilities,
         "isolation_controls": role_isolation_controls(),
+        "output_format": output_format,
+        "attempt_id": attempt_id,
         "started_at": utc_now(),
         "dry_run": dry_run,
     }
@@ -652,6 +800,9 @@ def invoke_role(
                     Path(input_path).read_bytes()
                 ).hexdigest(),
                 "requested_model": config["requested_model"],
+                "attempted_model": attempted_model,
+                "attempt_id": attempt_id,
+                "output_format": output_format,
                 "resolution_mode": resolution["resolution_mode"],
                 "fallback_used": resolution["fallback_used"],
                 "isolation_controls": role_isolation_controls(),
@@ -661,12 +812,22 @@ def invoke_role(
     output_path = Path(output_path)
     output_path.unlink(missing_ok=True)
     try:
-        completed = subprocess.run(
-            command, input=stdin_text, text=True, capture_output=True, check=False,
-            timeout=timeout, cwd=cwd, env=minimal_environment(),
+        completed = run_captured_process(
+            command, stdin_text, timeout=timeout, cwd=cwd,
         )
     except subprocess.TimeoutExpired as exc:
-        record_failure(run_dir, role, "execution_timeout", config["requested_model"], diagnostic=str(exc))
+        capture_evidence = persist_runtime_captures(
+            output_path, exc.stdout or "", exc.stderr or "",
+            output_format=output_format, attempt_id=attempt_id,
+        )
+        isolation_proof = inspect_runtime_isolation(role, exc.stdout or "")
+        record_failure(
+            run_dir, role, "execution_timeout", primary_model,
+            diagnostic=str(exc), failure_kind="timeout",
+            capture_evidence=capture_evidence, isolation_proof=isolation_proof,
+            attempted_model=attempted_model, attempt_id=attempt_id,
+            output_format=output_format,
+        )
         raise SupervisorError(f"isolated {role} process timed out after {timeout}s") from exc
     failure_diagnostic = (completed.stderr or "") + "\n" + (completed.stdout or "")
     if completed.returncode != 0 and not inherited_without_override and current_model and model_unavailable(failure_diagnostic):
@@ -676,12 +837,12 @@ def invoke_role(
         )
         inherited_without_override = False
         command = build_gemini_command(
-            cli, current_model, auth_type=auth_type, system_prompt=system_prompt
+            cli, current_model, auth_type=auth_type, system_prompt=system_prompt,
+            output_format=output_format,
         )
         try:
-            completed = subprocess.run(
-                command, input=stdin_text, text=True, capture_output=True, check=False,
-                timeout=timeout, cwd=cwd, env=minimal_environment(),
+            completed = run_captured_process(
+                command, stdin_text, timeout=timeout, cwd=cwd,
             )
         except subprocess.TimeoutExpired as exc:
             record_failure(run_dir, role, "fallback_timeout", config["requested_model"], diagnostic=str(exc))
@@ -694,7 +855,8 @@ def invoke_role(
         result["resolution"] = resolution
         result["fallback_from"] = config["requested_model"]
     capture_evidence = persist_runtime_captures(
-        output_path, completed.stdout, completed.stderr
+        output_path, completed.stdout, completed.stderr,
+        output_format=output_format, attempt_id=attempt_id,
     )
     runtime_capture_path = Path(capture_evidence["runtime_capture"])
     stderr_capture_path = Path(capture_evidence["stderr_capture"])
@@ -702,13 +864,50 @@ def invoke_role(
     if completed.returncode != 0:
         failure_diagnostic = (completed.stderr or "") + "\n" + (completed.stdout or "")
         turn_limited = "FatalTurnLimitedError" in failure_diagnostic
+        primary_identity_verified = (
+            isolation_proof.get("system_models") == [attempted_model]
+            and isolation_proof.get("assistant_models") in ([], [attempted_model])
+        )
+        fallback = (
+            runtime_fallback_for(config, "turn_limit")
+            if (
+                turn_limited
+                and _allow_runtime_fallback
+                and attempted_model == primary_model
+                and isolation_proof.get("verified") is True
+                and primary_identity_verified
+            )
+            else None
+        )
         record_failure(
-            run_dir, role, "execution", config["requested_model"],
+            run_dir, role, "execution", primary_model,
             exit_code=completed.returncode, diagnostic=failure_diagnostic,
             failure_kind="turn_limit" if turn_limited else "process_exit",
             capture_evidence=capture_evidence,
             isolation_proof=isolation_proof,
+            terminal=fallback is None,
+            attempted_model=attempted_model,
+            fallback_model=fallback.get("model") if fallback else None,
+            attempt_id=attempt_id,
+            output_format=output_format,
         )
+        if fallback is not None:
+            fallback_result = invoke_role(
+                role, input_path, output_path, cli=cli, policy_path=policy_path,
+                run_dir=run_dir, timeout=timeout, cwd=cwd, dry_run=False,
+                current_model=None, current_provider=None, auth_type=auth_type,
+                _attempted_model=fallback["model"], _attempt_id="fallback-1",
+                _allow_runtime_fallback=False,
+            )
+            fallback_result["recovered_from"] = {
+                "failure_kind": "turn_limit",
+                "attempted_model": attempted_model,
+                "runtime_capture": capture_evidence["runtime_capture"],
+                "runtime_capture_sha256": capture_evidence["runtime_capture_sha256"],
+                "stderr_capture": capture_evidence["stderr_capture"],
+                "stderr_capture_sha256": capture_evidence["stderr_capture_sha256"],
+            }
+            return fallback_result
         if turn_limited:
             raise SupervisorError(
                 f"isolated {role} exhausted its command-line turn budget; "
@@ -729,7 +928,7 @@ def invoke_role(
             None
             if inherited_without_override and not result.get("fallback_from")
             else current_model if result.get("fallback_from")
-            else config["requested_model"]
+            else attempted_model
         )
         if not runtime_metadata.get("model_proof", {}).get("verified") or not reported_model:
             raise SupervisorError(f"isolated {role} runtime did not provide verifiable model evidence")
@@ -770,6 +969,9 @@ def invoke_role(
                 runtime_metadata.get("isolation_proof")
                 if runtime_metadata else isolation_proof
             ),
+            attempted_model=attempted_model,
+            attempt_id=attempt_id,
+            output_format=output_format,
         )
         raise
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=output_path.parent, delete=False) as tmp:
@@ -802,6 +1004,10 @@ def invoke_role(
                 "resolved_model": resolution["resolved_model"],
                 "resolution_mode": resolution["resolution_mode"],
                 "fallback_used": resolution["fallback_used"],
+                "degradation_reason": resolution.get("degradation_reason"),
+                "attempted_model": attempted_model,
+                "attempt_id": attempt_id,
+                "output_format": output_format,
                 "output": result["output"],
                 "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
                 "runtime_capture": result["runtime_capture"],

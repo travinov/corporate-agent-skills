@@ -9,7 +9,15 @@
       "activation": "permanent",
       "prompt": "agents/diagram-supervisor.md",
       "mutation_policy": "orchestration_only",
-      "fallback_order": ["isolated_cli", "native_per_agent", "inherited_current"]
+      "fallback_order": ["isolated_cli", "native_per_agent", "inherited_current"],
+      "runtime_fallbacks": [
+        {
+          "model": "vllm/DeepSeek-V4-Flash-262k",
+          "provider": "vllm",
+          "on_failure": ["turn_limit"],
+          "max_attempts": 1
+        }
+      ]
     },
     "reviewer": {
       "requested_model": "vllm/DeepSeek-V4-Flash-262k",

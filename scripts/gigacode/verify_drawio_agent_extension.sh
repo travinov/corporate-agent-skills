@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.5}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.23.0-corporate.6}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -171,6 +171,17 @@ def verify_tree(root, label):
     for role, config in policy["roles"].items():
         if config.get("fallback_order") != ["isolated_cli", "native_per_agent", "inherited_current"]:
             fail(f"Unexpected {label} fallback order for {role}: {config.get('fallback_order')!r}")
+    expected_runtime_fallbacks = [{
+        "model": "vllm/DeepSeek-V4-Flash-262k",
+        "provider": "vllm",
+        "on_failure": ["turn_limit"],
+        "max_attempts": 1,
+    }]
+    if policy["roles"]["supervisor"].get("runtime_fallbacks") != expected_runtime_fallbacks:
+        fail(f"Unexpected {label} supervisor runtime fallback policy")
+    for role in ("reviewer", "repair", "semantic_analyst"):
+        if policy["roles"][role].get("runtime_fallbacks"):
+            fail(f"Unexpected {label} runtime fallback for {role}")
     if policy["roles"]["reviewer"].get("provider") != "vllm":
         fail(f"Unexpected {label} reviewer provider")
     for role, filename in agent_files.items():
