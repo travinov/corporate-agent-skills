@@ -77,6 +77,16 @@ def diagram_xml(*, obstacle=False, crossing=False):
 """
 
 
+def routed_diagram_xml():
+    return diagram_xml().replace(
+        'style="html=1;" parent="1" source="source" target="target" edge="1"',
+        'style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="source" target="target" edge="1"',
+    ).replace(
+        '<mxGeometry relative="1" as="geometry" />',
+        '<mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="190" y="30" /><mxPoint x="190" y="30" /></Array></mxGeometry>',
+    )
+
+
 def clean_diagram_xml():
     return """<?xml version="1.0" encoding="UTF-8"?>
 <mxfile host="app.diagrams.net">
@@ -687,6 +697,153 @@ class TransactionalPatchTests(unittest.TestCase):
             proposal = supervisor.route_patch(source, "edge", ["finding-through"])
 
         assert_schema(self, proposal, "diagram-patch.v1.schema.json")
+
+    def test_route_shaped_expected_value_applies_and_stale_route_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            source = write_text(temp / "source.drawio", routed_diagram_xml())
+            _, cells = parsed_cells(source)
+            edge = cells["edge"]
+            operation = {
+                "operation_id": "route-with-operation-shaped-precondition",
+                "op": "set_edge_route",
+                "target_id": "edge",
+                "precondition": {
+                    "target_exists": True,
+                    "expected_value": {
+                        "orthogonal": True,
+                        "waypoints": [{"x": 190.0, "y": 30.0}, {"x": 190.0, "y": 30.0}],
+                    },
+                },
+                "proposed_value": {
+                    "orthogonal": True,
+                    "waypoints": [{"x": 220.0, "y": 30.0}, {"x": 220.0, "y": 30.0}],
+                },
+                "semantic_effect": "layout_only",
+                "reasons": ["regression for corporate route repair preconditions"],
+                "finding_ids": ["route-through"],
+                "rollback": {
+                    "action": "restore_value",
+                    "value": {"cell_xml": ET.tostring(edge, encoding="unicode")},
+                },
+            }
+            patch = canonical_patch(source, [operation])
+            assert_schema(self, patch, "diagram-patch.v1.schema.json")
+            candidate = temp / "candidate.drawio"
+            result = supervisor.apply_patch_file(
+                source, write_json(temp / "patch.json", patch), candidate,
+            )
+            self.assertEqual(result["status"], "applied")
+            points = cell(candidate, "edge").findall("mxGeometry/Array[@as='points']/mxPoint")
+            self.assertEqual(
+                [(point.get("x"), point.get("y")) for point in points],
+                [("220.0", "30.0"), ("220.0", "30.0")],
+            )
+
+            stale = json.loads(json.dumps(patch))
+            stale["operations"][0]["precondition"]["expected_value"]["waypoints"][0]["x"] = 191.0
+            blocked = temp / "blocked.drawio"
+            with self.assertRaisesRegex(supervisor.SupervisorError, "precondition expected_value failed"):
+                supervisor.apply_patch_file(
+                    source, write_json(temp / "stale.json", stale), blocked,
+                )
+            self.assertFalse(blocked.exists())
+
+    def test_operation_shaped_expected_values_cover_pins_labels_move_and_resize(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            routed = write_text(temp / "routed.drawio", routed_diagram_xml())
+            _, routed_cells = parsed_cells(routed)
+            edge = routed_cells["edge"]
+            supervisor.check_precondition(
+                edge,
+                {
+                    "target_exists": True,
+                    "expected_value": {
+                        "orthogonal": True,
+                        "points": [{"x": 190.0, "y": 30.0}, {"x": 190.0, "y": 30.0}],
+                    },
+                },
+                "set_edge_route",
+            )
+            supervisor.check_precondition(
+                edge,
+                {
+                    "target_exists": True,
+                    "expected_value": {
+                        "source": {"x": 1.0, "y": 0.5},
+                        "target": {"x": 0.0, "y": 0.5},
+                    },
+                },
+                "set_edge_pins",
+            )
+            supervisor.check_precondition(
+                edge,
+                {
+                    "target_exists": True,
+                    "expected_value": {
+                        "exitX": 1.0,
+                        "exitY": 0.5,
+                        "entryX": 0.0,
+                        "entryY": 0.5,
+                    },
+                },
+                "set_edge_pins",
+            )
+            with self.assertRaisesRegex(supervisor.SupervisorError, "precondition expected_value failed"):
+                supervisor.check_precondition(
+                    edge,
+                    {
+                        "target_exists": True,
+                        "expected_value": {
+                            "source": {"x": 0.0, "y": 0.5},
+                            "target": {"x": 0.0, "y": 0.5},
+                        },
+                    },
+                    "set_edge_pins",
+                )
+
+            edge_geometry = edge.find("mxGeometry")
+            edge_geometry.set("x", "0.25")
+            edge_geometry.set("y", "-0.5")
+            ET.SubElement(edge_geometry, "mxPoint", {"as": "offset", "x": "12", "y": "8"})
+            supervisor.check_precondition(
+                edge,
+                {
+                    "target_exists": True,
+                    "expected_value": {
+                        "x": 0.25,
+                        "y": -0.5,
+                        "offset": {"x": 12.0, "y": 8.0},
+                    },
+                },
+                "set_label_offset",
+            )
+
+            node_source = write_text(temp / "node.drawio", clean_diagram_xml())
+            _, node_cells = parsed_cells(node_source)
+            node = node_cells["node"]
+            supervisor.check_precondition(
+                node,
+                {"target_exists": True, "expected_value": {"x": 100.0, "y": 100.0}},
+                "move_vertex",
+            )
+            supervisor.check_precondition(
+                node,
+                {"target_exists": True, "expected_value": {"width": 120.0, "height": 60.0}},
+                "resize_vertex",
+            )
+            supervisor.check_precondition(
+                node,
+                {
+                    "target_exists": True,
+                    "expected_value": {
+                        "attributes": {"value": ""},
+                        "geometry": {"x": 100.0},
+                    },
+                },
+                "move_vertex",
+            )
 
     def test_failed_precondition_does_not_publish_or_replace_output(self):
         with tempfile.TemporaryDirectory() as temp:

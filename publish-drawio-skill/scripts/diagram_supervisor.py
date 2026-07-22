@@ -587,6 +587,60 @@ def style_value_local(cell, key):
     return None
 
 
+def numeric_style_value(cell, key):
+    value = style_value_local(cell, key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def operation_current_value(cell, operation_type):
+    """Expose strict, operation-shaped aliases for precondition matching.
+
+    The generic cell_snapshot contract remains available separately. These
+    aliases only describe fields owned by the requested operation, so an
+    expected_value with an unknown or mixed shape still fails closed.
+    """
+    current_geometry = geometry(cell) or {}
+    if operation_type == "set_edge_route":
+        points = current_geometry.get("points", [])
+        return {
+            "orthogonal": style_value_local(cell, "edgeStyle") == "orthogonalEdgeStyle",
+            "waypoints": points,
+            "points": points,
+        }
+    if operation_type == "set_edge_pins":
+        raw_keys = ("exitX", "exitY", "entryX", "entryY")
+        pins = {key: numeric_style_value(cell, key) for key in raw_keys}
+        if any(value is None for value in pins.values()):
+            return {}
+        return {
+            "source": {"x": pins["exitX"], "y": pins["exitY"]},
+            "target": {"x": pins["entryX"], "y": pins["entryY"]},
+            **pins,
+        }
+    if operation_type == "set_label_offset":
+        if not all(key in current_geometry for key in ("x", "y")):
+            return {}
+        return {
+            "x": current_geometry["x"],
+            "y": current_geometry["y"],
+            "offset": current_geometry.get("offset", {"x": 0.0, "y": 0.0}),
+        }
+    if operation_type == "move_vertex":
+        if not all(key in current_geometry for key in ("x", "y")):
+            return {}
+        return {key: current_geometry[key] for key in ("x", "y")}
+    if operation_type in {"resize_vertex", "resize_container"}:
+        if not all(key in current_geometry for key in ("width", "height")):
+            return {}
+        return {key: current_geometry[key] for key in ("width", "height")}
+    return None
+
+
 def require_geometry(cell):
     node = cell.find("mxGeometry")
     if node is None:
@@ -594,7 +648,7 @@ def require_geometry(cell):
     return node
 
 
-def check_precondition(cell, precondition):
+def check_precondition(cell, precondition, operation_type=None):
     if not precondition:
         raise SupervisorError("every patch operation requires a precondition")
     if precondition.get("target_exists") is False:
@@ -612,8 +666,14 @@ def check_precondition(cell, precondition):
         raise SupervisorError(f"precondition expected_parent_id failed for {cell.get('id')}")
     if "expected_value" in precondition:
         expected_value = precondition["expected_value"]
-        actual_value = cell_snapshot(cell) if isinstance(expected_value, dict) else cell.get("value")
-        if not contains_expected(actual_value, expected_value):
+        if isinstance(expected_value, dict):
+            actual_values = [cell_snapshot(cell)]
+            operation_value = operation_current_value(cell, operation_type)
+            if operation_value is not None:
+                actual_values.append(operation_value)
+        else:
+            actual_values = [cell.get("value")]
+        if not any(contains_expected(actual_value, expected_value) for actual_value in actual_values):
             raise SupervisorError(f"precondition expected_value failed for {cell.get('id')}")
 
 
@@ -861,7 +921,7 @@ def apply_operation(root, by_id, operation):
         raise SupervisorError(f"unknown target cell {target!r}")
     if target in {"0", "1"} and op == "remove_semantic_element":
         raise SupervisorError("reserved root/layer cells cannot be removed")
-    check_precondition(cell, operation.get("precondition"))
+    check_precondition(cell, operation.get("precondition"), op)
     value = operation.get("proposed_value", operation.get("value", {}))
     if op in {"move_vertex", "resize_vertex", "resize_container"}:
         if cell.get("vertex") != "1":

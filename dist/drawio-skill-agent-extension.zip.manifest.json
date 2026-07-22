@@ -1,7 +1,7 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "833486553174c8b1208e69c8a1bb7cec4024ba7b7fd55dc1214db6b6feb1e716",
+  "archive_sha256": "e568c6607ef47d316101b592816607a2329b90dd71cc7ffef7f3fbbee6d40e58",
   "files": [
     {
       "path": "DEPENDENCIES.md",
@@ -25,18 +25,18 @@
     },
     {
       "path": "SKILL.md",
-      "sha256": "ad1afcac4d27af73f488bcc526289a82186f8c46db65b1e8c382c440101c9ad3",
+      "sha256": "c3e6a6b50c7268eb68b22c2d9e02f968479d698dc52beaa439a1d47d90ac922e",
       "size": 50606
     },
     {
       "path": "agents/diagram-repair.md",
-      "sha256": "e2056921eb8a0c0fdbb850b6ac2c910ecadffd4c78e25bae04ab0082c0a7d9c8",
-      "size": 2246
+      "sha256": "bafc4a7c9df99f92d67ef4894eae8146c28e34bb919004845fd018d9aad04e70",
+      "size": 3305
     },
     {
       "path": "agents/diagram-reviewer.md",
-      "sha256": "1ef7871e42ece9f1a4e895e6299670c5a39c8704958c433c45306a13a20044ea",
-      "size": 3966
+      "sha256": "e5172c04264a703bb06eb70b33ae40c8350d96cace1a75df3b326139a5af913f",
+      "size": 4441
     },
     {
       "path": "agents/diagram-semantic-analyst.md",
@@ -275,8 +275,8 @@
     },
     {
       "path": "docs/drawio-agent-extension-corporate-test-commands.md",
-      "sha256": "2c8ca1ea440c16a8f2a05571bab2e61bfd9862266501a82773b95c6016185569",
-      "size": 18416
+      "sha256": "ad2c61d64ceaa37709d7cdfe4afe0647956d11f0ea7bf09046875c6455171266",
+      "size": 18694
     },
     {
       "path": "examples/roadmap/table-source.md",
@@ -290,7 +290,7 @@
     },
     {
       "path": "gemini-extension.json",
-      "sha256": "a932bfee970b21c91c2b3cab4fa53c64ea02844c9202894de240ef579b41c9da",
+      "sha256": "fd81227e48538c707b4dcec38ec31add35e220800693c3c41f3b3e6a2be1b0f3",
       "size": 284
     },
     {
@@ -300,8 +300,8 @@
     },
     {
       "path": "install/install_drawio_agent_extension.sh",
-      "sha256": "1d71f2734fe0ca75cdbbecb377759811cf754ba98aa46957c028440352b46f60",
-      "size": 22686
+      "sha256": "af2f8b24abcd4dbb2a641efba705413003aeff4f2a197e6de7bde67130622162",
+      "size": 22696
     },
     {
       "path": "install/rollback_drawio_agent_extension.sh",
@@ -310,13 +310,13 @@
     },
     {
       "path": "install/verify_drawio_agent_extension.sh",
-      "sha256": "ad3a73c67a222b49fc46762f1a515725a0b29ea49bd47bc8931af8a2bf00a00e",
+      "sha256": "b59b39555ea529c43603f2304b6ff953fa36b562386d302ddc4cb239fd1a6e6b",
       "size": 17554
     },
     {
       "path": "metadata.md",
-      "sha256": "c56ed7e79432f5a3086b8cd7594f0af21f4ae97fd39edea332a413ac265761c9",
-      "size": 3987
+      "sha256": "0b900ddda058327a9bbdbc7fb6d80592f7d79f0274eb816fdba12bc6172e6264",
+      "size": 4467
     },
     {
       "path": "references/autolayout.md",
@@ -440,8 +440,8 @@
     },
     {
       "path": "scripts/diagram_supervisor.py",
-      "sha256": "e2ea6ea1b75ee10d10e2814a62c4e6e8fc7a1da578187f732f39f3676c05fed2",
-      "size": 111493
+      "sha256": "46568a000c4ea2fbc391eb32367b8789a0651b275c0b03b630524160b324f269",
+      "size": 113868
     },
     {
       "path": "scripts/encode_drawio_url.py",
@@ -820,8 +820,8 @@
     },
     {
       "path": "tests/test_contract_docs.py",
-      "sha256": "4dac4b3d696096f79a7f88fe23ba1f6dd01fb3f7c943b7e6f775f4c9fe4d3ecc",
-      "size": 6246
+      "sha256": "204330dc2e1eab50f1258b15d41ba1c932744283cd2ef098432f898a397f5468",
+      "size": 6428
     },
     {
       "path": "tests/test_contracts.py",
@@ -840,8 +840,8 @@
     },
     {
       "path": "tests/test_diagram_supervisor.py",
-      "sha256": "6e37035fa9dfe2ba393541b139284597711186094c4a1105dae1ceb9e7ff9d5d",
-      "size": 148698
+      "sha256": "3c59ccec08dd5830c2e9974585aae9cfdda08f3b850286bf1570b7b5b9c1cb25",
+      "size": 155267
     },
     {
       "path": "tests/test_finding_fixtures.py",
@@ -886,19 +886,19 @@
   ],
   "format_version": 1,
   "skill": "drawio",
-  "version": "1.24.0-corporate.1",
+  "version": "1.24.0-corporate.2",
   "version_sources": [
     {
       "path": "SKILL.md",
-      "value": "1.24.0-corporate.1"
+      "value": "1.24.0-corporate.2"
     },
     {
       "path": "metadata.md",
-      "value": "1.24.0-corporate.1"
+      "value": "1.24.0-corporate.2"
     },
     {
       "path": "gemini-extension.json",
-      "value": "1.24.0-corporate.1"
+      "value": "1.24.0-corporate.2"
     }
   ]
 }

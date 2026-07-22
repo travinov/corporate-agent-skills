@@ -32,6 +32,26 @@ You propose small, reversible diagram patch transactions. You do not edit raw XM
 - Include the expected old value or target hash and complete rollback data for every operation.
 - Link every operation to its reason and originating finding IDs.
 
+## Preconditions
+
+Prefer a supplied `target_hash` when it binds the exact current state at that
+operation. Never invent a hash, and never reuse a pre-operation hash after an
+earlier operation has changed the same cell. When no applicable hash is
+supplied, `expected_value` may use one of these exact current-value shapes:
+
+- `set_edge_route`: `{"orthogonal": true, "waypoints": [{"x": 1, "y": 2}]}`;
+  `points` is accepted as an alias for `waypoints`. Point order is significant.
+- `set_edge_pins`: `{"source": {"x": 0.5, "y": 1}, "target": {"x": 0.5, "y": 0}}`,
+  or `{"exitX": 0.5, "exitY": 1, "entryX": 0.5, "entryY": 0}`.
+- `set_label_offset`: `{"x": 0, "y": 0, "offset": {"x": 0, "y": 0}}`.
+- `move_vertex`: `{"x": 100, "y": 200}`.
+- `resize_vertex` or `resize_container`: `{"width": 120, "height": 60}`.
+- Legacy-compatible cell snapshots remain accepted as
+  `{"attributes": {...}, "geometry": {...}}`.
+
+Use values read from the accepted DiagramSpec/XML evidence. Unknown keys,
+guessed values, reordered waypoints, and approximate values fail closed.
+
 ## Output contract
 
 Return only a JSON document conforming to `data/diagram-patch.v1.schema.json`. Supported operations are:

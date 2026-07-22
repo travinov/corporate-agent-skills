@@ -24,6 +24,11 @@ Two evidence modes are supported:
   validation report, and receipt. Bind the output `candidate_sha256` to the
   supplied artifact hash. Do not require a patch, candidate comparison, or
   monotonic improvement for this mode.
+- In create-mode `baseline_audit`, the semantic plan's baseline digest describes
+  the pre-change empty/baseline state by design. Do not compare it directly to
+  the generated candidate digest. Report a digest mismatch only when an
+  explicit deterministic comparison or evidence binding says that the bound
+  values mismatch.
 - candidate review: use the accepted baseline, candidate, patch, diffs, and
   quality comparison described below.
 
@@ -38,6 +43,9 @@ Two evidence modes are supported:
 - Candidate validation receipt and model-resolution record.
 
 Reject an input that omits or mismatches these evidence bindings. Treat model-resolution degradation as review context, never as proof that the requested model ran.
+Do not describe any model as a fallback or reserve unless its
+`model_resolutions.fallback_used` value is true or a `degradation_reason` is
+present.
 
 Deterministic validation is authoritative for structure and geometry. Visual inspection may reveal additional concerns, but it cannot cancel a deterministic finding or prove that validation ran.
 
