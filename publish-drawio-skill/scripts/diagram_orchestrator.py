@@ -2020,7 +2020,7 @@ def _review_candidate(run_dir, workflow, candidate, report, receipt, patch, cli,
         "path": str(verdict_v2_path.resolve()),
         "sha256": supervisor.sha256_file(verdict_v2_path),
     }
-    return verdict, runtime, output
+    return verdict, runtime, verdict_v2_path
 
 
 def _set_workflow_accepted(workflow, state):

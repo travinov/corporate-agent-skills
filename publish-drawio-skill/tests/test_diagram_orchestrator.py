@@ -390,6 +390,42 @@ Route approved payments to settlement.
         )
         self.assertIn("repair", workflow["required_roles"])
 
+    def test_review_candidate_returns_host_bound_v2_verdict_path(self):
+        root, workspace, cli = self.create_workspace()
+        run_dir = workspace / ".diagram-runs" / "review-candidate-path"
+        run_dir.mkdir(parents=True)
+        candidate = run_dir / "candidate.drawio"
+        report = run_dir / "validation-report.json"
+        receipt = run_dir / "validation-receipt.json"
+        patch = run_dir / "patch.json"
+        baseline_receipt_v2 = run_dir / "baseline-validation-receipt.v2.json"
+        input_path = run_dir / "input.json"
+        output_path = run_dir / "output.json"
+        verdict_v2_path = run_dir / "verdict.v2.json"
+        for path in (candidate, report, receipt, patch, baseline_receipt_v2, input_path, output_path):
+            path.write_text("{}", encoding="utf-8")
+        verdict_v2_path.write_text('{"schema_version": 2}', encoding="utf-8")
+        workflow = {
+            "workspace": str(workspace),
+            "validation_receipt_v2": {"path": str(baseline_receipt_v2)},
+            "accepted_artifact": {"path": str(candidate)},
+            "accepted_validation": {"report": str(report)},
+        }
+        analysis = {"schema_version": 2, "verdict": "approve", "findings": []}
+        runtime = {"resolution": {"resolved_model": "vllm/DeepSeek-V4-Flash-262k"}}
+
+        with mock.patch.object(orchestrator, "_reviewer_input_v2", return_value={}), \
+             mock.patch.object(orchestrator, "role_call", return_value=(analysis, runtime, input_path, output_path)), \
+             mock.patch.object(orchestrator, "_verify_reviewer_runtime"), \
+             mock.patch.object(orchestrator, "_bind_reviewer_v2", return_value=({}, verdict_v2_path)):
+            _, _, returned_path = orchestrator._review_candidate(
+                run_dir, workflow, candidate, report, receipt, patch, cli, 30, "reviewer-1",
+            )
+
+        self.assertEqual(returned_path, verdict_v2_path)
+        self.assertNotEqual(returned_path, output_path)
+        self.assertEqual(workflow["candidate_reviewer_verdict_v2"]["path"], str(verdict_v2_path.resolve()))
+
     def test_resume_host_policy_does_not_rerun_semantic_analyst(self):
         workflow = {"mode": "improve"}
         decision = {
@@ -1123,6 +1159,7 @@ Route approved payments to settlement.
         self.assertEqual(trace["status"], "verified")
         self.assertEqual(trace["terminal_failed_roles"], [])
         self.assertEqual(len(trace["failed_roles"]), 1)
+
         self.assertFalse(trace["failed_roles"][0]["terminal"])
         self.assertTrue(trace["model_diversity_degraded"])
         self.assertTrue(

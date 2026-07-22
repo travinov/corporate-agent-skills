@@ -1795,7 +1795,14 @@ def record_initial_candidate(run_dir, artifact, report_path, receipt_path):
 
 def load_reviewer_verdict(path, run_id, candidate_sha256, report_path, receipt_path):
     verdict = load_json(path)
-    schema = load_json(Path(__file__).resolve().parent.parent / "data" / "reviewer-verdict.v1.schema.json")
+    schema_version = verdict.get("schema_version")
+    if schema_version not in {1, 2}:
+        raise SupervisorError(f"unsupported reviewer verdict schema version: {schema_version!r}")
+    schema = load_json(
+        Path(__file__).resolve().parent.parent
+        / "data"
+        / f"reviewer-verdict.v{schema_version}.schema.json"
+    )
     errors = sorted(
         jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).iter_errors(verdict),
         key=lambda error: (list(error.path), error.message),
@@ -1806,9 +1813,17 @@ def load_reviewer_verdict(path, run_id, candidate_sha256, report_path, receipt_p
         "run_id": run_id,
         "candidate_sha256": candidate_sha256,
         "report_sha256": sha256_file(report_path),
-        "receipt_sha256": sha256_file(receipt_path),
     }
-    mismatches = [key for key, value in expected.items() if verdict.get(key) != value]
+    if schema_version == 2:
+        receipt_v2_path = Path(receipt_path).with_name("validation-receipt.v2.json")
+        if not receipt_v2_path.is_file():
+            raise SupervisorError("reviewer verdict v2 requires the candidate validation receipt v2")
+        expected["receipt_sha256"] = sha256_file(receipt_v2_path)
+        actual = {"run_id": verdict.get("run_id"), **(verdict.get("bindings") or {})}
+    else:
+        expected["receipt_sha256"] = sha256_file(receipt_path)
+        actual = verdict
+    mismatches = [key for key, value in expected.items() if actual.get(key) != value]
     if mismatches:
         raise SupervisorError(f"reviewer verdict evidence mismatch: {', '.join(mismatches)}")
     if verdict.get("verdict") == "approve" and any(
@@ -2190,7 +2205,14 @@ def record_candidate(
                 "report_sha256": sha256_file(candidate_report_path),
             },
             state="validating",
-            actor={"kind": "agent", "id": "reviewer", "model": (reviewer_verdict.get("reviewer") or {}).get("resolved_model")},
+            actor={
+                "kind": "agent",
+                "id": "reviewer",
+                "model": (
+                    (reviewer_verdict.get("reviewer") or {}).get("resolved_model")
+                    or (reviewer_verdict.get("runtime_proof") or {}).get("resolved_model")
+                ),
+            },
         )
     elif review_exception in {"approved_degraded_review", "manual_handoff"}:
         append_event(
@@ -2273,10 +2295,14 @@ def record_candidate(
             computed_semantic_equal and semantic_equal,
             computed_untouched_equal and untouched_equal,
         )
-    if reviewer_verdict and reviewer_verdict["verdict"] == "reject":
+    if reviewer_verdict and reviewer_verdict["verdict"] != "approve":
         comparison = {
             "accepted": False,
-            "reason": "reviewer_rejected",
+            "reason": (
+                "reviewer_needs_human"
+                if reviewer_verdict["verdict"] == "needs_human"
+                else "reviewer_rejected"
+            ),
             "baseline": comparison["baseline"],
             "candidate": comparison["candidate"],
         }

@@ -1,10 +1,10 @@
 # Draw.io Agent Extension: установка и проверка в GigaCode
 
-Версия: `1.24.0-corporate.2`
+Версия: `1.24.0-corporate.3`
 
-В этой версии исправлено применение operation-shaped precondition от Repair
-(`route`, `pins`, `label`, `move`, `resize`) и уточнены правила Reviewer для
-create-mode semantic digest и фактического model fallback.
+В этой версии post-repair цикл передаёт в Supervisor детерминированный
+host-bound `reviewer-verdict.v2`, проверяет его вложенные hash-binding вместе
+с `validation-receipt.v2` и не продвигает кандидата при `needs_human`.
 
 Эта инструкция уже включена в `drawio-skill-agent-extension.zip` и после
 распаковки находится в
@@ -42,7 +42,7 @@ cd "$HOME/Downloads" || exit 1; if [ -d drawio-skill ]; then mv drawio-skill "dr
 sed -n '1,20p' "$HOME/.gigacode/extensions/publish-drawio-skill/gemini-extension.json"
 ```
 
-Ожидаемо: `"version": "1.24.0-corporate.2"`.
+Ожидаемо: `"version": "1.24.0-corporate.3"`.
 
 ## 4. Terminal: запустить GigaCode из каталога проекта
 

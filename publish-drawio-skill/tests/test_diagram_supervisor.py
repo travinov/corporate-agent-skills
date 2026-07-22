@@ -253,6 +253,42 @@ def reviewer_verdict(run_dir, candidate, report_path, receipt_path, *, verdict="
     return write_json(path, value)
 
 
+def reviewer_verdict_v2(run_dir, candidate, report_path, receipt_path, *, verdict="approve", suffix=""):
+    state = supervisor.load_state(run_dir)
+    receipt_v2_path = Path(receipt_path).with_name("validation-receipt.v2.json")
+    write_json(receipt_v2_path, {"schema_version": 2, "source": "test-fixture"})
+    value = {
+        "schema_version": 2,
+        "verdict_id": f"review-v2-{suffix or 'candidate'}",
+        "analysis_id": f"analysis-v2-{suffix or 'candidate'}",
+        "run_id": state["run_id"],
+        "analysis_sha256": "1" * 64,
+        "role_input_sha256": "2" * 64,
+        "role_output_sha256": "3" * 64,
+        "bindings": {
+            "candidate_sha256": supervisor.sha256_file(candidate),
+            "report_sha256": supervisor.sha256_file(report_path),
+            "receipt_sha256": supervisor.sha256_file(receipt_v2_path),
+            "source_bundle_sha256": "4" * 64,
+            "semantic_plan_sha256": None,
+            "semantic_delta_sha256": None,
+        },
+        "runtime_proof": {
+            "requested_model": "vllm/DeepSeek-V4-Flash-262k",
+            "resolved_model": "vllm/DeepSeek-V4-Flash-262k",
+            "provider": "vllm",
+            "resolution_mode": "isolated_cli",
+            "attempt_id": "contract-attempt-1",
+            "evidence_sha256": "5" * 64,
+        },
+        "verdict": verdict,
+        "reviewed_at": "2026-07-22T10:00:00+00:00",
+        "findings": [],
+    }
+    path = Path(run_dir) / f"reviewer-verdict-v2{('-' + suffix) if suffix else ''}.json"
+    return write_json(path, value)
+
+
 def preflight_run(run_dir):
     run_dir = Path(run_dir)
     return supervisor.host_preflight(run_dir.parent, run_dir, sys.executable)
@@ -1260,6 +1296,58 @@ class EvidenceAndStateTests(unittest.TestCase):
             )
             self.assertTrue(approved["accepted"])
             self.assertEqual(approved["state"], "accepted_candidate")
+
+    def test_candidate_accepts_host_bound_v2_reviewer_verdict_and_rejects_tampering(self):
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            verdict_path = reviewer_verdict_v2(
+                case["run_dir"], case["candidate"], case["candidate_report"],
+                case["candidate_receipt"],
+            )
+            approved = supervisor.record_candidate(
+                case["run_dir"], case["candidate"], case["baseline_report"],
+                case["candidate_report"], case["patch"], case["baseline_receipt"],
+                case["candidate_receipt"], reviewer_verdict_path=verdict_path,
+            )
+            self.assertTrue(approved["accepted"])
+            events = [json.loads(line) for line in (case["run_dir"] / "run-manifest.jsonl").read_text().splitlines()]
+            review_event = next(event for event in reversed(events) if event["event_type"] == "review_verdict")
+            self.assertEqual(review_event["actor"]["model"], "vllm/DeepSeek-V4-Flash-262k")
+
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            verdict_path = reviewer_verdict_v2(
+                case["run_dir"], case["candidate"], case["candidate_report"],
+                case["candidate_receipt"], suffix="tampered",
+            )
+            verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+            verdict["bindings"]["candidate_sha256"] = "0" * 64
+            write_json(verdict_path, verdict)
+            with self.assertRaisesRegex(supervisor.SupervisorError, "evidence mismatch: candidate_sha256"):
+                supervisor.record_candidate(
+                    case["run_dir"], case["candidate"], case["baseline_report"],
+                    case["candidate_report"], case["patch"], case["baseline_receipt"],
+                    case["candidate_receipt"], reviewer_verdict_path=verdict_path,
+                )
+
+    def test_candidate_needs_human_v2_verdict_cannot_promote(self):
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            result = supervisor.record_candidate(
+                case["run_dir"], case["candidate"], case["baseline_report"],
+                case["candidate_report"], case["patch"], case["baseline_receipt"],
+                case["candidate_receipt"],
+                reviewer_verdict_path=reviewer_verdict_v2(
+                    case["run_dir"], case["candidate"], case["candidate_report"],
+                    case["candidate_receipt"], verdict="needs_human",
+                ),
+            )
+            self.assertFalse(result["accepted"])
+            self.assertEqual(result["reason"], "reviewer_needs_human")
+            self.assertNotEqual(
+                supervisor.load_state(case["run_dir"])["accepted_artifact"]["sha256"],
+                supervisor.sha256_file(case["candidate"]),
+            )
 
     def test_manual_handoff_never_promotes_unreviewed_candidate(self):
         with tempfile.TemporaryDirectory() as temp:
