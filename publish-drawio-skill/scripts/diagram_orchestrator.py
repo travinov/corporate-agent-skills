@@ -1461,6 +1461,376 @@ def _quality_sort_key(attempt):
     return tuple(vector.values()) + (attempt["request_sha256"],)
 
 
+def _verified_layout_file(run_dir, descriptor, *, label):
+    if not isinstance(descriptor, dict):
+        raise supervisor.SupervisorError(
+            f"persisted layout {label} descriptor is not an object"
+        )
+    path_value = descriptor.get("path")
+    expected_sha256 = descriptor.get("sha256")
+    if not isinstance(path_value, str) or not isinstance(expected_sha256, str):
+        raise supervisor.SupervisorError(
+            f"persisted layout {label} descriptor is incomplete"
+        )
+    path = Path(path_value).resolve()
+    if not _inside(path, run_dir) or not path.is_file():
+        raise supervisor.SupervisorError(
+            f"persisted layout {label} escaped the run or is missing"
+        )
+    if supervisor.sha256_file(path) != expected_sha256:
+        raise supervisor.SupervisorError(
+            f"persisted layout {label} hash differs from its descriptor"
+        )
+    expected_length = descriptor.get("byte_length")
+    if expected_length is not None and path.stat().st_size != expected_length:
+        raise supervisor.SupervisorError(
+            f"persisted layout {label} length differs from its descriptor"
+        )
+    return path
+
+
+def _verified_layout_validation_file(
+    run_dir,
+    validation,
+    *,
+    path_field,
+    hash_field,
+    label,
+):
+    if not isinstance(validation, dict):
+        raise supervisor.SupervisorError(
+            "persisted layout validation descriptor is not an object"
+        )
+    return _verified_layout_file(
+        run_dir,
+        {
+            "path": validation.get(path_field),
+            "sha256": validation.get(hash_field),
+        },
+        label=label,
+    )
+
+
+def _layout_attempt_event_artifacts(run_dir, paths):
+    return {
+        "layout_request": _relative_file(run_dir, paths["layout_request"]),
+        "layout_result": _relative_file(run_dir, paths["layout_result"]),
+        "backend_evidence": _relative_file(run_dir, paths["backend_evidence"]),
+        "candidate": _relative_file(run_dir, paths["candidate"]),
+        "validation_report": _relative_file(run_dir, paths["validation_report"]),
+        "validation_receipt": _relative_file(
+            run_dir, paths["validation_receipt_v2"]
+        ),
+    }
+
+
+def _verify_persisted_layout_attempt(run_dir, workflow, attempt, replayed):
+    """Fail closed unless a workflow attempt is bound to immutable run evidence."""
+    if not isinstance(attempt, dict) or attempt.get("status") != "completed":
+        raise supervisor.SupervisorError(
+            "persisted layout attempt is not a completed object"
+        )
+    attempt_id = attempt.get("attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        raise supervisor.SupervisorError(
+            "persisted layout attempt has no attempt id"
+        )
+    paths = {
+        name: _verified_layout_file(
+            run_dir,
+            attempt.get(name),
+            label=f"{attempt_id} {name}",
+        )
+        for name in (
+            "layout_request",
+            "layout_result",
+            "backend_evidence",
+            "candidate",
+        )
+    }
+    validation = attempt.get("validation")
+    paths.update(
+        {
+            "validation_report": _verified_layout_validation_file(
+                run_dir,
+                validation,
+                path_field="report",
+                hash_field="report_sha256",
+                label=f"{attempt_id} validation report",
+            ),
+            "validation_receipt": _verified_layout_validation_file(
+                run_dir,
+                validation,
+                path_field="receipt",
+                hash_field="receipt_sha256",
+                label=f"{attempt_id} validation receipt",
+            ),
+            "validation_receipt_v2": _verified_layout_validation_file(
+                run_dir,
+                validation,
+                path_field="receipt_v2",
+                hash_field="receipt_v2_sha256",
+                label=f"{attempt_id} validation receipt v2",
+            ),
+        }
+    )
+    request = supervisor.load_json(paths["layout_request"])
+    layout_contracts.require_layout_request(request)
+    request_sha256 = canonical_json_sha256(request)
+    semantic_plan_sha256 = workflow["semantic_plan_v2"]["sha256"]
+    if (
+        request.get("request_id") != attempt_id
+        or request_sha256 != attempt.get("request_sha256")
+        or request.get("semantic_plan_sha256") != semantic_plan_sha256
+        or attempt.get("semantic_plan_sha256") != semantic_plan_sha256
+        or request.get("strategy") != attempt.get("strategy")
+        or request.get("strategy_options", {})
+        != attempt.get("strategy_options", {})
+    ):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} differs from its request"
+        )
+    expected_key = "|".join(layout_backend.attempt_key(request))
+    attempt_keys = workflow.get("layout_attempt_keys")
+    if (
+        attempt.get("attempt_key") != expected_key
+        or not isinstance(attempt_keys, list)
+        or expected_key not in attempt_keys
+    ):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} has no matching progress key"
+        )
+    result = supervisor.load_json(paths["layout_result"])
+    layout_contracts.require_layout_result(
+        result,
+        expected_request_sha256=request_sha256,
+    )
+    backend_evidence = supervisor.load_json(paths["backend_evidence"])
+    if (
+        backend_evidence.get("request_sha256") != request_sha256
+        or attempt.get("backend") != backend_evidence.get("backend_selected")
+        or attempt.get("fallback_reason")
+        != backend_evidence.get("fallback_reason")
+    ):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} backend evidence differs"
+        )
+    receipt_verification = lifecycle_v2.verify_v2_receipt(
+        run_dir,
+        paths["validation_receipt_v2"],
+    )
+    if (
+        not receipt_verification["valid"]
+        or receipt_verification["strict_passed"]
+        != validation.get("strict_passed")
+    ):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} validation receipt differs"
+        )
+    receipt_v2 = supervisor.load_json(paths["validation_receipt_v2"])
+    candidate_sha256 = supervisor.sha256_file(paths["candidate"])
+    if receipt_v2.get("bindings", {}).get("candidate_sha256") != candidate_sha256:
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} candidate is not receipt-bound"
+        )
+    report = supervisor.load_json(paths["validation_report"])
+    quality = supervisor.quality_vector(
+        report,
+        profile_version=workflow.get("quality_profile_version", 2),
+    )
+    if quality != attempt.get("quality_vector"):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} quality vector differs"
+        )
+
+    expected_artifacts = _layout_attempt_event_artifacts(run_dir, paths)
+    completed_events = []
+    candidate_events = []
+    expected_candidate_event = (
+        "candidate_accepted"
+        if validation.get("strict_passed")
+        else "candidate_rejected"
+    )
+    for record in replayed["events"]:
+        event = record["event"]
+        payload = event.get("payload", {})
+        if (
+            event.get("event_type") == "tool_attempt"
+            and payload.get("tool") == "layout-engine"
+            and payload.get("attempt_id") == attempt_id
+            and payload.get("status") == "completed"
+        ):
+            completed_events.append(event)
+        if (
+            event.get("event_type") == expected_candidate_event
+            and payload.get("attempt_id") == attempt_id
+        ):
+            candidate_events.append(event)
+    if len(completed_events) != 1 or len(candidate_events) > 1:
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} lacks unique immutable evidence"
+        )
+    completed_payload = completed_events[0]["payload"]
+    if (
+        completed_payload.get("request_sha256") != request_sha256
+        or completed_payload.get("semantic_plan_sha256")
+        != semantic_plan_sha256
+        or completed_payload.get("strategy") != attempt.get("strategy")
+        or completed_payload.get("strict_passed")
+        != validation.get("strict_passed")
+        or completed_payload.get("quality_vector") != quality
+    ):
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} event bindings differ"
+        )
+    for event in completed_events + candidate_events:
+        snapshots = event["payload"].get("artifact_snapshots", {})
+        if any(
+            snapshots.get(name) != descriptor
+            for name, descriptor in expected_artifacts.items()
+        ):
+            raise supervisor.SupervisorError(
+                f"persisted layout attempt {attempt_id} artifacts differ from the ledger"
+            )
+    return copy.deepcopy(attempt)
+
+
+def _recover_layout_attempts_from_ledger(
+    run_dir,
+    workflow,
+    replayed,
+    *,
+    known_attempt_ids,
+):
+    """Rebuild the small workflow index after a crash using completed events."""
+    recovered = []
+    for record in replayed["events"]:
+        event = record["event"]
+        payload = event.get("payload", {})
+        attempt_id = payload.get("attempt_id")
+        if (
+            event.get("event_type") != "tool_attempt"
+            or payload.get("tool") != "layout-engine"
+            or payload.get("status") != "completed"
+            or not isinstance(attempt_id, str)
+            or attempt_id in known_attempt_ids
+        ):
+            continue
+        snapshots = payload.get("artifact_snapshots", {})
+        required = {
+            "layout_request",
+            "layout_result",
+            "backend_evidence",
+            "candidate",
+            "validation_report",
+            "validation_receipt",
+        }
+        if not isinstance(snapshots, dict) or not required.issubset(snapshots):
+            raise supervisor.SupervisorError(
+                f"completed layout attempt {attempt_id} has incomplete ledger evidence"
+            )
+
+        def event_path(name):
+            path = (Path(run_dir).resolve() / snapshots[name]["path"]).resolve()
+            if not _inside(path, run_dir):
+                raise supervisor.SupervisorError(
+                    f"completed layout attempt {attempt_id} escaped the run"
+                )
+            return path
+
+        paths = {name: event_path(name) for name in required}
+        request = supervisor.load_json(paths["layout_request"])
+        if request.get("mode") != "create":
+            continue
+        semantic_plan_sha256 = workflow["semantic_plan_v2"]["sha256"]
+        if (
+            request.get("semantic_plan_sha256") != semantic_plan_sha256
+            or payload.get("semantic_plan_sha256") != semantic_plan_sha256
+        ):
+            raise supervisor.SupervisorError(
+                f"completed create layout attempt {attempt_id} belongs to another plan"
+            )
+        backend_evidence = supervisor.load_json(paths["backend_evidence"])
+        receipt_v2 = supervisor.load_json(paths["validation_receipt"])
+        attempt_root = Path(run_dir) / "attempts" / attempt_id
+        legacy_receipt = attempt_root / "validation-receipt.json"
+        if not legacy_receipt.is_file():
+            raise supervisor.SupervisorError(
+                f"completed layout attempt {attempt_id} lost its legacy receipt"
+            )
+        strict_passed = bool(payload.get("strict_passed"))
+        attempt = {
+            "status": "completed",
+            "attempt_id": attempt_id,
+            "strategy": payload.get("strategy"),
+            "strategy_options": copy.deepcopy(
+                request.get("strategy_options", {})
+            ),
+            "attempt_key": "|".join(layout_backend.attempt_key(request)),
+            "request_sha256": payload.get("request_sha256"),
+            "semantic_plan_sha256": payload.get("semantic_plan_sha256"),
+            "layout_request": _workflow_file_descriptor(
+                paths["layout_request"]
+            ),
+            "layout_result": _workflow_file_descriptor(paths["layout_result"]),
+            "backend_evidence": _workflow_file_descriptor(
+                paths["backend_evidence"]
+            ),
+            "candidate": _workflow_file_descriptor(paths["candidate"]),
+            "validation": {
+                "report": str(paths["validation_report"]),
+                "report_sha256": supervisor.sha256_file(
+                    paths["validation_report"]
+                ),
+                "receipt": str(legacy_receipt.resolve()),
+                "receipt_sha256": supervisor.sha256_file(legacy_receipt),
+                "receipt_v2": str(paths["validation_receipt"]),
+                "receipt_v2_sha256": supervisor.sha256_file(
+                    paths["validation_receipt"]
+                ),
+                "strict_passed": strict_passed,
+            },
+            "quality_vector": copy.deepcopy(payload.get("quality_vector")),
+            "backend": backend_evidence.get("backend_selected"),
+            "fallback_reason": backend_evidence.get("fallback_reason"),
+        }
+        if (
+            receipt_v2.get("attempt_id") != attempt_id
+            or request.get("request_id") != attempt_id
+        ):
+            raise supervisor.SupervisorError(
+                f"completed layout attempt {attempt_id} ledger ids differ"
+            )
+        recovered.append(
+            _verify_persisted_layout_attempt(
+                run_dir,
+                workflow,
+                attempt,
+                replayed,
+            )
+        )
+        known_attempt_ids.add(attempt_id)
+    return recovered
+
+
+def _strategy_attempt_key(workflow, semantic_plan, adapter_input, strategy):
+    strategy_id, strategy_options = strategy
+    requested_backend = str(adapter_input.options.get("backend", "auto"))
+    backend = "python" if strategy_id == "python-fallback" else requested_backend
+    request = layout_model.build_layout_request(
+        semantic_plan,
+        run_id=workflow["run_id"],
+        semantic_plan_sha256=workflow["semantic_plan_v2"]["sha256"],
+        mode="create",
+        backend=backend,
+        strategy_id=strategy_id,
+        strategy_options=strategy_options,
+        quality_profile_version=workflow.get("quality_profile_version", 2),
+        scope=None,
+    )
+    return "|".join(layout_backend.attempt_key(request))
+
+
 def _run_generic_create_layouts(
     run_dir,
     workflow,
@@ -1497,6 +1867,79 @@ def _run_generic_create_layouts(
     workflow["layout_schedule"] = _workflow_file_descriptor(schedule_path)
     workflow.setdefault("layout_attempts", [])
     workflow.setdefault("layout_attempt_keys", [])
+    replayed = lifecycle_v2.require_mutable(run_dir)
+    if len(workflow["layout_attempt_keys"]) != len(
+        set(workflow["layout_attempt_keys"])
+    ):
+        raise supervisor.SupervisorError(
+            "persisted layout progress contains duplicate attempt keys"
+        )
+    completed = [
+        _verify_persisted_layout_attempt(
+            run_dir,
+            workflow,
+            attempt,
+            replayed,
+        )
+        for attempt in workflow["layout_attempts"]
+    ]
+    recovered = _recover_layout_attempts_from_ledger(
+        run_dir,
+        workflow,
+        replayed,
+        known_attempt_ids={
+            attempt["attempt_id"] for attempt in completed
+        },
+    )
+    if recovered:
+        completed.extend(recovered)
+        workflow["layout_attempts"].extend(copy.deepcopy(recovered))
+    if len({attempt["attempt_id"] for attempt in completed}) != len(completed):
+        raise supervisor.SupervisorError(
+            "persisted layout progress contains duplicate completed attempts"
+        )
+    persisted_selected = workflow.get("selected_layout_attempt")
+    if persisted_selected is not None:
+        verified_selected = _verify_persisted_layout_attempt(
+            run_dir,
+            workflow,
+            persisted_selected,
+            replayed,
+        )
+        matching = [
+            attempt
+            for attempt in completed
+            if attempt["attempt_id"] == verified_selected["attempt_id"]
+        ]
+        if (
+            len(matching) != 1
+            or canonical_json_sha256(matching[0])
+            != canonical_json_sha256(verified_selected)
+        ):
+            raise supervisor.SupervisorError(
+                "persisted selected layout attempt differs from completed progress"
+            )
+        return verified_selected
+    strict_completed = [
+        attempt
+        for attempt in completed
+        if attempt["validation"]["strict_passed"]
+    ]
+    if strict_completed:
+        strategy_order = {
+            name: index for index, (name, _) in enumerate(LAYOUT_STRATEGIES)
+        }
+        selected = min(
+            strict_completed,
+            key=lambda attempt: (
+                strategy_order.get(attempt["strategy"], len(strategy_order)),
+                attempt["request_sha256"],
+            ),
+        )
+        workflow["selected_layout_attempt"] = copy.deepcopy(selected)
+        workflow["layout_strategy_exhausted"] = False
+        write_workflow(run_dir, workflow)
+        return selected
     write_workflow(run_dir, workflow)
     lifecycle_v2.record_tool_attempt(
         run_dir,
@@ -1512,10 +1955,19 @@ def _run_generic_create_layouts(
             "strategy_count": len(LAYOUT_STRATEGIES),
         },
     )
-    completed = []
     for index, strategy in enumerate(LAYOUT_STRATEGIES):
         if index >= 4 or time.time() >= deadline:
             break
+        if (
+            _strategy_attempt_key(
+                workflow,
+                semantic_plan,
+                adapter_input,
+                strategy,
+            )
+            in workflow["layout_attempt_keys"]
+        ):
+            continue
         remaining = max(0.1, deadline - time.time())
         try:
             attempt = execute_layout_attempt(

@@ -307,6 +307,101 @@ class DiagramOrchestratorTests(unittest.TestCase):
             )
         )
 
+    def test_generic_create_reuses_completed_strict_layout_after_selection_interruption(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "layout-replay.drawio"
+
+        result = orchestrator.start_run(
+            "create",
+            target,
+            "Create a deterministic two-step replay diagram.",
+            workspace,
+            cli,
+            run_id="layout-replay-run",
+            max_iterations=1,
+        )
+
+        run_dir = Path(result["run_dir"])
+        workflow = json.loads(
+            (run_dir / "workflow.json").read_text(encoding="utf-8")
+        )
+        first_selected = workflow.pop("selected_layout_attempt")
+        self.assertTrue(first_selected["validation"]["strict_passed"])
+        first_attempt_ids = [
+            attempt["attempt_id"] for attempt in workflow["layout_attempts"]
+        ]
+        first_candidate = Path(first_selected["candidate"]["path"])
+        first_candidate_sha256 = hashlib.sha256(first_candidate.read_bytes()).hexdigest()
+        workflow["layout_attempts"] = []
+        orchestrator.write_workflow(run_dir, workflow)
+
+        semantic_plan = json.loads(
+            Path(workflow["semantic_plan_v2"]["path"]).read_text(encoding="utf-8")
+        )
+        source_bundle = orchestrator._source_bundle_bound_to_plan(
+            run_dir, semantic_plan
+        )
+        adapter_input = (
+            orchestrator.renderer_adapters.select_lifecycle_adapter_input(
+                semantic_plan,
+                source_bundle,
+                mode="create",
+            )
+        )
+        event_count = len(orchestrator.lifecycle_v2.replay(run_dir)["events"])
+
+        resumed = orchestrator._run_generic_create_layouts(
+            run_dir,
+            workflow,
+            semantic_plan,
+            adapter_input,
+            timeout=30,
+        )
+        rerun = orchestrator._run_generic_create_layouts(
+            run_dir,
+            workflow,
+            semantic_plan,
+            adapter_input,
+            timeout=30,
+        )
+
+        self.assertEqual(resumed["attempt_id"], first_selected["attempt_id"])
+        self.assertEqual(rerun["attempt_id"], first_selected["attempt_id"])
+        self.assertEqual(
+            [attempt["attempt_id"] for attempt in workflow["layout_attempts"]],
+            first_attempt_ids,
+        )
+        self.assertEqual(
+            workflow["selected_layout_attempt"]["candidate"],
+            first_selected["candidate"],
+        )
+        self.assertEqual(
+            hashlib.sha256(first_candidate.read_bytes()).hexdigest(),
+            first_candidate_sha256,
+        )
+        self.assertEqual(
+            len(orchestrator.lifecycle_v2.replay(run_dir)["events"]),
+            event_count,
+        )
+        workflow_bytes = (run_dir / "workflow.json").read_bytes()
+        workflow["selected_layout_attempt"]["candidate"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(
+            orchestrator.supervisor.SupervisorError,
+            "candidate hash differs",
+        ):
+            orchestrator._run_generic_create_layouts(
+                run_dir,
+                workflow,
+                semantic_plan,
+                adapter_input,
+                timeout=30,
+            )
+        self.assertEqual(
+            len(orchestrator.lifecycle_v2.replay(run_dir)["events"]),
+            event_count,
+        )
+        self.assertEqual((run_dir / "workflow.json").read_bytes(), workflow_bytes)
+
     def test_layout_strategy_schedule_is_finite_and_has_one_python_fallback(self):
         self.assertEqual(
             orchestrator.LAYOUT_STRATEGIES,
