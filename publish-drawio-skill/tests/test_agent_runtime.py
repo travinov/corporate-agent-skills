@@ -11,6 +11,26 @@ import agent_runtime
 
 
 class AgentRuntimeIntakeTests(unittest.TestCase):
+    def test_layout_repair_selects_intent_contract_without_changing_semantic_patch(self):
+        layout_payload = {
+            "schema_version": 1,
+            "repair_mode": "layout_intent",
+            "run_id": "run-1",
+        }
+        semantic_payload = {"schema_version": 1, "run_id": "run-1"}
+        self.assertEqual(
+            agent_runtime.role_schema_name("repair", layout_payload),
+            "layout-repair-intent.v1.schema.json",
+        )
+        self.assertEqual(
+            agent_runtime.role_schema_name("repair", semantic_payload),
+            "diagram-patch.v1.schema.json",
+        )
+        self.assertIn(
+            "layout-repair-intent.v1.schema.json",
+            agent_runtime.role_output_contract("repair", layout_payload),
+        )
+
     def test_semantic_intake_phase_selects_intake_analysis_schema(self):
         payload = {
             "schema_version": 1,

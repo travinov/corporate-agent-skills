@@ -130,6 +130,8 @@ def role_schema_name(role, payload=None):
     if role == "reviewer":
         return f"reviewer-analysis.v{version}.schema.json"
     if role == "repair":
+        if isinstance(payload, dict) and payload.get("repair_mode") == "layout_intent":
+            return "layout-repair-intent.v1.schema.json"
         return "diagram-patch.v1.schema.json"
     if role == "supervisor":
         return "supervisor-decision.v1.schema.json"

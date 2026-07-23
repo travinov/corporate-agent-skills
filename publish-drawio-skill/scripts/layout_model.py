@@ -13,6 +13,13 @@ import layout_contracts
 
 
 GRID = 10
+SCOPE_EXPANSION_ORDER = (
+    "edge_reroute",
+    "adjacent_nodes",
+    "one_layer",
+    "connected_component",
+)
+MAX_AUTOMATIC_SCOPE_EXPANSIONS = 2
 NODE_SIZE_BY_TYPE = {
     "decision": (140, 90),
     "start": (100, 50),
@@ -239,13 +246,15 @@ def build_layout_request(
     semantic_plan: Mapping[str, Any], *, run_id: str, semantic_plan_sha256: str,
     mode: str, backend: str, strategy_id: str, quality_profile_version: int,
     baseline: Mapping[str, Any] | None = None, scope: Mapping[str, Any] | None = None,
-    strategy_options: Mapping[str, Any] | None = None,
+    strategy_options: Mapping[str, Any] | None = None, reflow_intent: bool = False,
 ) -> dict:
     """Create the sole immutable host input accepted by layout backends."""
     if quality_profile_version not in {1, 2} or isinstance(quality_profile_version, bool):
         raise ValueError("quality_profile_version must be 1 or 2")
     result = _semantic_result(semantic_plan)
     normalized_mode = _normalize_mode(mode)
+    if normalized_mode == "full_reflow" and not reflow_intent:
+        raise ValueError("full_reflow requires explicit reflow intent")
     direction = str(result.get("direction") or "LR")
     if direction not in {"TB", "LR"}:
         raise ValueError(f"unsupported layout direction {direction!r}")
@@ -403,20 +412,31 @@ def expand_scope(diagram_spec: Mapping[str, Any], scope: Mapping[str, Any], leve
     current_edges = _normalize_refs(current["edge_refs"])
     current_movable = _normalize_refs(current["movable_node_refs"])
     current_reroutable = _normalize_refs(current["reroutable_edge_refs"])
-    if level == "adjacent_nodes":
+    aliases = {
+        "edge_reroute": "edge_reroute",
+        "adjacent_nodes": "adjacent_nodes",
+        "one_layer": "layer",
+        "connected_component": "component",
+    }
+    normalized_level = aliases.get(level, level)
+    if normalized_level == "edge_reroute":
+        if current_movable:
+            raise ValueError("edge_reroute requires edge-only scope")
+        return current
+    if normalized_level == "adjacent_nodes":
         if current_movable or not current_edges:
             raise ValueError("adjacent_nodes expansion requires edge-only scope")
         selected = [record for record in records if record[0] in current_edges]
         nodes = {node for _, source, target in selected for node in (source, target)}
         return _scope_shape(node_refs=nodes, edge_refs=current_edges, movable_node_refs=nodes, reroutable_edge_refs=current_reroutable)
-    if level == "layer":
+    if normalized_level == "layer":
         if not current_movable or not current_edges:
             raise ValueError("layer expansion requires the adjacent-nodes scope")
         one_hop = [record for record in records if record[1] in current_movable or record[2] in current_movable]
         nodes = current_movable | {node for _, source, target in one_hop for node in (source, target)}
         edges = current_edges | {edge_ref for edge_ref, _, _ in one_hop}
         return _scope_shape(node_refs=nodes, edge_refs=edges, movable_node_refs=nodes, reroutable_edge_refs=edges)
-    if level == "component":
+    if normalized_level == "component":
         if not current["page_ids"] or not current_movable:
             raise ValueError("component expansion requires the layer scope")
         allowed_pages = set(current["page_ids"])
@@ -438,3 +458,32 @@ def expand_scope(diagram_spec: Mapping[str, Any], scope: Mapping[str, Any], leve
                             changed = True
         return _scope_shape(page_ids=allowed_pages, node_refs=component_nodes, edge_refs=component_edges, movable_node_refs=component_nodes, reroutable_edge_refs=component_edges)
     raise ValueError(f"unsupported scope expansion {level!r}")
+
+
+def next_automatic_scope(
+    diagram_spec: Mapping[str, Any], scope: Mapping[str, Any], *, expansion_count: int,
+) -> dict[str, Any] | None:
+    """Return the next bounded local scope, never silently reaching reflow.
+
+    The initial edge-reroute scope is not an expansion.  Only adjacent-node and
+    one-layer growth are automatic.  A component may replace the second growth
+    when one layer adds no cells (a graph without a distinct next layer).
+    """
+    if expansion_count < 0:
+        raise ValueError("scope expansion count cannot be negative")
+    if expansion_count >= MAX_AUTOMATIC_SCOPE_EXPANSIONS:
+        return None
+    stage = SCOPE_EXPANSION_ORDER[expansion_count + 1]
+    expanded = expand_scope(diagram_spec, scope, stage)
+    if stage == "one_layer" and expanded == _scope_shape(
+        page_ids={value for value in scope.get("page_ids", []) if isinstance(value, str)},
+        node_refs=_normalize_refs(scope.get("node_refs")),
+        edge_refs=_normalize_refs(scope.get("edge_refs")),
+        movable_node_refs=_normalize_refs(scope.get("movable_node_refs")),
+        reroutable_edge_refs=_normalize_refs(scope.get("reroutable_edge_refs")),
+    ):
+        # A two-node/self-contained graph has no distinct layer; its second and
+        # final automatic expansion is the containing connected component.
+        stage = "connected_component"
+        expanded = expand_scope(diagram_spec, scope, stage)
+    return {"stage": stage, "scope": expanded, "expansion_count": expansion_count + 1}

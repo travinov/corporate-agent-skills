@@ -57,6 +57,33 @@ def baseline():
 
 
 class LayoutModelTests(unittest.TestCase):
+    def test_scope_expansion_order_is_bounded_and_full_reflow_requires_explicit_intent(self):
+        self.assertEqual(
+            layout_model.SCOPE_EXPANSION_ORDER,
+            ("edge_reroute", "adjacent_nodes", "one_layer", "connected_component"),
+        )
+        edge_scope = {"edge_refs": [{"page_id": "page-a", "cell_id": "a-edge"}]}
+        first = layout_model.next_automatic_scope(baseline(), edge_scope, expansion_count=0)
+        second = layout_model.next_automatic_scope(baseline(), first["scope"], expansion_count=1)
+        exhausted = layout_model.next_automatic_scope(baseline(), second["scope"], expansion_count=2)
+        self.assertEqual(first["stage"], "adjacent_nodes")
+        self.assertEqual(second["stage"], "one_layer")
+        self.assertIsNone(exhausted)
+        with self.assertRaisesRegex(ValueError, "explicit reflow intent"):
+            layout_model.build_layout_request(
+                semantic_plan(), run_id="run-1", semantic_plan_sha256=SHA,
+                mode="full_reflow", backend="builtin", strategy_id="full",
+                quality_profile_version=2,
+            )
+        self.assertEqual(
+            layout_model.build_layout_request(
+                semantic_plan(), run_id="run-1", semantic_plan_sha256=SHA,
+                mode="full_reflow", backend="builtin", strategy_id="full",
+                quality_profile_version=2, reflow_intent=True,
+            )["mode"],
+            "full_reflow",
+        )
+
     def build_create(self):
         return layout_model.build_layout_request(
             semantic_plan(),

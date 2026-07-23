@@ -66,7 +66,8 @@ guessed values, reordered waypoints, and approximate values fail closed.
 
 ## Output contract
 
-Return only a JSON document conforming to `data/diagram-patch.v1.schema.json`. Supported operations are:
+For normal and approved semantic edits, return only a JSON document conforming
+to `data/diagram-patch.v1.schema.json`. Supported operations are:
 
 - `set_edge_route`
 - `set_edge_pins`
@@ -85,7 +86,15 @@ retained as immutable model evidence; the Host creates a separate executable
 `host-bound.patch.json`, rebinds it to the actual working artifact, and rejects
 any target or operation outside `host_scope`.
 
-If no safe monotonic proposal can be formed, do not invent coordinates or
-regenerate the diagram. The host will treat failure to produce a schema-valid
-patch as a plateau/confusion checkpoint. Return exactly one JSON object and no
-Markdown or commentary.
+When input `repair_mode` is `layout_intent`, return only
+`data/layout-repair-intent.v1.schema.json` instead of a patch. Its `result`
+must name one host-allowed action (`edge_reroute`, `adjacent_nodes`,
+`one_layer`, `connected_component`, or `finish_best_effort`), the exact
+`page_id`, `target_edges`, `movable_nodes`, and every `locked_nodes` id. These
+are a request for deterministic layout, never coordinates, waypoints, XML, or
+an authorization to expand scope. Do not request full reflow unless the host
+input explicitly grants it.
+
+If no safe monotonic proposal can be formed, return `finish_best_effort` in
+layout-intent mode. Otherwise do not invent coordinates or regenerate the
+diagram. Return exactly one JSON object and no Markdown or commentary.

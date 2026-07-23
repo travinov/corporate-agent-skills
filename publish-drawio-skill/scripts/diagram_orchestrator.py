@@ -3411,7 +3411,7 @@ def repair_input(run_dir, workflow):
         _relative_file(run_dir, verdict_path)
         if reviewer_verdict is not None else None
     )
-    return {
+    value = {
         "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
         "request": workflow["request"], "iteration": workflow["iteration"],
         "semantic_changes_authorized": semantic_authorized,
@@ -3459,6 +3459,18 @@ def repair_input(run_dir, workflow):
             ),
         },
     }
+    # Legacy/replay workflows retain the patch contract.  New improve runs set
+    # this host-owned flag at creation and cannot ask Repair for executable XML
+    # operations during a layout-only phase.
+    if workflow.get("layout_repair_enabled") and not semantic_authorized:
+        layout_scope = _layout_scope_for_intent(spec, host_scope)
+        workflow["layout_repair_scope"] = copy.deepcopy(layout_scope)
+        value["repair_mode"] = "layout_intent"
+        value["layout_scope"] = copy.deepcopy(layout_scope)
+        value["requirements"]["allowed_actions"] = copy.deepcopy(
+            layout_scope["allowed_actions"]
+        )
+    return value
 
 
 ROUTE_FINDING_CODES = {
@@ -3701,6 +3713,204 @@ def _derive_repair_scope(workflow):
     }
 
 
+LAYOUT_REPAIR_ACTIONS = frozenset(layout_model.SCOPE_EXPANSION_ORDER)
+LAYOUT_REPAIR_ACTIONS = LAYOUT_REPAIR_ACTIONS | {"finish_best_effort"}
+
+
+def _string_ids(value, *, field):
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise supervisor.SupervisorError(f"layout repair {field} must be a list of non-empty ids")
+    if len(value) != len(set(value)):
+        raise supervisor.SupervisorError(f"layout repair {field} contains duplicate ids")
+    return sorted(value)
+
+
+def _validate_layout_repair_intent(intent, host_scope):
+    """Accept only a model intent that is wholly inside a host-owned scope."""
+    result = intent.get("result") if isinstance(intent, dict) and isinstance(intent.get("result"), dict) else intent
+    if not isinstance(result, dict) or not isinstance(host_scope, dict):
+        raise supervisor.SupervisorError("layout repair intent and host scope must be objects")
+    action = result.get("action")
+    allowed_actions = set(host_scope.get("allowed_actions", LAYOUT_REPAIR_ACTIONS))
+    if action not in LAYOUT_REPAIR_ACTIONS or action not in allowed_actions:
+        raise supervisor.SupervisorError("layout repair action is outside host scope")
+    page_id = result.get("page_id")
+    if not isinstance(page_id, str) or page_id != host_scope.get("page_id"):
+        raise supervisor.SupervisorError("layout repair page is outside host scope")
+    target_edges = _string_ids(result.get("target_edges", result.get("edge_ids", [])), field="target_edges")
+    movable_nodes = _string_ids(result.get("movable_nodes", result.get("node_ids", [])), field="movable_nodes")
+    locked_nodes = _string_ids(result.get("locked_nodes", []), field="locked_nodes")
+    if not set(target_edges).issubset(set(host_scope.get("target_edges", []))):
+        raise supervisor.SupervisorError("layout repair target_edges are outside host scope")
+    if not set(movable_nodes).issubset(set(host_scope.get("movable_nodes", []))):
+        raise supervisor.SupervisorError("layout repair movable_nodes are outside host scope")
+    expected_locked = set(host_scope.get("locked_nodes", []))
+    if set(locked_nodes) != expected_locked:
+        raise supervisor.SupervisorError("layout repair locked_nodes are outside host scope")
+    if action == "edge_reroute" and movable_nodes:
+        raise supervisor.SupervisorError("edge-only layout repair cannot move nodes")
+    if action != "finish_best_effort" and not target_edges:
+        raise supervisor.SupervisorError("layout repair requires at least one target edge")
+    return {
+        "action": action, "page_id": page_id, "target_edges": target_edges,
+        "movable_nodes": movable_nodes, "locked_nodes": locked_nodes,
+        "locked_edges": sorted(set(host_scope.get("locked_edges", []))),
+        "reason": str(result.get("reason", "")),
+    }
+
+
+def _canonical_cell_value(cell):
+    return {
+        "tag": cell.tag,
+        "attributes": sorted(cell.attrib.items()),
+        "text": cell.text or "",
+        "children": [_canonical_cell_value(child) for child in list(cell)],
+    }
+
+
+def _canonical_cell_hashes(path):
+    _, root, _ = supervisor.safe_parse(path)
+    values = {}
+    for page_id, page in supervisor.page_scopes(root):
+        for cell in supervisor.page_cells(page):
+            cell_id = cell.get("id")
+            if cell_id:
+                values[(page_id, cell_id)] = canonical_hash(_canonical_cell_value(cell))
+    return values
+
+
+def _verify_locked_cell_hashes(baseline, candidate, locked_cells):
+    """Prove that every immutable cell survived a local candidate unchanged."""
+    before, after = _canonical_cell_hashes(baseline), _canonical_cell_hashes(candidate)
+    mismatches = []
+    for page_id, cell_ids in sorted((locked_cells or {}).items()):
+        for cell_id in sorted(cell_ids):
+            key = (str(page_id), str(cell_id))
+            if before.get(key) != after.get(key):
+                mismatches.append({
+                    "page_id": key[0], "cell_id": key[1],
+                    "baseline_sha256": before.get(key), "candidate_sha256": after.get(key),
+                })
+    return {
+        "valid": not mismatches,
+        "reason": None if not mismatches else "preservation_violation",
+        "mismatches": mismatches,
+    }
+
+
+def _layout_scope_for_intent(spec, host_scope):
+    """Project host findings to a single immutable local-layout scope."""
+    pages = {
+        str(page.get("id")): {
+            str(cell.get("id")): cell for cell in page.get("cells", [])
+            if isinstance(cell, dict) and cell.get("id")
+        }
+        for page in spec.get("pages", []) if isinstance(page, dict) and page.get("id")
+    }
+    target_ids = set(host_scope.get("allowed_targets", []))
+    matches = []
+    for page_id, cells in pages.items():
+        for cell_id, cell in cells.items():
+            if cell_id in target_ids and cell.get("kind") == "edge":
+                matches.append((page_id, cell_id, cell))
+    if not matches:
+        raise supervisor.SupervisorError("layout repair has no host-owned edge targets")
+    page_ids = {item[0] for item in matches}
+    if len(page_ids) != 1:
+        raise supervisor.SupervisorError("layout repair scope spans more than one diagram page")
+    page_id = next(iter(page_ids))
+    cells = pages[page_id]
+    target_edges = sorted(item[1] for item in matches)
+    movable_nodes = []
+    locked_nodes = sorted(
+        cell_id for cell_id, cell in cells.items() if cell.get("kind") != "edge"
+    )
+    locked_edges = sorted(
+        cell_id for cell_id, cell in cells.items()
+        if cell.get("kind") == "edge" and cell_id not in target_edges
+    )
+    return {
+        "page_id": page_id,
+        "target_edges": target_edges,
+        "movable_nodes": movable_nodes,
+        "locked_nodes": locked_nodes,
+        "locked_edges": locked_edges,
+        "allowed_actions": ["edge_reroute"],
+        "expansion_count": int(host_scope.get("expansion_count", 0)),
+    }
+
+
+def _record_layout_intent_request(run_dir, workflow, payload, intent):
+    """Persist the host-bound local request before any deterministic work."""
+    plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    plan_path = Path(plan_descriptor.get("path", ""))
+    if not plan_path.is_file() or supervisor.sha256_file(plan_path) != plan_descriptor.get("sha256"):
+        raise supervisor.SupervisorError("layout repair semantic plan is missing or hash-mismatched")
+    layout_scope = {
+        "edge_refs": [
+            {"page_id": intent["page_id"], "cell_id": cell_id}
+            for cell_id in intent["target_edges"]
+        ],
+        "movable_node_refs": [
+            {"page_id": intent["page_id"], "cell_id": cell_id}
+            for cell_id in intent["movable_nodes"]
+        ],
+    }
+    request = layout_model.build_layout_request(
+        supervisor.load_json(plan_path), run_id=workflow["run_id"],
+        semantic_plan_sha256=plan_descriptor["sha256"], mode="local_reflow",
+        backend="auto", strategy_id="repair-" + intent["action"],
+        quality_profile_version=workflow.get("quality_profile_version", 2),
+        baseline=payload["baseline"]["diagram_spec"], scope=layout_scope,
+    )
+    directory = Path(run_dir) / "layout-repair-intents"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"iteration-{workflow.get('iteration', 0)}.layout-request.json"
+    atomic_write_bytes(path, canonical_json_bytes(request) + b"\n")
+    descriptor = _workflow_file_descriptor(path)
+    workflow.setdefault("layout_repair_intents", []).append({
+        "intent": copy.deepcopy(intent), "request": descriptor,
+        "request_sha256": canonical_json_sha256(request),
+    })
+    workflow["layout_repair_scope"] = {
+        **copy.deepcopy(payload["layout_scope"]),
+        "last_action": intent["action"],
+    }
+    return request, descriptor
+
+
+def _next_layout_scope_expansion(workflow, diagram_spec):
+    """Persist at most two autonomous local scope expansions, never full reflow."""
+    state = workflow.get("layout_repair_scope") or {}
+    current = {
+        "edge_refs": [
+            {"page_id": state["page_id"], "cell_id": cell_id}
+            for cell_id in state.get("target_edges", [])
+        ],
+        "movable_node_refs": [
+            {"page_id": state["page_id"], "cell_id": cell_id}
+            for cell_id in state.get("movable_nodes", [])
+        ],
+    }
+    next_scope = layout_model.next_automatic_scope(
+        diagram_spec, current, expansion_count=int(state.get("expansion_count", 0)),
+    )
+    if next_scope is None:
+        return None
+    scope = next_scope["scope"]
+    page_id = scope["page_ids"][0]
+    updated = {
+        **state, "page_id": page_id,
+        "target_edges": [item["cell_id"] for item in scope["reroutable_edge_refs"]],
+        "movable_nodes": [item["cell_id"] for item in scope["movable_node_refs"]],
+        "expansion_count": next_scope["expansion_count"],
+        "last_action": next_scope["stage"],
+    }
+    workflow["layout_repair_scope"] = updated
+    workflow.setdefault("layout_scope_expansions", []).append(copy.deepcopy(updated))
+    return updated
+
+
 def _host_bind_patch(run_dir, workflow, raw_patch, raw_patch_path):
     """Create an executable host-bound patch without changing raw role output."""
     baseline_descriptor = _working_artifact(workflow)
@@ -3931,13 +4141,50 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
             supervisor.transition(run_dir, "patching", artifact=baseline_path)
         already_patching = False
         try:
+            payload = repair_input(run_dir, workflow)
             raw_patch_value, _, _, raw_patch_path = role_call(
-                "repair", repair_input(run_dir, workflow), run_dir, Path(workflow["workspace"]),
+                "repair", payload, run_dir, Path(workflow["workspace"]),
                 cli, timeout, f"repair-{workflow['iteration']}"
             )
-            patch_value, patch_path = _host_bind_patch(
-                run_dir, workflow, raw_patch_value, raw_patch_path,
-            )
+            if payload.get("repair_mode") == "layout_intent":
+                intent = _validate_layout_repair_intent(
+                    raw_patch_value, payload["layout_scope"],
+                )
+                if raw_patch_value.get("run_id") != workflow["run_id"] or raw_patch_value.get("baseline_sha256") != supervisor.sha256_file(baseline_path):
+                    raise supervisor.SupervisorError("layout repair intent has mismatched run or baseline binding")
+                _, intent_request = _record_layout_intent_request(
+                    run_dir, workflow, payload, intent,
+                )
+                supervisor.append_event(
+                    run_dir, "layout_repair_intent_bound",
+                    {"raw_intent": str(Path(raw_patch_path).resolve()), "raw_intent_sha256": supervisor.sha256_file(raw_patch_path), "layout_request": intent_request},
+                    state=supervisor.load_state(run_dir)["state"],
+                    actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
+                )
+                write_workflow(run_dir, workflow)
+                if intent["action"] == "finish_best_effort":
+                    supervisor.transition(run_dir, "awaiting_feedback", decision="best_effort", reason="layout repair requested safe best effort")
+                    best_effort = _finish_best_effort(run_dir, workflow, cli, timeout, reason="Layout Repair requested safe best-effort completion")
+                    if best_effort is not None:
+                        return best_effort
+                # The immutable request is evidence for the deterministic layout
+                # worker. Until it yields an accepted candidate, do not fall back
+                # to a model-authored patch or ask the user to continue.
+                supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+                retry, _ = _record_internal_repair_feedback(
+                    run_dir, workflow, failure_class="layout_intent_pending",
+                    message="deterministic local layout candidate was not available",
+                    evidence={"layout_request": intent_request},
+                )
+                if retry:
+                    _next_layout_scope_expansion(workflow, payload["baseline"]["diagram_spec"])
+                    continue
+                supervisor.transition(run_dir, "awaiting_feedback", decision="best_effort", reason="bounded local layout attempts exhausted")
+                best_effort = _finish_best_effort(run_dir, workflow, cli, timeout, reason="Bounded local layout repair reached no progress")
+                if best_effort is not None:
+                    return best_effort
+                return checkpoint(run_dir, workflow, "plateau", "Local layout repair exhausted safely.", workflow.get("findings", []), ["pause", "stop", "manual_handoff"])
+            patch_value, patch_path = _host_bind_patch(run_dir, workflow, raw_patch_value, raw_patch_path)
         except supervisor.SupervisorError as exc:
             supervisor.transition(run_dir, "retrying", artifact=baseline_path)
             failure_class = (
@@ -4087,6 +4334,49 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
             )
         report = attempt_dir / "validation-report.json"
         receipt = attempt_dir / "validation-receipt.json"
+        layout_scope = workflow.get("layout_repair_scope") or {}
+        if layout_scope:
+            locked_cells = {
+                str(layout_scope.get("page_id", "")): [
+                    *layout_scope.get("locked_nodes", []),
+                    *layout_scope.get("locked_edges", []),
+                ]
+            }
+            preservation = _verify_locked_cell_hashes(
+                baseline_path, candidate, locked_cells,
+            )
+            if not preservation["valid"]:
+                preservation_path = attempt_dir / "preservation-violation.json"
+                atomic_write_bytes(
+                    preservation_path,
+                    canonical_json_bytes(preservation) + b"\n",
+                )
+                supervisor.transition(run_dir, "retrying", artifact=baseline_path)
+                retry, _ = _record_internal_repair_feedback(
+                    run_dir, workflow,
+                    failure_class="preservation_violation",
+                    message="locked cells changed in local layout candidate",
+                    evidence={
+                        "candidate": str(candidate.resolve()),
+                        "candidate_sha256": supervisor.sha256_file(candidate),
+                        "preservation": _workflow_file_descriptor(preservation_path),
+                    },
+                )
+                if retry:
+                    continue
+                supervisor.transition(run_dir, "awaiting_feedback", decision="best_effort", reason="locked-cell preservation failed")
+                best_effort = _finish_best_effort(
+                    run_dir, workflow, cli, timeout,
+                    reason="Local layout candidate violated locked-cell preservation",
+                )
+                if best_effort is not None:
+                    return best_effort
+                return checkpoint(
+                    run_dir, workflow, "plateau",
+                    "A local candidate changed locked cells; the baseline was retained.",
+                    preservation["mismatches"], ["pause", "stop", "manual_handoff"],
+                    evidence={"preservation": _workflow_file_descriptor(preservation_path)},
+                )
         _, receipt_v2 = lifecycle_v2.mirror_validation_receipt(
             run_dir, legacy_receipt_path=receipt,
         )
@@ -4377,6 +4667,7 @@ def _start_run_impl(
         "status": "running", "iteration": 0, "max_iterations": max_iterations,
         "created_at": supervisor.utc_now(), "attempts": [], "findings": [], "checkpoint": None,
         "quality_profile_version": 2,
+        "layout_repair_enabled": mode == "improve",
     }
     if not workflow["request"]:
         raise supervisor.SupervisorError("diagram request must not be empty")

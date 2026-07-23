@@ -194,6 +194,46 @@ else:
 
 
 class DiagramOrchestratorTests(unittest.TestCase):
+    def test_layout_intent_is_host_scoped_and_locked_cells_are_canonically_preserved(self):
+        scope = {
+            "page_id": "page-1",
+            "target_edges": ["edge-1"],
+            "movable_nodes": [],
+            "locked_nodes": ["node-1", "node-2"],
+            "locked_edges": ["edge-2"],
+            "allowed_actions": ["edge_reroute"],
+        }
+        intent = {
+            "action": "edge_reroute", "page_id": "page-1",
+            "target_edges": ["edge-1"], "movable_nodes": [],
+            "locked_nodes": ["node-1", "node-2"], "reason": "reroute locally",
+        }
+        bound = orchestrator._validate_layout_repair_intent(intent, scope)
+        self.assertEqual(bound["target_edges"], ["edge-1"])
+        intent["target_edges"] = ["edge-2"]
+        with self.assertRaisesRegex(orchestrator.supervisor.SupervisorError, "outside host scope"):
+            orchestrator._validate_layout_repair_intent(intent, scope)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            baseline = temporary / "baseline.drawio"
+            candidate = temporary / "candidate.drawio"
+            baseline.write_text(
+                "<mxGraphModel><root><mxCell id='0'/><mxCell id='1' parent='0'/>"
+                "<mxCell id='node-1' value='A' vertex='1' parent='1'><mxGeometry x='0' y='0' width='10' height='10' as='geometry'/></mxCell>"
+                "<mxCell id='node-2' value='B' vertex='1' parent='1'><mxGeometry x='20' y='0' width='10' height='10' as='geometry'/></mxCell>"
+                "<mxCell id='edge-1' edge='1' source='node-1' target='node-2' parent='1'><mxGeometry relative='1' as='geometry'/></mxCell>"
+                "<mxCell id='edge-2' edge='1' source='node-2' target='node-1' parent='1'><mxGeometry relative='1' as='geometry'/></mxCell>"
+                "</root></mxGraphModel>", encoding="utf-8",
+            )
+            candidate.write_text(baseline.read_text(encoding="utf-8").replace("value='A'", "value='changed'"), encoding="utf-8")
+            preservation = orchestrator._verify_locked_cell_hashes(
+                baseline, candidate,
+                {"page-1": ["node-1", "node-2", "edge-2"]},
+            )
+        self.assertFalse(preservation["valid"])
+        self.assertEqual(preservation["reason"], "preservation_violation")
+
     def fake_cli(self, workspace: Path) -> Path:
         cli = workspace / "fake-gigacode.py"
         cli.write_text(FAKE_GIGACODE, encoding="utf-8")
