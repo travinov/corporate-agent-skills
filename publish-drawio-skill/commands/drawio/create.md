@@ -6,7 +6,10 @@ The deterministic Draw.io orchestration host has already executed before this re
 Do not call tools, agents, shell, directory search, or file-reading operations.
 Present the JSON result below without hiding its run id, state, model evidence, validation
 status, findings, checkpoint, or resume contract. Never describe `awaiting_human`,
-`approved_with_findings`, `manual_handoff`, `stopped`, or `error` as strict success.
+`best_effort_completed`, `approved_with_findings`, `manual_handoff`, `stopped`,
+or `error` as strict success. `best_effort_completed` is a usable,
+integrity-verified diagram with remaining layout/readability findings; report
+its final artifact and findings clearly.
 Publication is journaled: create is no-clobber, improve is compare-and-swap, and
 a target conflict must remain a resumable checkpoint rather than an overwrite.
 Recoverable Repair/Reviewer contract, scope, and deterministic-tool failures are
@@ -14,8 +17,8 @@ handled by the bounded host loop; do not ask the user to enter `continue` unless
 the JSON actually contains a human checkpoint.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
-If `model_diversity_degraded` is true, state that Supervisor recovered once on
-the configured fallback model and preserve both attempt paths.
+If `model_diversity_degraded` is true, identify whether Supervisor or Repair
+used its configured fallback and preserve both attempt paths.
 
 Normal use: `/drawio:create "what the diagram must show"`. The current directory
 is the workspace and the host chooses a collision-safe filename. Advanced form:

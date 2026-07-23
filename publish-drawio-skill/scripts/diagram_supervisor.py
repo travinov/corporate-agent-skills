@@ -78,21 +78,24 @@ STRUCTURAL_CODE_PREFIXES = (
     "artifact.structure.",
     "artifact.xml.",
 )
-TERMINAL_STATES = {"completed", "approved_with_findings", "manual_handoff", "stopped"}
+TERMINAL_STATES = {
+    "completed", "approved_with_findings", "best_effort_completed",
+    "manual_handoff", "stopped",
+}
 STATES = {
     "analyzed", "awaiting_decision", "patching", "validating", "accepted_candidate",
     "retrying", "plateau", "awaiting_feedback", "final_review", *TERMINAL_STATES,
 }
 TRANSITIONS = {
-    "analyzed": {"awaiting_decision", "patching", "final_review", "stopped"},
-    "awaiting_decision": {"patching", "awaiting_feedback", "manual_handoff", "stopped"},
-    "patching": {"validating", "retrying", "manual_handoff", "stopped"},
-    "validating": {"accepted_candidate", "retrying", "plateau", "awaiting_feedback", "manual_handoff", "stopped"},
-    "accepted_candidate": {"patching", "validating", "final_review", "awaiting_feedback", "stopped"},
-    "retrying": {"patching", "plateau", "awaiting_feedback", "manual_handoff", "stopped"},
-    "plateau": {"awaiting_feedback", "manual_handoff", "stopped"},
-    "final_review": {"completed", "approved_with_findings", "patching", "awaiting_feedback", "manual_handoff", "stopped"},
-    "awaiting_feedback": {"awaiting_decision", "patching", "final_review", "manual_handoff", "stopped"},
+    "analyzed": {"awaiting_decision", "patching", "final_review", "best_effort_completed", "stopped"},
+    "awaiting_decision": {"patching", "awaiting_feedback", "best_effort_completed", "manual_handoff", "stopped"},
+    "patching": {"validating", "retrying", "best_effort_completed", "manual_handoff", "stopped"},
+    "validating": {"accepted_candidate", "retrying", "plateau", "awaiting_feedback", "best_effort_completed", "manual_handoff", "stopped"},
+    "accepted_candidate": {"patching", "validating", "final_review", "awaiting_feedback", "best_effort_completed", "stopped"},
+    "retrying": {"patching", "plateau", "awaiting_feedback", "best_effort_completed", "manual_handoff", "stopped"},
+    "plateau": {"awaiting_feedback", "best_effort_completed", "manual_handoff", "stopped"},
+    "final_review": {"completed", "approved_with_findings", "best_effort_completed", "patching", "awaiting_feedback", "manual_handoff", "stopped"},
+    "awaiting_feedback": {"awaiting_decision", "patching", "final_review", "best_effort_completed", "manual_handoff", "stopped"},
 }
 
 
@@ -1679,7 +1682,9 @@ def transition(run_dir, target, artifact=None, receipt=None, decision=None, reas
     if target not in STATES:
         raise SupervisorError(f"unknown state {target!r}")
     current = load_state(run_dir)
-    if (current is None and target == "analyzed") or target in {"completed", "approved_with_findings"}:
+    if (current is None and target == "analyzed") or target in {
+        "completed", "approved_with_findings", "best_effort_completed",
+    }:
         preflight = verify_host_preflight(run_dir)
         if not preflight["valid"]:
             raise SupervisorError(f"main-host preflight evidence failed: {preflight['checks']}")
@@ -1729,10 +1734,31 @@ def transition(run_dir, target, artifact=None, receipt=None, decision=None, reas
         if receipt_data.get("run_id") != state.get("run_id"):
             raise SupervisorError("completion receipt belongs to a different run")
         state["final_receipt"] = str(Path(receipt).resolve())
+    if target == "best_effort_completed":
+        if decision != "best_effort":
+            raise SupervisorError(
+                "best_effort_completed requires decision='best_effort'"
+            )
+        if not artifact or not receipt:
+            raise SupervisorError(
+                "best-effort final state requires artifact and receipt"
+            )
+        verification = verify_receipt(receipt, artifact)
+        if not verification["valid"]:
+            raise SupervisorError(
+                f"best-effort receipt integrity failed: {verification['checks']}"
+            )
+        receipt_data = load_json(receipt)
+        if receipt_data.get("run_id") != state.get("run_id"):
+            raise SupervisorError(
+                "best-effort receipt belongs to a different run"
+            )
+        state["final_receipt"] = str(Path(receipt).resolve())
+        state["best_effort"] = True
     if target == "awaiting_feedback" and decision == "pause" and not reason:
         raise SupervisorError("pause requires an explicit reason")
     if current and current.get("state") == "awaiting_feedback" and target != "stopped":
-        if decision not in {"resume", "continue"} or not reason:
+        if decision not in {"resume", "continue", "best_effort"} or not reason:
             raise SupervisorError("resume requires decision='resume' or 'continue' and an explicit reason")
     if decision:
         state.setdefault("decisions", []).append({"timestamp": utc_now(), "decision": decision, "reason": reason})

@@ -12,7 +12,9 @@ publication transaction. For legacy v1 evidence, state that trace is read-only
 and mutable resume is refused. Trace itself never performs recovery or writes.
 `failed_verified` means failure evidence is intact, not that the diagram workflow
 succeeded; present its failed role, capture paths, isolation proof, and diagnostic.
-Treat a nonterminal Supervisor `role_failed` followed by an approved fallback
+`verified_best_effort` means the evidence chain and delivered artifact are valid,
+but strict validation still has explicitly classified layout/readability findings.
+Treat a nonterminal Supervisor or Repair `role_failed` followed by an approved fallback
 `role_finished` as recovered evidence, not as a hidden failure; report
 `model_diversity_degraded` explicitly.
 Also distinguish `working_artifact`, `publishable_candidate`, and final/published

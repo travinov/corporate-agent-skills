@@ -46,6 +46,7 @@
         "validation_receipt",
         "review_verdict",
         "review_skipped",
+        "best_effort_selected",
         "internal_feedback_created",
         "auto_retry_scheduled",
         "role_failed",
@@ -79,7 +80,8 @@
         "completed",
         "manual_handoff",
         "stopped",
-        "approved_with_findings"
+        "approved_with_findings",
+        "best_effort_completed"
       ]
     },
     "actor": {

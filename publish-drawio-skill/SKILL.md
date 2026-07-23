@@ -2,7 +2,7 @@
 name: drawio-skill
 description: Use when the user requests diagrams, flowcharts, roadmap diagrams, git-flow / branching strategy timelines, architecture diagrams, ER diagrams, UML / sequence / class diagrams, network topology, cloud architecture from Terraform or Kubernetes manifests, ML/DL model figures (Transformer/CNN/LSTM), mind maps, or any visualization. Also use proactively when explaining systems with 3+ components, complex data flows, or relationships that benefit from visual representation. Best suited when the diagram needs custom styling, rich shape vocabulary, swimlanes, precise timeline/lane placement, intake clarification, canonical XLSX/CSV roadmap intake, full milestone revision history, baseline comparison, milestone shift markers, or exportable images (PNG/SVG/PDF/JPG). Generates .drawio XML and exports locally via the native draw.io desktop CLI.
 license: MIT
-metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.24.0-corporate.4"}
+metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.24.0-corporate.5"}
 ---
 
 # Draw.io Diagrams
@@ -202,10 +202,12 @@ its buffered `runtime-output.json` or streamed `runtime-output.jsonl` and
 redacted `runtime-stderr.txt` as hashed evidence. When the CLI advertises
 `stream-json`, the host preserves every emitted event even if the process exits
 non-zero. A `FatalTurnLimitedError` from primary Supervisor may trigger exactly
-one policy-declared DeepSeek fallback under the same isolation controls; all
-other roles and all isolation/tool failures remain fail-closed. The result and
-trace explicitly report this as degraded model diversity. Never advise changing
-global `maxSessionTurns`.
+one policy-declared DeepSeek fallback. A model-proven, tool-free Repair timeout,
+turn limit, unavailable-model diagnostic, or empty response may trigger exactly
+one Qwen fallback with the identical input hash. Isolation, tool, integrity, and
+undeclared failure classes remain fail-closed; fallback never chains. The result
+and trace explicitly report fallback as degraded model diversity. Never advise
+changing global `maxSessionTurns`.
 
 Interpret Supervisor `result.required_roles` as its advisory downstream
 selection. Preserve the original role JSON and record that array as
@@ -261,9 +263,12 @@ baseline. Keep model `output.json` immutable; execute only a separately stored
 host-bound patch whose baseline SHA, semantic digest, page, targets, and allowed
 operation types were derived by the Host. Persist state and evidence so user
 feedback resumes the same run. Request human input only for source conflicts,
-semantic changes, repeated/bounded plateau, evidence-integrity failures, or
-final review. The user can continue, approve, stop, pause/resume, accept with
-findings, or take the last working artifact for manual completion. A non-empty
+semantic changes, evidence-integrity failures, unsafe degraded output, or final
+review. Routine layout plateau and exhausted bounded Repair attempts finish
+automatically with `best_effort_completed` when the last working artifact is
+parseable, hash-bound, semantically safe, and has only allowlisted
+layout/readability errors. The user can continue, approve, stop, pause/resume,
+accept with findings, or take the last working artifact for manual completion. A non-empty
 resume comment becomes a hash-bound confirmed clarification and triggers
 bounded reconciliation from the last working artifact. `approve_with_findings`
 is offered only after strict validation passes, Reviewer approves, evidence
@@ -271,8 +276,10 @@ integrity is valid, and no error-level finding remains.
 
 Keep `working_artifact`, `publishable_candidate`, and
 `final_artifact`/`published_artifact` distinct. A strict-failed working candidate
-may be the next repair baseline but is never sent to Reviewer, never offered for
-approval, and never published.
+may be the next repair baseline. It is not strict success and is never offered
+for strict approval, but after bounded exhaustion the host attempts independent
+review and may publish or retain it as an explicitly classified best-effort
+result. Improve never overwrites the source with a non-improving candidate.
 
 Logical roles are Supervisor and read-only Independent Reviewer during a normal
 run, plus on-demand Repair and Semantic Analyst roles. Resolve models per role;

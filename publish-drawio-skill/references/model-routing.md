@@ -15,7 +15,7 @@ Use `data/model-routing.default.json` as the default policy and validate custom 
 | --- | --- | --- | --- | --- |
 | Supervisor | `GigaChat-3-Ultra` | `vllm/DeepSeek-V4-Flash-262k`, once on `turn_limit` | permanent | orchestration only |
 | Reviewer | `vllm/DeepSeek-V4-Flash-262k` | none | permanent | read-only |
-| Repair | `vllm/MiniMax-M3-113k` | none | on demand | patch proposal only |
+| Repair | `vllm/MiniMax-M3-113k` | `vllm/Qwen3.6-35B-262k`, once on proven timeout, turn limit, unavailable model, or empty response | on demand | patch proposal only |
 | Semantic Analyst | `vllm/Qwen3.6-35B-262k` | none | on demand | patch proposal only |
 
 A normal layout run starts Supervisor and Reviewer. Start Repair only when structured findings need a patch proposal. Start Semantic Analyst only for process reconciliation, semantic ambiguity, or a conflict involving user input or an explicitly supplied reference document.
@@ -100,15 +100,18 @@ Use a bounded timeout, explicit working directory, captured stdout/stderr, and a
 
 Publish role output atomically only after the process exits successfully and its JSON conforms to the contract selected from the validated input. New lifecycle Reviewer calls use `reviewer-input.v2.schema.json` and `reviewer-analysis.v2.schema.json`; Semantic Analyst uses the relaxed `semantic-analysis.v2.schema.json` for v2 input. The deterministic host then binds the current source/baseline hashes and normalizes that analysis into canonical `semantic-plan.v2` plus deterministic semantic operation IDs. Repair and Supervisor retain their proven v1 model-output contracts while the deterministic host owns the v2 state machine. The host constructs `reviewer-verdict.v2.schema.json` from trusted input, runtime, receipt, source, and semantic bindings. V1 role schemas remain available only for compatible legacy evidence and standalone deterministic-tool paths. Prefer GigaCode `stream-json` when CLI help advertises it and retain buffered event-array compatibility. Reject any `tool_use`, `diagram-*` custom agent, or `drawio:*` command leaked into either format; then require one consistent model in the `system` init event and every assistant message. When `result.stats.models` exists it must match too, but Qwen's streamed result may omit aggregate stats. Stock Gemini JSON output is an outer envelope: reject non-empty `error`/`errors`, extract and JSON-decode `response`, then validate only that inner role payload. Preserve redacted runtime stats/errors as evidence, not as the verdict. Direct top-level role JSON may be parsed for compatibility but cannot publish a successful isolated role because it lacks model proof. On timeout, non-zero exit, tool call, customization leak, invalid output, missing proof, or model mismatch, append `role_failed`; do not create the output file or any role-success event.
 
-The only lifecycle runtime-model recovery is declared in policy: after a
+Lifecycle runtime-model recovery is policy-declared and bounded. After a
 model-proven, tool-free primary Supervisor attempt ends with
 `FatalTurnLimitedError`, invoke Supervisor exactly once on
-`vllm/DeepSeek-V4-Flash-262k`. Store primary and fallback captures separately,
-mark the primary `role_failed` as nonterminal, and publish fallback output only
-after the same schema, isolation, and model-proof checks. Never retry a tool
-call, customization leak, missing isolation proof, timeout, or any non-Supervisor
-failure. A recovered result is usable but must state that model diversity was
-degraded.
+`vllm/DeepSeek-V4-Flash-262k`. After a model-proven, tool-free Repair attempt
+ends with a timeout, turn limit, unavailable-model diagnostic, or empty
+response, invoke Repair exactly once on `vllm/Qwen3.6-35B-262k` with the exact
+same input hash. Store primary and fallback captures separately, mark the
+primary `role_failed` as nonterminal, and publish fallback output only after
+the same schema, isolation, input-binding, and model-proof checks. Never retry
+a tool call, customization leak, missing isolation proof, integrity failure,
+or an undeclared failure class. Fallback never chains to a third model. A
+recovered result is usable but must state that model diversity was degraded.
 
 Some approved models wrap an otherwise valid role object in exactly one
 Markdown `json` fence. The adapter may unwrap that single fence only when the
@@ -189,7 +192,7 @@ reported model/proof, validate the typed role output and compare the model with
 check, not a remote signature or hardware-backed attestation. A failed but
 untampered terminal child appears as `failed_verified` with `valid: false`, its failure
 phase, capture integrity, and isolation evidence; this is not workflow success.
-A nonterminal primary Supervisor failure followed by its approved fallback is
+A nonterminal primary Supervisor or Repair failure followed by its approved fallback is
 validated as part of the successful but model-diversity-degraded chain.
 
 `/stats model` in the parent session describes the parent process and is not

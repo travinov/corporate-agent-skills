@@ -1,7 +1,7 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "dd3a5de39689a8c3b2030409e75de224aaf42421c81466dbee30c56ecd7f4499",
+  "archive_sha256": "f92cd010a76e1ad59a4265aad471c902373338fee5e182c5cfdcd774b8db7bbe",
   "files": [
     {
       "path": "DEPENDENCIES.md",
@@ -20,18 +20,18 @@
     },
     {
       "path": "README.md",
-      "sha256": "5b942f28289fc769313191dae861632abeb17c7960b2c9549602cd69b27524a2",
-      "size": 30785
+      "sha256": "656df4af57f8758bb8f000d5d71772bf3db3eac231d5d085ce0f5484578c4f5c",
+      "size": 31371
     },
     {
       "path": "SKILL.md",
-      "sha256": "fc7541ec9cbeebdb00fda0cc8d43833b6df6660ebdafefa330d2e4b57c3a8873",
-      "size": 51605
+      "sha256": "81f3df1b6aa53c2aa1efb0675d9c34a5239db2b8c7d9043006b0393724157cb9",
+      "size": 52216
     },
     {
       "path": "agents/diagram-repair.md",
-      "sha256": "f00dfa1afe4e11044fe9589fe95621260cc496149e028fc5b25427924618fcf9",
-      "size": 4188
+      "sha256": "7535de8f9f52597bbb05a1cb2946c66247c17beca811db403d65f39be0afb027",
+      "size": 4467
     },
     {
       "path": "agents/diagram-reviewer.md",
@@ -60,18 +60,18 @@
     },
     {
       "path": "commands/drawio/create.md",
-      "sha256": "739113feb39c65f7e4be437b11f2d67f063ceed10ccd67621d1b204f65b9de20",
-      "size": 2309
+      "sha256": "4fc651ebcfd26cbde81aa64ac47c7062275e208be52146027a00177b2b1a1253",
+      "size": 2487
     },
     {
       "path": "commands/drawio/improve.md",
-      "sha256": "1ffe3c56c2736c91844c85144d613a5455d7e7a036f7a425a134e8404f647345",
-      "size": 1965
+      "sha256": "4d20d3a7803b650b62c1a54c8ba768fca02a64faea5dd9b5857da5261e955837",
+      "size": 2216
     },
     {
       "path": "commands/drawio/resume.md",
-      "sha256": "86f44312ac53770bc2388a45e29cbe91a9ef06063d7231d7abcb0facc9ae57de",
-      "size": 1787
+      "sha256": "4529c8a0e6881e21cd081fa291f7cab64ce7a27edea816148bd920c587c16648",
+      "size": 1915
     },
     {
       "path": "commands/drawio/review.md",
@@ -80,8 +80,8 @@
     },
     {
       "path": "commands/drawio/trace.md",
-      "sha256": "84b6e1d5801131b271bc542ec25d8f216946385d54566b32a40c1d3757eb2fb3",
-      "size": 1813
+      "sha256": "876df7809df9cc1e9252f95d442dfb6f106c256141a4b7b50fca4eb53aa8e42b",
+      "size": 1988
     },
     {
       "path": "config.example.json",
@@ -140,18 +140,18 @@
     },
     {
       "path": "data/model-routing.default.json",
-      "sha256": "1348830b66883ef3c918ea16e55d8da5a4b143c8f81f4e78750f1d0b7bbdae94",
-      "size": 1588
+      "sha256": "46a0d01d7f955e16b54ab69d1c5194212024838776ea69e9edc59a283754aaaf",
+      "size": 1838
     },
     {
       "path": "data/model-routing.v1.schema.json",
-      "sha256": "3ba7123eea4168687f8f592a7b508c3c15fea6a247150f11c43084f7845ee6c0",
-      "size": 3178
+      "sha256": "8da7f1e52d2e78f712ef5e231b749333bfc2c3df889396971451f1b64175e3e4",
+      "size": 3365
     },
     {
       "path": "data/publication-transaction.v2.schema.json",
-      "sha256": "0e0e796c2eb02078e40e32f4f1d0a46f7410410915575a8945de8ee68e486a41",
-      "size": 3128
+      "sha256": "4acd3924280b28a923b7f88871a4644de875b5d020c30b746794f6ce1a7d5fb9",
+      "size": 3143
     },
     {
       "path": "data/reviewer-analysis.v1.schema.json",
@@ -200,18 +200,18 @@
     },
     {
       "path": "data/run-event.v1.schema.json",
-      "sha256": "b2a854cd4a3122ca2f00bc9790c7d452b60282beb4b2200d1f79375158218048",
-      "size": 2751
+      "sha256": "bb4ca9454ce177f72193b7c21bdb61845006c464e62bdda5bfab460734070fb2",
+      "size": 2816
     },
     {
       "path": "data/run-event.v2.schema.json",
-      "sha256": "4c9a5a9179f5778a62be45beee2eb02d685f89d9ddb052d0586e0a0996fbd2ee",
-      "size": 2654
+      "sha256": "8ba9490b6b6b322ee36e755ec45078aa9df3448e6bb151ebdad61d8ce58f0bcd",
+      "size": 2676
     },
     {
       "path": "data/run-state.v2.schema.json",
-      "sha256": "597d965705e6d018168c1c24168a14f95ff48f5da9a9f7837f84467054d510f7",
-      "size": 2734
+      "sha256": "c511d83c6625d01743225bc47ba100ef9707c95c1cd9620e5a7756fbfbc1b5d5",
+      "size": 2759
     },
     {
       "path": "data/semantic-analysis.v2.schema.json",
@@ -275,8 +275,8 @@
     },
     {
       "path": "docs/drawio-agent-extension-corporate-test-commands.md",
-      "sha256": "fa32585c3508e0d88031b2f97498cd43bf07d0b54d41a81516e38b13545c2c82",
-      "size": 20402
+      "sha256": "23eb0a7a52736e85160dd1821896778a6f86e45b537cda3433956e48cd198cc7",
+      "size": 21242
     },
     {
       "path": "examples/roadmap/table-source.md",
@@ -290,7 +290,7 @@
     },
     {
       "path": "gemini-extension.json",
-      "sha256": "aafe9b995b9f9e261851eb512c86ce35d4dfe62ee373b1ea7a42b209cc8dbf46",
+      "sha256": "d02a88fa8795655abc2e153d40d8463a64ec16316ca0463f7e177b0ad81c71e1",
       "size": 284
     },
     {
@@ -300,8 +300,8 @@
     },
     {
       "path": "install/install_drawio_agent_extension.sh",
-      "sha256": "035310efe94fcd6706427698ce808f59aa74a627042ef8b3fccb3eadc00f27c6",
-      "size": 22692
+      "sha256": "24fbb45508f62957c1e7b5f981f04b9c605d95f23d8dd781a7fc3452b08ad14d",
+      "size": 22697
     },
     {
       "path": "install/rollback_drawio_agent_extension.sh",
@@ -310,12 +310,12 @@
     },
     {
       "path": "install/verify_drawio_agent_extension.sh",
-      "sha256": "9daf2bfcbd6f47148345dec3b94075517c3c43988f7746a2c3fa949dc0149d10",
-      "size": 17554
+      "sha256": "c67327d9278b24e5d333ce10c04407e855cc8cb4839e2564d15ac095eb91948e",
+      "size": 17955
     },
     {
       "path": "metadata.md",
-      "sha256": "813047d40faa169f1889d267ff1d9d441fdce787314df0ea6da8931448cacc8d",
+      "sha256": "359f0da7196d46a6cf892981b719e5de3af67de59bb39df1d2f980bc4d024383",
       "size": 4566
     },
     {
@@ -330,8 +330,8 @@
     },
     {
       "path": "references/diagram-supervisor.md",
-      "sha256": "862a00e5f0e04f66bad136003ddfda127a586bb5bbeec46bb44c844ff18f7162",
-      "size": 16876
+      "sha256": "d714837775107fba3253c22e948afcc6ee317301378745ee284a8d5bbec2bbc6",
+      "size": 17665
     },
     {
       "path": "references/diagram-types.md",
@@ -350,8 +350,8 @@
     },
     {
       "path": "references/model-routing.md",
-      "sha256": "93c715d126a9320e269ed96d039a467b05dc0d5add4bc0a74471bf6066e61050",
-      "size": 13990
+      "sha256": "a8e91af153140e9d53434872c2080bf02236f09ff707e368d1b45c20c8097b2a",
+      "size": 14374
     },
     {
       "path": "references/roadmap.md",
@@ -395,8 +395,8 @@
     },
     {
       "path": "scripts/agent_runtime.py",
-      "sha256": "fb8a4ccd56417ca38d643af4bd3787ed7fd9ffc177dd56fdca54fb8dcdc1f71c",
-      "size": 65221
+      "sha256": "a999a7396bab9c1fdb5a4d5caa06b9707dfb6ae260d47f985bf674214c15655b",
+      "size": 68578
     },
     {
       "path": "scripts/aiicons.py",
@@ -435,13 +435,13 @@
     },
     {
       "path": "scripts/diagram_orchestrator.py",
-      "sha256": "f95405c09a28c8c998e2498684e3390586b7557bcfc9f34e254c52047646a2f5",
-      "size": 200819
+      "sha256": "077ef8e99f7aea0771b9c46af9c426710e51a2d8c189aa0ffc3efee1c2f735f0",
+      "size": 227075
     },
     {
       "path": "scripts/diagram_supervisor.py",
-      "sha256": "51240810e6e6ef17c83db3549cc933cba5320fe25ef0ad6ab4484a737c3f8971",
-      "size": 116062
+      "sha256": "6ad634db87ff0dca7269d9a3e07e2a48f8338cdc055ac782ce28dcbe0d7ccd8b",
+      "size": 117282
     },
     {
       "path": "scripts/encode_drawio_url.py",
@@ -495,8 +495,8 @@
     },
     {
       "path": "scripts/lifecycle_host_v2.py",
-      "sha256": "4ba8faf2aa5a8ed8980881ba3f8381ef22f81310a3053f2e739bfdf98e814fd4",
-      "size": 50421
+      "sha256": "95a8a164902eff74d4d3e3fa68fa16650e3b531cbe92c8212ad29e1d8d62ec60",
+      "size": 61384
     },
     {
       "path": "scripts/pyclasses.py",
@@ -835,13 +835,13 @@
     },
     {
       "path": "tests/test_diagram_orchestrator.py",
-      "sha256": "920f64fabae770f16eba818e32a0a320b8903f11280bfdb9d91c37587b93d49c",
-      "size": 98235
+      "sha256": "143e9b97305d38decddf44c9b85b9b3cc801c8aec6c2ec4364987f808d1c10e4",
+      "size": 105803
     },
     {
       "path": "tests/test_diagram_supervisor.py",
-      "sha256": "d6b7ad4a11672953ecbc1829bfe965423e994a36d81169d416e52d872bb81d9e",
-      "size": 165577
+      "sha256": "a6ca3bb31f54b4c38316e38724e4d8402f378b172dd754de8ea949eb89776ddc",
+      "size": 172576
     },
     {
       "path": "tests/test_finding_fixtures.py",
@@ -860,8 +860,8 @@
     },
     {
       "path": "tests/test_lifecycle_v2.py",
-      "sha256": "fc68f94fd7aedd8eabba63ebdf229c7472c02fecd19224942a639196e400236a",
-      "size": 47958
+      "sha256": "ae99c9c9686a07bac0b7ca5126d052f5d8810193d86420e8a167488bc1dd3ad1",
+      "size": 53598
     },
     {
       "path": "tests/test_readme_docs.py",
@@ -886,19 +886,19 @@
   ],
   "format_version": 1,
   "skill": "drawio",
-  "version": "1.24.0-corporate.4",
+  "version": "1.24.0-corporate.5",
   "version_sources": [
     {
       "path": "SKILL.md",
-      "value": "1.24.0-corporate.4"
+      "value": "1.24.0-corporate.5"
     },
     {
       "path": "metadata.md",
-      "value": "1.24.0-corporate.4"
+      "value": "1.24.0-corporate.5"
     },
     {
       "path": "gemini-extension.json",
-      "value": "1.24.0-corporate.4"
+      "value": "1.24.0-corporate.5"
     }
   ]
 }

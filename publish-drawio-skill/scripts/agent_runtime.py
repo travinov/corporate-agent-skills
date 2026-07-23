@@ -1088,6 +1088,7 @@ def invoke_role(
     run_dir=None, timeout=600, cwd=None, dry_run=False,
     current_model=None, current_provider=None, auth_type=None,
     _attempted_model=None, _attempt_id=None, _allow_runtime_fallback=True,
+    _fallback_failure_kind=None,
     _contract_correction=None, _allow_contract_correction=True,
 ):
     cli = cli or DEFAULT_CLI
@@ -1131,8 +1132,10 @@ def invoke_role(
         if correction_attempt else _attempted_model or primary_model
     )
     has_runtime_fallback = bool(config.get("runtime_fallbacks"))
-    if has_runtime_fallback and role != "supervisor":
-        raise SupervisorError("runtime model fallback is permitted only for supervisor")
+    if has_runtime_fallback and role not in {"supervisor", "repair"}:
+        raise SupervisorError(
+            "runtime model fallback is permitted only for supervisor or repair"
+        )
     attempt_id = (
         _contract_correction["attempt_id"]
         if correction_attempt else _attempt_id or (
@@ -1218,7 +1221,9 @@ def invoke_role(
             "provider": fallback_config["provider"],
             "fallback_used": True,
             "degradation_reason": (
-                f"primary {primary_model} exhausted its isolated turn budget"
+                f"primary {primary_model} failed with "
+                f"{_fallback_failure_kind or 'an eligible runtime failure'}; "
+                f"policy fallback {attempted_model} was used"
             ),
         })
     result = {
@@ -1232,6 +1237,60 @@ def invoke_role(
         "started_at": utc_now(),
         "dry_run": dry_run,
     }
+
+    def invoke_declared_fallback(
+        failure_kind, *, phase, diagnostic, capture_evidence, isolation_proof,
+        exit_code=None,
+    ):
+        """Run one policy fallback after proving the attempted primary identity."""
+        primary_identity_verified = bool(
+            isolation_proof.get("verified") is True
+            and isolation_proof.get("system_models") == [attempted_model]
+            and isolation_proof.get("assistant_models") in ([], [attempted_model])
+        )
+        fallback = (
+            runtime_fallback_for(config, failure_kind)
+            if (
+                _allow_runtime_fallback
+                and attempted_model == primary_model
+                and primary_identity_verified
+            )
+            else None
+        )
+        record_failure(
+            run_dir, role, phase, primary_model,
+            exit_code=exit_code, diagnostic=diagnostic,
+            failure_kind=failure_kind,
+            capture_evidence=capture_evidence,
+            isolation_proof=isolation_proof,
+            terminal=fallback is None,
+            attempted_model=attempted_model,
+            fallback_model=fallback.get("model") if fallback else None,
+            attempt_id=attempt_id,
+            output_format=output_format,
+            original_input_sha256=input_sha256,
+        )
+        if fallback is None:
+            return None
+        fallback_result = invoke_role(
+            role, input_path, output_path, cli=cli, policy_path=policy_path,
+            run_dir=run_dir, timeout=timeout, cwd=cwd, dry_run=False,
+            current_model=None, current_provider=None, auth_type=auth_type,
+            _attempted_model=fallback["model"], _attempt_id="fallback-1",
+            _allow_runtime_fallback=False,
+            _fallback_failure_kind=failure_kind,
+        )
+        fallback_result["recovered_from"] = {
+            "failure_kind": failure_kind,
+            "attempted_model": attempted_model,
+            "input_sha256": input_sha256,
+            "runtime_capture": capture_evidence.get("runtime_capture"),
+            "runtime_capture_sha256": capture_evidence.get("runtime_capture_sha256"),
+            "stderr_capture": capture_evidence.get("stderr_capture"),
+            "stderr_capture_sha256": capture_evidence.get("stderr_capture_sha256"),
+        }
+        return fallback_result
+
     if dry_run:
         return result
     if run_dir:
@@ -1265,15 +1324,43 @@ def invoke_role(
             output_format=output_format, attempt_id=attempt_id,
         )
         isolation_proof = inspect_runtime_isolation(role, exc.stdout or "")
-        record_failure(
-            run_dir, role, "execution_timeout", primary_model,
-            diagnostic=str(exc), failure_kind="timeout",
-            capture_evidence=capture_evidence, isolation_proof=isolation_proof,
-            attempted_model=attempted_model, attempt_id=attempt_id,
-            output_format=output_format,
+        fallback_result = invoke_declared_fallback(
+            "timeout", phase="execution_timeout", diagnostic=str(exc),
+            capture_evidence=capture_evidence,
+            isolation_proof=isolation_proof,
         )
+        if fallback_result is not None:
+            return fallback_result
         raise SupervisorError(f"isolated {role} process timed out after {timeout}s") from exc
     failure_diagnostic = (completed.stderr or "") + "\n" + (completed.stdout or "")
+    if (
+        completed.returncode != 0
+        and not correction_attempt
+        and not inherited_without_override
+        and model_unavailable(failure_diagnostic)
+    ):
+        capture_evidence = persist_runtime_captures(
+            output_path, completed.stdout, completed.stderr,
+            output_format=output_format, attempt_id=attempt_id,
+        )
+        isolation_proof = inspect_runtime_isolation(role, completed.stdout or "")
+        fallback_result = invoke_declared_fallback(
+            "model_unavailable", phase="requested_model_unavailable",
+            diagnostic=failure_diagnostic,
+            capture_evidence=capture_evidence,
+            isolation_proof=isolation_proof,
+            exit_code=completed.returncode,
+        )
+        if fallback_result is not None:
+            return fallback_result
+        if (
+            _allow_runtime_fallback
+            and attempted_model == primary_model
+            and runtime_fallback_for(config, "model_unavailable") is not None
+        ):
+            raise SupervisorError(
+                f"isolated {role} could not prove an eligible model fallback"
+            )
     if (
         completed.returncode != 0
         and not correction_attempt
@@ -1281,10 +1368,6 @@ def invoke_role(
         and current_model
         and model_unavailable(failure_diagnostic)
     ):
-        record_failure(
-            run_dir, role, "requested_model_unavailable", config["requested_model"],
-            exit_code=completed.returncode, diagnostic=failure_diagnostic,
-        )
         inherited_without_override = False
         command = build_gemini_command(
             cli, current_model, auth_type=auth_type, system_prompt=system_prompt,
@@ -1314,50 +1397,30 @@ def invoke_role(
     if completed.returncode != 0:
         failure_diagnostic = (completed.stderr or "") + "\n" + (completed.stdout or "")
         turn_limited = "FatalTurnLimitedError" in failure_diagnostic
-        primary_identity_verified = (
-            isolation_proof.get("system_models") == [attempted_model]
-            and isolation_proof.get("assistant_models") in ([], [attempted_model])
-        )
-        fallback = (
-            runtime_fallback_for(config, "turn_limit")
-            if (
-                turn_limited
-                and _allow_runtime_fallback
-                and attempted_model == primary_model
-                and isolation_proof.get("verified") is True
-                and primary_identity_verified
+        fallback_result = (
+            invoke_declared_fallback(
+                "turn_limit", phase="execution", diagnostic=failure_diagnostic,
+                capture_evidence=capture_evidence,
+                isolation_proof=isolation_proof,
+                exit_code=completed.returncode,
             )
-            else None
+            if turn_limited else None
         )
-        record_failure(
-            run_dir, role, "execution", primary_model,
-            exit_code=completed.returncode, diagnostic=failure_diagnostic,
-            failure_kind="turn_limit" if turn_limited else "process_exit",
-            capture_evidence=capture_evidence,
-            isolation_proof=isolation_proof,
-            terminal=fallback is None,
-            attempted_model=attempted_model,
-            fallback_model=fallback.get("model") if fallback else None,
-            attempt_id=attempt_id,
-            output_format=output_format,
-        )
-        if fallback is not None:
-            fallback_result = invoke_role(
-                role, input_path, output_path, cli=cli, policy_path=policy_path,
-                run_dir=run_dir, timeout=timeout, cwd=cwd, dry_run=False,
-                current_model=None, current_provider=None, auth_type=auth_type,
-                _attempted_model=fallback["model"], _attempt_id="fallback-1",
-                _allow_runtime_fallback=False,
-            )
-            fallback_result["recovered_from"] = {
-                "failure_kind": "turn_limit",
-                "attempted_model": attempted_model,
-                "runtime_capture": capture_evidence["runtime_capture"],
-                "runtime_capture_sha256": capture_evidence["runtime_capture_sha256"],
-                "stderr_capture": capture_evidence["stderr_capture"],
-                "stderr_capture_sha256": capture_evidence["stderr_capture_sha256"],
-            }
+        if fallback_result is not None:
             return fallback_result
+        if not turn_limited:
+            record_failure(
+                run_dir, role, "execution", primary_model,
+                exit_code=completed.returncode, diagnostic=failure_diagnostic,
+                failure_kind="process_exit",
+                capture_evidence=capture_evidence,
+                isolation_proof=isolation_proof,
+                terminal=True,
+                attempted_model=attempted_model,
+                attempt_id=attempt_id,
+                output_format=output_format,
+                original_input_sha256=input_sha256,
+            )
         if turn_limited:
             raise SupervisorError(
                 f"isolated {role} exhausted its command-line turn budget; "
@@ -1416,6 +1479,29 @@ def invoke_role(
                 original_input_sha256=input_sha256,
             ) from exc
     except SupervisorError as exc:
+        empty_response = bool(
+            not isinstance(exc, RoleOutputContractError)
+            and (
+                not (completed.stdout or "").strip()
+                or "has no result event" in str(exc)
+                or "has no assistant role payload" in str(exc)
+            )
+        )
+        if (
+            empty_response
+            and not correction_attempt
+            and _allow_runtime_fallback
+            and attempted_model == primary_model
+            and runtime_fallback_for(config, "empty_response") is not None
+        ):
+            fallback_result = invoke_declared_fallback(
+                "empty_response", phase="output_validation",
+                diagnostic=str(exc), capture_evidence=capture_evidence,
+                isolation_proof=isolation_proof,
+            )
+            if fallback_result is not None:
+                return fallback_result
+            raise exc
         correction_eligible = bool(
             isinstance(exc, RoleOutputContractError)
             and contract_version(payload) == 2
@@ -1447,7 +1533,10 @@ def invoke_role(
             attempt_id=attempt_id,
             output_format=output_format,
             terminal=not correction_eligible,
-            failure_kind=getattr(exc, "failure_kind", "output_validation"),
+            failure_kind=(
+                "empty_response" if empty_response
+                else getattr(exc, "failure_kind", "output_validation")
+            ),
             contract_diagnostics=getattr(exc, "diagnostics", None),
             original_input_sha256=(
                 input_sha256 if isinstance(exc, RoleOutputContractError) else None

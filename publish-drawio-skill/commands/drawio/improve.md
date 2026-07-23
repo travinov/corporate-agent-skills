@@ -6,13 +6,16 @@ The deterministic Draw.io orchestration host has already executed before this re
 Do not call tools, agents, shell, directory search, or file-reading operations.
 Present the JSON result below faithfully, including the semantic comparison checkpoint,
 working artifact, publishable candidate, role models, validation and review evidence,
-and resume contract. A strict-failed working artifact is not final or publishable.
+and resume contract. A strict-failed working artifact is not strict success.
+It may be returned only as `best_effort_completed` after deterministic structural,
+receipt, hash, and semantic-safety checks. When no safe monotonic improvement is
+available, preserve the original source byte-for-byte and report that disposition.
 The source diagram remains unchanged until explicit final approval.
 The host automatically continues bounded recoverable repair iterations; request
 human continuation only when the returned JSON contains a real checkpoint.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
-If `model_diversity_degraded` is true, identify the configured Supervisor fallback.
+If `model_diversity_degraded` is true, identify the configured Supervisor or Repair fallback.
 
 Normal use after `/drawio:review`, or when the workspace contains one `.drawio`:
 `/drawio:improve`. The host reuses only a completed review whose artifact hash still

@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -397,6 +398,7 @@ def create_checkpoint(
     semantic_plan_sha256: str | None = None,
     semantic_delta_sha256: str | None = None,
     accepted_artifact: dict[str, Any] | None = None,
+    processed_decision_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     replayed = require_mutable(run_dir)
     workflow, workflow_descriptor = latest_document(run_dir, "workflow", replayed)
@@ -446,9 +448,56 @@ def create_checkpoint(
         run_dir, run_id=workflow["run_id"], event_type="checkpoint_created",
         transaction_id=transaction_id,
         snapshots=[checkpoint_descriptor, next_state_descriptor, next_workflow_descriptor],
-        payload={"checkpoint_id": checkpoint_id, "checkpoint_type": checkpoint_type, "allowed_decisions": checkpoint["allowed_decisions"]},
+        payload={
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_type": checkpoint_type,
+            "allowed_decisions": checkpoint["allowed_decisions"],
+            "processed_decision_id": processed_decision_id,
+        },
     )
     return checkpoint, checkpoint_descriptor
+
+
+def mark_decision_processed(
+    run_dir: Path | str, *, decision_id: str, outcome: str,
+) -> bool:
+    """Append one durable processed marker after an outcome is already durable."""
+    replayed = require_mutable(run_dir)
+    workflow, _ = latest_document(run_dir, "workflow", replayed)
+    committed = any(
+        event_record["event"].get("event_type") == "decision_committed"
+        and event_record["event"].get("payload", {}).get("decision_id")
+        == decision_id
+        for event_record in replayed["events"]
+    )
+    if not committed:
+        raise ContractError(
+            "decision.processed_without_commit",
+            "cannot mark an unknown decision as processed",
+        )
+    for event_record in replayed["events"]:
+        event = event_record["event"]
+        if (
+            event.get("event_type") == "decision_processed"
+            and event.get("payload", {}).get("decision_id") == decision_id
+        ):
+            return False
+        if (
+            event.get("event_type") == "checkpoint_created"
+            and event.get("payload", {}).get("processed_decision_id")
+            == decision_id
+        ):
+            return False
+    _append_event(
+        run_dir,
+        run_id=workflow["run_id"],
+        event_type="decision_processed",
+        transaction_id=str(uuid.uuid4()),
+        snapshots=[],
+        payload={"decision_id": decision_id, "outcome": outcome},
+        actor={"kind": "system", "id": "diagram-orchestrator"},
+    )
+    return True
 
 
 def commit_decision(
@@ -580,6 +629,32 @@ def create_semantic_approval_from_decision(
 ) -> tuple[dict[str, Any], Path]:
     """Serialize actual human authorization; the host never invents an actor."""
     replayed = require_mutable(run_dir, decision["run_id"])
+    for event_record in replayed["events"]:
+        event = event_record["event"]
+        if (
+            event.get("event_type") != "semantic_approval"
+            or event.get("payload", {}).get("decision_id")
+            != decision["decision_id"]
+        ):
+            continue
+        descriptor = event["payload"].get("approval") or {}
+        existing_path = contained_path(run_dir, descriptor.get("path", ""))
+        if (
+            not existing_path.is_file()
+            or file_sha256(existing_path) != descriptor.get("sha256")
+        ):
+            raise ContractError(
+                "semantic_approval.replay_evidence_changed",
+                "the existing semantic approval artifact is missing or changed",
+            )
+        existing = json.loads(existing_path.read_text(encoding="utf-8"))
+        require_valid_contract(existing, "semantic-approval", 2)
+        if existing.get("decision_id") != decision["decision_id"]:
+            raise ContractError(
+                "semantic_approval.replay_mismatch",
+                "the existing semantic approval belongs to another decision",
+            )
+        return existing, existing_path
     checkpoint, checkpoint_descriptor = latest_document(run_dir, "checkpoint", replayed)
     if checkpoint["checkpoint_type"] != "semantic_approval":
         raise ContractError("semantic_approval.checkpoint_invalid", "semantic approval requires a semantic_approval checkpoint")
@@ -738,6 +813,164 @@ def verify_v2_receipt(run_dir: Path | str, receipt_path: Path | str) -> dict[str
     return result
 
 
+BEST_EFFORT_LAYOUT_CODES = {
+    "artifact.readability.crossing",
+    "artifact.readability.route_through",
+    "artifact.readability.overlap",
+    "artifact.readability.text_overflow",
+    "artifact.layout.container_overflow",
+    "artifact.layout.container_overlap",
+    "artifact.layout.lane_size",
+    "artifact.layout.lane_title_collision",
+    "artifact.layout.routing_uncertain",
+    "artifact.layout.terminal_segment",
+}
+
+
+def verify_best_effort_candidate(
+    run_dir: Path | str, *, artifact: Path | str, report: Path | str,
+    receipt: Path | str, reviewer_verdict: Path | str | None = None,
+    require_accepted_binding: bool = False,
+) -> dict[str, Any]:
+    """Classify degraded delivery without relaxing structural integrity."""
+    run_root = Path(run_dir).resolve()
+    diagnostics = []
+    try:
+        artifact_path = contained_path(run_root, artifact)
+        report_path = contained_path(run_root, report)
+        receipt_path = contained_path(run_root, receipt)
+    except (ContractError, OSError, ValueError) as exc:
+        return {
+            "safe": False,
+            "strict_passed": False,
+            "artifact_sha256": None,
+            "report_sha256": None,
+            "receipt_sha256": None,
+            "reviewer_status": "not_run",
+            "findings": [],
+            "reviewer_findings": [],
+            "diagnostics": [{
+                "code": "best_effort.evidence_path_invalid",
+                "message": str(exc),
+            }],
+        }
+    if not artifact_path.is_file():
+        diagnostics.append({"code": "best_effort.artifact_missing"})
+    else:
+        try:
+            ET.fromstring(artifact_path.read_bytes())
+        except (OSError, ET.ParseError) as exc:
+            diagnostics.append({
+                "code": "best_effort.xml_invalid", "message": str(exc),
+            })
+    report_value = {}
+    try:
+        report_value = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        diagnostics.append({
+            "code": "best_effort.report_invalid", "message": str(exc),
+        })
+    artifact_sha = file_sha256(artifact_path) if artifact_path.is_file() else None
+    if report_value.get("artifact_sha256") != artifact_sha:
+        diagnostics.append({"code": "best_effort.report_artifact_mismatch"})
+    receipt_check = verify_v2_receipt(run_root, receipt_path)
+    if not receipt_check.get("integrity_valid"):
+        diagnostics.append({
+            "code": "best_effort.receipt_invalid",
+            "details": receipt_check.get("diagnostics", []),
+        })
+    try:
+        receipt_value = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        receipt_value = {}
+    if (receipt_value.get("bindings") or {}).get("candidate_sha256") != artifact_sha:
+        diagnostics.append({"code": "best_effort.receipt_artifact_mismatch"})
+    if require_accepted_binding:
+        try:
+            replayed = require_mutable(run_root)
+            state, _ = latest_document(run_root, "run-state", replayed)
+            accepted = state.get("accepted_artifact") or {}
+            accepted_report = state.get("validation_report") or {}
+            accepted_receipt = state.get("validation_receipt") or {}
+            if any((
+                accepted.get("sha256") != artifact_sha,
+                accepted_report.get("sha256")
+                != (file_sha256(report_path) if report_path.is_file() else None),
+                accepted_receipt.get("sha256")
+                != (file_sha256(receipt_path) if receipt_path.is_file() else None),
+            )):
+                diagnostics.append({
+                    "code": "best_effort.accepted_state_binding_mismatch",
+                })
+        except (ContractError, OSError, KeyError, json.JSONDecodeError) as exc:
+            diagnostics.append({
+                "code": "best_effort.accepted_state_invalid",
+                "message": str(exc),
+            })
+    findings = copy.deepcopy(report_value.get("findings", []))
+    unsafe_findings = [
+        item for item in findings
+        if (
+            item.get("remediation_class") == "structural"
+            or item.get("layer") in {"artifact-parse", "round-trip"}
+            or (
+                item.get("severity") == "error"
+                and item.get("code") not in BEST_EFFORT_LAYOUT_CODES
+            )
+        )
+    ]
+    if unsafe_findings:
+        diagnostics.append({
+            "code": "best_effort.unsafe_validator_findings",
+            "finding_ids": [item.get("finding_id") for item in unsafe_findings],
+        })
+    reviewer_findings = []
+    reviewer_status = "not_run"
+    if reviewer_verdict is not None:
+        reviewer_path = contained_path(run_root, reviewer_verdict)
+        try:
+            reviewer_value = json.loads(reviewer_path.read_text(encoding="utf-8"))
+            require_valid_contract(reviewer_value, "reviewer-verdict", 2)
+            reviewer_findings = copy.deepcopy(reviewer_value.get("findings", []))
+            reviewer_status = "completed"
+            bindings = reviewer_value.get("bindings") or {}
+            if any((
+                reviewer_value.get("run_id") != receipt_value.get("run_id"),
+                bindings.get("candidate_sha256") != artifact_sha,
+                bindings.get("report_sha256") != file_sha256(report_path),
+                bindings.get("receipt_sha256") != file_sha256(receipt_path),
+            )):
+                diagnostics.append({"code": "best_effort.reviewer_binding_mismatch"})
+            reviewer_blockers = [
+                item for item in reviewer_findings
+                if item.get("category") in {"integrity", "semantic"}
+                and item.get("severity") == "error"
+            ]
+            if reviewer_blockers:
+                diagnostics.append({
+                    "code": "best_effort.reviewer_blocked",
+                    "finding_ids": [
+                        item.get("finding_id") for item in reviewer_blockers
+                    ],
+                })
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            reviewer_status = "invalid"
+            diagnostics.append({
+                "code": "best_effort.reviewer_invalid", "message": str(exc),
+            })
+    return {
+        "safe": not diagnostics,
+        "strict_passed": bool(receipt_check.get("strict_passed")),
+        "artifact_sha256": artifact_sha,
+        "report_sha256": file_sha256(report_path) if report_path.is_file() else None,
+        "receipt_sha256": file_sha256(receipt_path) if receipt_path.is_file() else None,
+        "reviewer_status": reviewer_status,
+        "findings": findings,
+        "reviewer_findings": reviewer_findings,
+        "diagnostics": diagnostics,
+    }
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY)
     try:
@@ -772,6 +1005,7 @@ def _advance_publication(
     state["status"] = (
         "publication_conflict" if status == "conflict"
         else "completed" if status == "committed" and value["decision"] == "approve"
+        else "best_effort_completed" if status == "committed" and value["decision"] == "best_effort"
         else "approved_with_findings" if status == "committed"
         else "publication_pending"
     )
@@ -832,6 +1066,34 @@ def _validate_publication_evidence(
         if not path.is_file() or file_sha256(path) != expected:
             raise ContractError(code, f"publication evidence changed: {path}")
     report_value = json.loads(report.read_text(encoding="utf-8"))
+    receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
+    if publication["decision"] == "best_effort":
+        classification = verify_best_effort_candidate(
+            run_dir,
+            artifact=accepted,
+            report=report,
+            receipt=receipt,
+            reviewer_verdict=reviewer,
+            require_accepted_binding=True,
+        )
+        if not classification["safe"]:
+            raise ContractError(
+                "publication.best_effort_unsafe",
+                f"best-effort evidence is unsafe: {classification['diagnostics']}",
+            )
+        if publication.get("strict_passed") != classification["strict_passed"]:
+            raise ContractError(
+                "publication.strict_result_mismatch",
+                "publication strict_passed differs from best-effort evidence",
+            )
+        if require_current_source:
+            current_source = replayed["latest_snapshots"]["source-bundle"]["canonical_sha256"]
+            if current_source != publication["source_bundle_sha256"]:
+                raise ContractError(
+                    "publication.source_changed",
+                    "source bundle changed after publication preparation",
+                )
+        return accepted, report, receipt
     if publication["decision"] == "approve_with_findings" and any(
         item.get("severity") == "error"
         for item in report_value.get("findings", [])
@@ -840,7 +1102,6 @@ def _validate_publication_evidence(
             "publication.structural_findings_forbidden",
             "approve_with_findings requires strict pass with warnings only",
         )
-    receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
     if receipt_value.get("result") != "passed":
         raise ContractError(
             "publication.strict_validation_required",
@@ -1036,7 +1297,7 @@ def publish_transaction(
     state, state_descriptor = latest_document(run_root, "run-state", replayed)
     if workflow["mode"] not in {"create", "improve"}:
         raise ContractError("publication.mode_invalid", "read-only review runs cannot publish")
-    if decision not in {"approve", "approve_with_findings"}:
+    if decision not in {"approve", "approve_with_findings", "best_effort"}:
         raise ContractError("publication.decision_invalid", f"unsupported publication decision {decision!r}")
     existing_descriptor = replayed["latest_snapshots"].get("publication-transaction")
     if existing_descriptor is not None:

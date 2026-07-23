@@ -274,6 +274,14 @@ some findings remain. Its receipt can be cryptographically valid while
 lexicographic improvement. It remains a `working_artifact`; Reviewer and
 publication are skipped until a candidate has `passed: true`.
 
+When bounded repair cannot reach strict pass, the host performs a deterministic
+best-effort classification. A parseable, hash-bound artifact may finish as
+`best_effort_completed` only when every remaining validator error is an
+allowlisted layout/readability finding and no Reviewer evidence reports an
+error-level semantic or integrity defect. Create publishes that safe candidate
+with unresolved findings. Improve preserves the original source when no safe
+monotonic improvement exists. This is a usable result, not strict completion.
+
 Vision review is supplemental. It cannot override a deterministic failure or a mismatched receipt.
 
 ## Human checkpoints
@@ -282,7 +290,7 @@ Do not ask after every iteration. Pause only for:
 
 - a conflict between user intent and an explicitly supplied source document;
 - semantic additions, removals, or relationship changes;
-- plateau, repeated cycle, unsupported structure, or agent confusion;
+- unresolved semantic ambiguity, unsupported structure, or agent confusion;
 - final review.
 
 Present semantic and layout diffs separately. At a checkpoint, offer only
@@ -293,7 +301,11 @@ reconciled against the same last working artifact. `approve_with_findings` is
 available only for an integrity-valid strict-pass candidate with Reviewer
 approve and without error-level findings. A manual handoff returns the last working file, remaining findings,
 and receipt status so the user can finish by hand.
-`manual_handoff` never promotes the pending unreviewed candidate.
+`manual_handoff` never promotes the pending unreviewed candidate. Routine
+route/layout plateau and exhausted bounded Repair attempts do not require
+another `continue`: they automatically finish with the last safe best-effort
+artifact. Human input remains required when deterministic safety classification
+fails.
 
 Completion requires an exact successful strict receipt:
 

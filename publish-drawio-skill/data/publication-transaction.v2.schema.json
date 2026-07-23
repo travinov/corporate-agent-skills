@@ -10,7 +10,7 @@
     "publication_id": {"$ref": "#/$defs/nonEmpty"},
     "run_id": {"$ref": "#/$defs/nonEmpty"},
     "mode": {"enum": ["create", "improve"]},
-    "decision": {"enum": ["approve", "approve_with_findings"]},
+    "decision": {"enum": ["approve", "approve_with_findings", "best_effort"]},
     "status": {"enum": ["prepared", "staged", "bytes_published", "committed", "conflict", "rolled_back", "failed"]},
     "target_path": {"$ref": "#/$defs/relativePath"},
     "target_before_sha256": {"$ref": "#/$defs/nullableSha"},

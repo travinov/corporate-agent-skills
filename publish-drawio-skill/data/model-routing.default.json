@@ -33,7 +33,15 @@
       "activation": "on_demand",
       "prompt": "agents/diagram-repair.md",
       "mutation_policy": "patch_proposal_only",
-      "fallback_order": ["isolated_cli", "native_per_agent", "inherited_current"]
+      "fallback_order": ["isolated_cli", "native_per_agent", "inherited_current"],
+      "runtime_fallbacks": [
+        {
+          "model": "vllm/Qwen3.6-35B-262k",
+          "provider": "vllm",
+          "on_failure": ["timeout", "turn_limit", "model_unavailable", "empty_response"],
+          "max_attempts": 1
+        }
+      ]
     },
     "semantic_analyst": {
       "requested_model": "vllm/Qwen3.6-35B-262k",

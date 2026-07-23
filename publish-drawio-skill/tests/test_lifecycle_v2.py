@@ -581,6 +581,132 @@ raise SystemExit(0)
                     )
                 self.assertFalse(output_path.exists())
 
+    def test_v2_repair_turn_limit_fallback_rejects_missing_model_proof_and_preserves_input_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = write_role_cli(
+                temp / "repair-cli",
+                """if model == 'vllm/MiniMax-M3-113k':
+    if call_no == 1:
+        print(json.dumps([
+            {"type": "system", "subtype": "init", "model": model, "qwen_code_version": "0.13.1"},
+            {"type": "assistant", "message": {"model": model, "content": [{"type": "text", "text": "turn limit"}]}},
+            {"type": "result", "subtype": "error", "is_error": True, "error": "FatalTurnLimitedError"},
+        ]))
+        print("FatalTurnLimitedError", file=sys.stderr)
+        raise SystemExit(2)
+elif model == 'vllm/Qwen3.6-35B-262k':
+    encoded = json.dumps({"schema_version": 1, "patch_id": "repair-fallback"}, ensure_ascii=False)
+    print(json.dumps([
+        {"type": "system", "subtype": "init", "model": model, "qwen_code_version": "0.13.1"},
+        {"type": "assistant", "message": {"model": "wrong-model", "content": [{"type": "text", "text": encoded}]}},
+        {"type": "result", "subtype": "success", "is_error": False, "result": encoded},
+    ]))
+else:
+    raise SystemExit(f"unexpected model: {model}")
+""",
+            )
+            input_path = write_json(temp / "input.json", semantic_input_v2())
+            output_path = temp / "output.json"
+
+            with self.assertRaisesRegex(agent_runtime.SupervisorError, "model proof"):
+                agent_runtime.invoke_role(
+                    "repair",
+                    input_path,
+                    output_path,
+                    cli=str(cli),
+                    run_dir=temp / "run",
+                )
+
+            self.assertFalse(output_path.exists())
+            call_log = cli.with_suffix(".calls.log").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(call_log), 2)
+            self.assertEqual(call_log[0].split()[1], call_log[1].split()[1])
+            events = [
+                json.loads(line)
+                for line in (temp / "run" / "run-manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            failed = [event for event in events if event["event_type"] == "role_failed"]
+            self.assertEqual(
+                [item["payload"]["attempted_model"] for item in failed],
+                ["vllm/MiniMax-M3-113k", "vllm/Qwen3.6-35B-262k"],
+            )
+            self.assertEqual([item["payload"]["terminal"] for item in failed], [False, True])
+
+    def test_v2_repair_turn_limit_fallback_succeeds_with_input_hash_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            cli = write_role_cli(
+                temp / "repair-cli",
+                """if model == 'vllm/MiniMax-M3-113k':
+    if call_no == 1:
+        print(json.dumps([
+            {"type": "system", "subtype": "init", "model": model, "qwen_code_version": "0.13.1"},
+            {"type": "assistant", "message": {"model": model, "content": [{"type": "text", "text": "turn limit"}]}},
+            {"type": "result", "subtype": "error", "is_error": True, "error": "FatalTurnLimitedError"},
+        ]))
+        print("FatalTurnLimitedError", file=sys.stderr)
+        raise SystemExit(2)
+elif model == 'vllm/Qwen3.6-35B-262k':
+    emit({
+        "schema_version": 1,
+        "patch_id": "repair-fallback",
+        "created_at": "2026-07-20T12:00:00Z",
+        "created_by": "repair",
+        "baseline": {
+            "artifact_sha256": "3" * 64,
+            "semantic_digest": "2" * 64,
+        },
+        "affected_region": {
+            "page_id": "page-1",
+            "cell_ids": ["node-a"],
+        },
+        "operations": [
+            {
+                "operation_id": "repair-fallback-move-node-a",
+                "op": "move_vertex",
+                "target_id": "node-a",
+                "precondition": {"target_exists": False},
+                "proposed_value": {"x": 12, "y": 34},
+                "semantic_effect": "layout_only",
+                "reasons": ["turn-limit fallback"],
+                "finding_ids": [],
+                "rollback": {"action": "restore_value", "value": {}},
+            }
+        ],
+    })
+else:
+    raise SystemExit(f"unexpected model: {model}")
+""",
+            )
+            input_path = write_json(temp / "input.json", semantic_input_v2())
+            output_path = temp / "output.json"
+
+            result = agent_runtime.invoke_role(
+                "repair",
+                input_path,
+                output_path,
+                cli=str(cli),
+                run_dir=temp / "run",
+            )
+
+            self.assertTrue(output_path.exists())
+            self.assertEqual(result["resolution"]["resolved_model"], "vllm/Qwen3.6-35B-262k")
+            self.assertTrue(result["resolution"]["fallback_used"])
+            call_log = cli.with_suffix(".calls.log").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(call_log), 2)
+            self.assertEqual(call_log[0].split()[1], call_log[1].split()[1])
+            events = [
+                json.loads(line)
+                for line in (temp / "run" / "run-manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            failed = [event for event in events if event["event_type"] == "role_failed"]
+            self.assertEqual([item["payload"]["terminal"] for item in failed], [False])
+            self.assertEqual(
+                [item["payload"]["attempted_model"] for item in failed],
+                ["vllm/MiniMax-M3-113k"],
+            )
+
     def test_validate_role_input_v1_passthrough_and_invalid_v2_stops_before_cli_marker(self):
         self.assertEqual(agent_runtime.validate_role_input("reviewer", {}), {})
 

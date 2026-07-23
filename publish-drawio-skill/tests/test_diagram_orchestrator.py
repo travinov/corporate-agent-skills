@@ -360,6 +360,8 @@ Route approved payments to settlement.
             result["role_policy"],
             {
                 "supervisor_action": "repair",
+                "supervisor_action_normalized": False,
+                "supervisor_declared_action": "repair",
                 "supervisor_declared_roles": ["repair", "reviewer"],
                 "host_mandatory_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
                 "effective_required_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
@@ -1673,6 +1675,79 @@ Route approved payments to settlement.
             ["supervisor", "semantic_analyst"],
         )
 
+    def test_finish_best_effort_marks_unchanged_improve_as_source_preserved(self):
+        root, workspace, _ = self.create_workspace()
+        run_dir = workspace / ".diagram-runs" / "source-preserved-run"
+        run_dir.mkdir(parents=True)
+        target = run_dir / "source-preserved.drawio"
+        target.write_text(clean_diagram(), encoding="utf-8")
+        original_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        report = run_dir / "validation-report.json"
+        receipt = run_dir / "validation-receipt.json"
+        reviewer = run_dir / "reviewer-verdict.json"
+        report.write_text(json.dumps({"schema_version": 1, "findings": [], "metrics": {}}), encoding="utf-8")
+        receipt.write_text(json.dumps({"strict_passed": False}), encoding="utf-8")
+        reviewer.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "verdict_id": "review-1",
+                    "run_id": "source-preserved-run",
+                    "candidate_sha256": original_hash,
+                    "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+                    "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+                    "verdict": "approve",
+                    "reviewed_at": "2026-07-23T00:00:00Z",
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        workflow = {
+            "run_id": "source-preserved-run",
+            "mode": "improve",
+            "target": str(target),
+            "original_artifact": {"sha256": original_hash},
+            "reviewer_verdict_v2": {"path": str(reviewer)},
+        }
+        candidate = {
+            "safe": True,
+            "artifact": {"path": str(target), "sha256": original_hash},
+            "validation": {"report": str(report), "receipt": str(receipt)},
+            "validation_receipt_v2": {"path": str(receipt)},
+            "reviewer_verdict_v2": {"path": str(reviewer)},
+            "classification": {
+                "strict_passed": False,
+                "findings": [],
+                "reviewer_findings": [],
+                "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+                "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            },
+            "diagnostics": [],
+        }
+
+        with mock.patch.object(orchestrator, "_best_effort_candidate", return_value=candidate), \
+            mock.patch.object(orchestrator, "write_workflow"), \
+            mock.patch.object(orchestrator, "_complete_inflight_decision"), \
+            mock.patch.object(orchestrator, "host_result", side_effect=lambda run_dir, workflow, error=None: {"status": workflow["status"]}), \
+            mock.patch.object(orchestrator.supervisor, "transition"), \
+            mock.patch.object(orchestrator.lifecycle_v2, "transition"), \
+            mock.patch.object(orchestrator.lifecycle_v2, "publish_transaction") as publish_transaction:
+            result = orchestrator._finish_best_effort(
+                run_dir,
+                workflow,
+                cli=Path("/usr/bin/true"),
+                timeout=1,
+                reason="test source preserved",
+            )
+
+        self.assertEqual(result["status"], "best_effort_completed")
+        self.assertEqual(workflow["status"], "best_effort_completed")
+        self.assertEqual(workflow["best_effort"]["publication"]["disposition"], "source_preserved")
+        self.assertEqual(workflow["published_artifact"]["sha256"], original_hash)
+        self.assertEqual(workflow["final_artifact"]["sha256"], original_hash)
+        publish_transaction.assert_not_called()
+
     def test_trace_detects_tampered_role_output(self):
         root, workspace, cli = self.create_workspace()
         target = workspace / "tampered.drawio"
@@ -1971,7 +2046,7 @@ Route approved payments to settlement.
             approved_plan["sha256"],
         )
 
-        orchestrator.resume_run(
+        first_resume = orchestrator.resume_run(
             run_dir,
             "continue",
             "Approve the proposed semantic delta.",
@@ -2008,6 +2083,105 @@ Route approved payments to settlement.
             hashlib.sha256(approved_plan_path.read_bytes()).hexdigest(),
             approved_plan["sha256"],
         )
+        self.assertNotEqual(first_resume["status"], "already_applied")
+
+        resumed_again = orchestrator.resume_run(
+            run_dir,
+            "continue",
+            "Approve the proposed semantic delta.",
+            workspace,
+            cli,
+        )
+        self.assertEqual(resumed_again["status"], "already_applied")
+
+    def test_semantic_approval_replay_reuses_existing_approval_without_duplicate_event(self):
+        root, workspace, _ = self.create_workspace()
+        source_with_repair = FAKE_GIGACODE.replace(
+            '["supervisor", "semantic_analyst", "reviewer"]',
+            '["supervisor", "semantic_analyst", "repair", "reviewer"]',
+        )
+        cli = root / "semantic-replay-cli.py"
+        cli.write_text(source_with_repair, encoding="utf-8")
+        cli.chmod(0o755)
+        source = workspace / "semantic-replay.drawio"
+        source.write_text(clean_diagram(), encoding="utf-8")
+
+        orchestrator.start_run(
+            "improve",
+            source,
+            "Add a semantic approval branch.",
+            workspace,
+            cli,
+            run_id="semantic-replay-run",
+            max_iterations=1,
+        )
+        run_dir = workspace / ".diagram-runs" / "semantic-replay-run"
+        decision, _, _ = orchestrator.lifecycle_v2.commit_decision(
+            run_dir,
+            decision="continue",
+            feedback="Approve the proposed semantic delta.",
+        )
+
+        first_approval, first_path = orchestrator.lifecycle_v2.create_semantic_approval_from_decision(
+            run_dir, decision=decision,
+        )
+        second_approval, second_path = orchestrator.lifecycle_v2.create_semantic_approval_from_decision(
+            run_dir, decision=decision,
+        )
+
+        self.assertEqual(first_approval, second_approval)
+        self.assertEqual(first_path, second_path)
+        approval_files = sorted((run_dir / "lifecycle-v2" / "approvals").glob("*.json"))
+        self.assertEqual(len(approval_files), 1)
+        self.assertEqual(approval_files[0].resolve(), first_path.resolve())
+
+    def test_resume_rejects_conflicting_feedback_for_unprocessed_committed_decision(self):
+        root, workspace, _ = self.create_workspace()
+        source = workspace / "semantic-feedback-conflict.drawio"
+        source.write_text(clean_diagram(), encoding="utf-8")
+        cli = root / "semantic-feedback-conflict-cli.py"
+        cli.write_text(FAKE_GIGACODE, encoding="utf-8")
+        cli.chmod(0o755)
+
+        orchestrator.start_run(
+            "improve",
+            source,
+            "Add a semantic approval branch.",
+            workspace,
+            cli,
+            run_id="semantic-feedback-conflict-run",
+            max_iterations=1,
+        )
+        run_dir = workspace / ".diagram-runs" / "semantic-feedback-conflict-run"
+        orchestrator.lifecycle_v2.commit_decision(
+            run_dir,
+            decision="continue",
+            feedback="Use only the approved edge.",
+        )
+        immutable_before = {
+            path.relative_to(run_dir).as_posix(): path.read_bytes()
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        with self.assertRaisesRegex(
+            orchestrator.supervisor.SupervisorError,
+            "feedback conflicts",
+        ):
+            orchestrator.resume_run(
+                run_dir,
+                "continue",
+                "Change a different edge instead.",
+                workspace,
+                cli,
+            )
+
+        immutable_after = {
+            path.relative_to(run_dir).as_posix(): path.read_bytes()
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(immutable_after, immutable_before)
 
     def test_unsupported_supervisor_plan_fails_before_unrequested_roles_run(self):
         root, workspace, _ = self.create_workspace()

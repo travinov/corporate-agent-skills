@@ -62,7 +62,14 @@
       "properties": {
         "model": {"type": "string", "minLength": 1},
         "provider": {"type": "string", "minLength": 1},
-        "on_failure": {"const": ["turn_limit"]},
+        "on_failure": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["timeout", "turn_limit", "model_unavailable", "empty_response"]
+          }
+        },
         "max_attempts": {"const": 1}
       }
     },

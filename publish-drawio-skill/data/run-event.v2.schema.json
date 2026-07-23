@@ -11,7 +11,7 @@
     "event_id": {"$ref": "#/$defs/nonEmpty"},
     "sequence": {"type": "integer", "minimum": 0},
     "timestamp": {"type": "string", "format": "date-time"},
-    "event_type": {"enum": ["run_created", "implementation_captured", "source_revision", "state_transition", "checkpoint_created", "decision_committed", "semantic_approval", "role_attempt", "tool_attempt", "candidate_accepted", "candidate_rejected", "validation_receipt", "review_verdict", "publication_prepared", "publication_staged", "publication_bytes_written", "publication_committed", "publication_conflict", "recovery", "terminal_state"]},
+    "event_type": {"enum": ["run_created", "implementation_captured", "source_revision", "state_transition", "checkpoint_created", "decision_committed", "decision_processed", "semantic_approval", "role_attempt", "tool_attempt", "candidate_accepted", "candidate_rejected", "validation_receipt", "review_verdict", "publication_prepared", "publication_staged", "publication_bytes_written", "publication_committed", "publication_conflict", "recovery", "terminal_state"]},
     "actor": {
       "type": "object",
       "required": ["kind", "id"],

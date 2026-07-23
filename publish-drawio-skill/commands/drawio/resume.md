@@ -8,8 +8,9 @@ the result faithfully. A continuation is a new iteration from the last working c
 not a restarted generation.
 Non-empty feedback becomes a hash-bound confirmed clarification and triggers
 deterministic layout scoping or bounded semantic reconciliation in this same run.
-Decisions are idempotent;
-report `already_applied` faithfully instead of claiming another iteration ran.
+Decisions are transactional and idempotent. A decision committed before an
+interruption is resumed from its last durable step; report `already_applied`
+only after the decision actually produced a terminal result or a new checkpoint.
 Never recommend changing global `maxSessionTurns`; the extension owns each child role's
 command-line turn budget, and a run without a pending checkpoint cannot be resumed.
 Only present `approve_with_findings` when the host offers it after strict pass,

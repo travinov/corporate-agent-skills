@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": 2},
     "run_id": {"$ref": "#/$defs/nonEmpty"},
-    "status": {"enum": ["initialized", "analyzing", "analyzed", "awaiting_decision", "patching", "validating", "accepted_candidate", "retrying", "plateau", "awaiting_feedback", "final_review", "reviewing", "publication_pending", "publication_conflict", "completed", "approved_with_findings", "manual_handoff", "stopped", "failed"]},
+    "status": {"enum": ["initialized", "analyzing", "analyzed", "awaiting_decision", "patching", "validating", "accepted_candidate", "retrying", "plateau", "awaiting_feedback", "final_review", "reviewing", "publication_pending", "publication_conflict", "completed", "approved_with_findings", "best_effort_completed", "manual_handoff", "stopped", "failed"]},
     "iteration": {"type": "integer", "minimum": 0},
     "updated_at": {"type": "string", "format": "date-time"},
     "transaction_id": {"$ref": "#/$defs/nonEmpty"},

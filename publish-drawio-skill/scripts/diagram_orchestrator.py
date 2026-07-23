@@ -1243,7 +1243,7 @@ def role_call(role, payload, run_dir, workspace, cli, timeout, label):
             for item in policy["roles"].get(role, {}).get("runtime_fallbacks", [])
         }
         if (
-            role != "supervisor"
+            role not in {"supervisor", "repair"}
             or resolution["resolved_model"] not in allowed
             or resolution.get("resolution_mode") != "isolated_cli"
         ):
@@ -1256,7 +1256,8 @@ def role_call(role, payload, run_dir, workspace, cli, timeout, label):
 def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iterations):
     """Apply the typed Supervisor plan or fail closed before invoking sibling roles."""
     result = decision["result"]
-    action = result["action"]
+    declared_action = result["action"]
+    action = declared_action
     # The raw model declaration remains evidence, while executable lifecycle
     # topology is deterministic and owned by the host. Repair is authorized in
     # every lifecycle phase but is invoked only when validation/review findings
@@ -1270,6 +1271,15 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
         if workflow["mode"] == "create" and not workflow.get("accepted_artifact"):
             allowed_actions.add("create")
         host_mandatory_roles = {"supervisor", "repair", "reviewer"}
+        if (
+            declared_action == "create"
+            and workflow["mode"] == "create"
+            and workflow.get("accepted_artifact")
+        ):
+            # A resumed create run already owns immutable baseline bytes.  The
+            # model declaration is retained as evidence, but executable host
+            # topology must continue from that baseline instead of regenerating.
+            action = "repair"
     if action not in allowed_actions:
         raise supervisor.SupervisorError(
             f"Supervisor action {action!r} is not executable during the {phase} phase"
@@ -1280,7 +1290,9 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
     workflow["supervisor_declared_roles"] = sorted(declared_roles)
     workflow["host_mandatory_roles"] = sorted(host_mandatory_roles)
     workflow["required_roles"] = sorted(roles)
+    workflow["supervisor_declared_action"] = declared_action
     workflow["supervisor_action"] = action
+    workflow["supervisor_action_normalized"] = declared_action != action
     workflow["supervisor_decision"] = decision
     return workflow
 
@@ -1316,7 +1328,29 @@ def bind_accepted_validation(run_dir, report_path, receipt_path):
     )
 
 
+def _complete_inflight_decision(
+    run_dir, workflow, *, outcome, record_v2=True,
+):
+    """Mark a committed decision complete only after durable progress exists."""
+    inflight = workflow.pop("inflight_decision", None)
+    if not inflight:
+        return
+    decision_id = inflight.get("decision_id")
+    if decision_id:
+        if record_v2:
+            lifecycle_v2.mark_decision_processed(
+                run_dir, decision_id=decision_id, outcome=outcome,
+            )
+        workflow.setdefault("processed_decision_ids", []).append(decision_id)
+        workflow["processed_decision_ids"] = sorted(
+            set(workflow["processed_decision_ids"])
+        )
+
+
 def checkpoint(run_dir, workflow, kind, summary, findings, allowed, *, evidence=None):
+    processed_decision_id = (
+        (workflow.get("inflight_decision") or {}).get("decision_id")
+    )
     value = {
         "schema_version": 1, "run_id": workflow["run_id"], "kind": kind,
         "summary": summary, "findings": findings, "allowed_decisions": allowed,
@@ -1368,10 +1402,14 @@ def checkpoint(run_dir, workflow, kind, summary, findings, allowed, *, evidence=
             semantic_plan_sha256=semantic_plan_sha,
             semantic_delta_sha256=semantic_delta_sha,
             accepted_artifact=accepted_descriptor,
+            processed_decision_id=processed_decision_id,
         )
         workflow["checkpoint"]["v2_checkpoint_id"] = v2_checkpoint["checkpoint_id"]
         workflow["checkpoint"]["v2_checkpoint_sha256"] = v2_descriptor["canonical_sha256"]
-        write_workflow(run_dir, workflow)
+    _complete_inflight_decision(
+        run_dir, workflow, outcome=f"checkpoint:{kind}", record_v2=False,
+    )
+    write_workflow(run_dir, workflow)
     return host_result(run_dir, workflow)
 
 
@@ -1379,6 +1417,10 @@ def role_policy_evidence(workflow):
     """Expose model-declared and deterministic host role selection separately."""
     return {
         "supervisor_action": workflow.get("supervisor_action"),
+        "supervisor_declared_action": workflow.get("supervisor_declared_action"),
+        "supervisor_action_normalized": bool(
+            workflow.get("supervisor_action_normalized")
+        ),
         "supervisor_declared_roles": workflow.get("supervisor_declared_roles", []),
         "host_mandatory_roles": workflow.get("host_mandatory_roles", []),
         "effective_required_roles": workflow.get("required_roles", []),
@@ -1390,6 +1432,12 @@ def host_result(run_dir, workflow, *, error=None):
     working_artifact = _working_artifact(workflow)
     working_validation = _working_validation(workflow)
     publishable = workflow.get("publishable_candidate") or None
+    best_effort = workflow.get("best_effort") or None
+    best_effort_candidate = workflow.get("best_effort_candidate") or None
+    deliverable = publishable or (
+        best_effort_candidate
+        if best_effort and best_effort.get("eligible") else None
+    )
     role_runs = []
     failed_role_runs = []
     manifest_path = Path(run_dir) / "run-manifest.jsonl"
@@ -1431,12 +1479,15 @@ def host_result(run_dir, workflow, *, error=None):
         "working_artifact": working_artifact or None,
         "working_validation": working_validation or None,
         "publishable_candidate": copy.deepcopy(publishable),
+        "best_effort": copy.deepcopy(best_effort),
+        "best_effort_candidate": copy.deepcopy(best_effort_candidate),
+        "strict_passed": bool(working_validation.get("strict_passed")),
         # Do not present a strict-failed compatibility mirror as final accepted.
         "accepted_artifact": (
-            copy.deepcopy(publishable["artifact"]) if publishable else None
+            copy.deepcopy(deliverable["artifact"]) if deliverable else None
         ),
         "accepted_validation": (
-            copy.deepcopy(publishable["validation"]) if publishable else None
+            copy.deepcopy(deliverable["validation"]) if deliverable else None
         ),
         "final_artifact": workflow.get("final_artifact"),
         "published_artifact": workflow.get("published_artifact"),
@@ -1447,6 +1498,9 @@ def host_result(run_dir, workflow, *, error=None):
         ),
         "role_policy": role_policy_evidence(workflow),
         "checkpoint": workflow.get("checkpoint"),
+        "recovered_committed_decision": copy.deepcopy(
+            workflow.get("recovered_committed_decision")
+        ),
         "evidence": {
             "manifest": str(manifest_path.resolve()),
             "workflow": str((Path(run_dir) / WORKFLOW_FILE).resolve()),
@@ -1962,13 +2016,14 @@ def repair_input(run_dir, workflow):
     working_validation = _working_validation(workflow)
     accepted = Path(working_artifact["path"])
     report = supervisor.load_json(working_validation["report"])
-    receipt = supervisor.load_json(working_validation["receipt"])
     spec = supervisor.make_spec(accepted, [source_ref_for_request(workflow["run_id"], workflow["request"])])
     semantic_authorized = bool(workflow.get("semantic_authorized"))
     approved_semantic_change = (
         workflow.get("approved_semantic_change") if semantic_authorized else None
     )
-    source_bundle = lifecycle_v2.latest_document(run_dir, "source-bundle")[0]
+    source_bundle, source_bundle_descriptor = lifecycle_v2.latest_document(
+        run_dir, "source-bundle"
+    )
     semantic_plan_descriptor = (
         workflow.get("semantic_plan_v2") or {}
         if semantic_authorized else {}
@@ -2054,33 +2109,56 @@ def repair_input(run_dir, workflow):
         )):
             raise supervisor.SupervisorError("semantic approval v2 bindings differ from the approved plan and delta")
     host_scope = _derive_repair_scope(workflow)
+    allowed_finding_ids = set(host_scope.get("finding_ids", []))
+    actionable_findings = [
+        copy.deepcopy(item) for item in report.get("findings", [])
+        if not allowed_finding_ids or item.get("finding_id") in allowed_finding_ids
+    ]
+    if reviewer_verdict is not None:
+        actionable_findings.extend(
+            {
+                "source": "reviewer",
+                **copy.deepcopy(item),
+            }
+            for item in reviewer_verdict.get("findings", [])
+        )
+    report_file = _relative_file(run_dir, review_report_path)
+    receipt_file = _relative_file(run_dir, receipt_v2_path)
+    verdict_file = (
+        _relative_file(run_dir, verdict_path)
+        if reviewer_verdict is not None else None
+    )
     return {
         "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
         "request": workflow["request"], "iteration": workflow["iteration"],
         "semantic_changes_authorized": semantic_authorized,
         "approved_semantic_change": approved_semantic_change,
-        "source_bundle": source_bundle,
+        "source_bundle": {
+            "schema_version": source_bundle.get("schema_version"),
+            "sha256": source_bundle_descriptor["canonical_sha256"],
+            "source_count": len(source_bundle.get("sources", [])),
+        },
         "semantic_plan_v2": semantic_plan,
         "approved_semantic_delta": (
             semantic_plan["result"]["semantic_delta"]
             if approved_semantic_change and semantic_plan is not None else None
         ),
         "review_evidence": {
-            "findings": copy.deepcopy(
-                reviewer_verdict["findings"] if reviewer_verdict is not None
-                else workflow.get("findings", [])
-            ),
-            "report": _role_document(run_dir, review_report_path),
-            "receipt": _role_document(run_dir, receipt_v2_path),
+            "findings": actionable_findings,
+            "report": report_file,
+            "receipt": {
+                **receipt_file,
+                "content": supervisor.load_json(receipt_v2_path),
+            },
             "verdict": (
-                _role_document(run_dir, verdict_path)
+                {**verdict_file, "content": reviewer_verdict}
                 if reviewer_verdict is not None else None
             ),
         },
         "baseline": {
             "artifact": {"path": str(accepted), "sha256": supervisor.sha256_file(accepted)},
             "semantic_digest": spec["semantic_digest"]["value"],
-            "diagram_spec": spec, "validation_report": report, "validation_receipt": receipt,
+            "diagram_spec": spec,
         },
         "requirements": {
             "last_accepted_only": True, "preserve_untouched_regions": True,
@@ -2089,7 +2167,14 @@ def repair_input(run_dir, workflow):
         },
         "host_scope": host_scope,
         "machine_repair_feedback": copy.deepcopy(workflow.get("machine_repair_feedback")),
-        "previous_findings": workflow.get("findings", []),
+        "evidence_bindings": {
+            "source_bundle_sha256": source_bundle_descriptor["canonical_sha256"],
+            "validation_report_sha256": report_file["sha256"],
+            "validation_receipt_sha256": receipt_file["sha256"],
+            "reviewer_verdict_sha256": (
+                verdict_file["sha256"] if verdict_file is not None else None
+            ),
+        },
     }
 
 
@@ -2548,6 +2633,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
             if current != "awaiting_feedback":
                 supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="Supervisor did not authorize Repair")
             workflow["findings"] = ["Supervisor required_roles did not authorize the Repair role."]
+            best_effort = _finish_best_effort(
+                run_dir, workflow, cli, timeout,
+                reason="Supervisor did not authorize further automatic repair",
+            )
+            if best_effort is not None:
+                return best_effort
             return checkpoint(
                 run_dir, workflow, "plateau",
                 "Automatic repair was not started because the Supervisor plan did not authorize Repair.",
@@ -2581,6 +2672,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 continue
             supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="Repair could not produce a usable typed patch")
             workflow["findings"] = [str(exc)]
+            best_effort = _finish_best_effort(
+                run_dir, workflow, cli, timeout,
+                reason="Repair primary and bounded recovery attempts were exhausted",
+            )
+            if best_effort is not None:
+                return best_effort
             return checkpoint(
                 run_dir, workflow, "plateau",
                 "Repair could not produce a schema-valid bounded patch; the accepted candidate was preserved.",
@@ -2610,6 +2707,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
             if retry:
                 continue
             supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="semantic patch exceeded the approved scope")
+            best_effort = _finish_best_effort(
+                run_dir, workflow, cli, timeout,
+                reason="Unsafe semantic Repair proposals were rejected; retained baseline selected",
+            )
+            if best_effort is not None:
+                return best_effort
             return checkpoint(
                 run_dir, workflow, "plateau",
                 "Repair repeatedly proposed semantic changes without a Semantic Analyst plan and human approval.",
@@ -2638,6 +2741,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 if retry:
                     continue
                 supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="Repair repeatedly exceeded semantic authorization")
+                best_effort = _finish_best_effort(
+                    run_dir, workflow, cli, timeout,
+                    reason="Repair exceeded semantic authorization; retained baseline selected",
+                )
+                if best_effort is not None:
+                    return best_effort
                 return checkpoint(
                     run_dir, workflow, "plateau",
                     "Repair повторно вышел за подтверждённую семантическую дельту; требуется замечание пользователя или ручная передача.",
@@ -2681,6 +2790,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 continue
             supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="deterministic repair tool failed")
             workflow["findings"] = [str(exc)]
+            best_effort = _finish_best_effort(
+                run_dir, workflow, cli, timeout,
+                reason="Deterministic patch processing failed; last safe artifact retained",
+            )
+            if best_effort is not None:
+                return best_effort
             return checkpoint(
                 run_dir, workflow, "plateau",
                 "Детерминированный patch/validation этап завершился ошибкой; последний принятый артефакт сохранён.",
@@ -2727,6 +2842,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                     continue
                 supervisor.transition(run_dir, "awaiting_feedback", decision="pause", reason="independent review failed")
                 workflow["findings"] = [str(exc)]
+                best_effort = _finish_best_effort(
+                    run_dir, workflow, cli, timeout,
+                    reason="Independent review failed after bounded attempts; deterministic evidence retained",
+                )
+                if best_effort is not None:
+                    return best_effort
                 return checkpoint(
                     run_dir, workflow, "plateau",
                     "The candidate was not promoted because independent review did not produce a usable hash-bound verdict.",
@@ -2890,6 +3011,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 )
                 workflow["status"] = "awaiting_human"
                 write_workflow(run_dir, workflow)
+                best_effort = _finish_best_effort(
+                    run_dir, workflow, cli, timeout,
+                    reason="The same non-improving candidate failure repeated",
+                )
+                if best_effort is not None:
+                    return best_effort
                 return checkpoint(
                     run_dir,
                     workflow,
@@ -2908,6 +3035,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
         write_workflow(run_dir, workflow)
         if state["state"] == "plateau":
             supervisor.transition(run_dir, "awaiting_feedback", reason="automatic improvement plateau")
+        best_effort = _finish_best_effort(
+            run_dir, workflow, cli, timeout,
+            reason="Automatic improvement reached a plateau",
+        )
+        if best_effort is not None:
+            return best_effort
         return checkpoint(
             run_dir, workflow, "plateau",
             "Automatic repair stopped because the candidate repeated or stopped improving.",
@@ -2932,6 +3065,12 @@ def repair_loop(run_dir, workflow, cli, timeout, *, already_patching=False):
                 )
     workflow["status"] = "awaiting_human"
     write_workflow(run_dir, workflow)
+    best_effort = _finish_best_effort(
+        run_dir, workflow, cli, timeout,
+        reason="Configured automatic iteration limit was reached",
+    )
+    if best_effort is not None:
+        return best_effort
     return checkpoint(
         run_dir, workflow, "plateau", "Configured automatic iteration limit was reached.",
         workflow.get("findings", []), ["continue", "pause", "stop", "manual_handoff"],
@@ -3344,25 +3483,272 @@ def publish(run_dir, workflow, decision):
     return target
 
 
+def _best_effort_candidate(run_dir, workflow):
+    artifact = _working_artifact(workflow)
+    validation = _working_validation(workflow)
+    receipt_v2 = workflow.get("validation_receipt_v2") or {}
+    reviewer = (
+        workflow.get("candidate_reviewer_verdict_v2")
+        or workflow.get("reviewer_verdict_v2")
+        or {}
+    )
+    if not artifact or not validation or not receipt_v2:
+        return {
+            "safe": False,
+            "diagnostics": [{"code": "best_effort.evidence_missing"}],
+        }
+    reviewer_path = Path(reviewer.get("path", ""))
+    classification = lifecycle_v2.verify_best_effort_candidate(
+        run_dir,
+        artifact=Path(artifact["path"]),
+        report=Path(validation["report"]),
+        receipt=Path(receipt_v2["path"]),
+        reviewer_verdict=(reviewer_path if reviewer_path.is_file() else None),
+        require_accepted_binding=True,
+    )
+    return {
+        "artifact": copy.deepcopy(artifact),
+        "validation": copy.deepcopy(validation),
+        "validation_receipt_v2": copy.deepcopy(receipt_v2),
+        "reviewer_verdict_v2": (
+            copy.deepcopy(reviewer) if reviewer_path.is_file() else None
+        ),
+        "classification": classification,
+        "safe": classification["safe"],
+        "diagnostics": classification["diagnostics"],
+    }
+
+
+def _finish_best_effort(run_dir, workflow, cli, timeout, *, reason):
+    """Return a safe usable artifact without weakening strict completion."""
+    if not workflow.get("reviewer_verdict_v2"):
+        try:
+            baseline_review(run_dir, workflow, cli, min(timeout, 180))
+            workflow["best_effort_review"] = {"status": "completed"}
+        except supervisor.SupervisorError as exc:
+            workflow["best_effort_review"] = {
+                "status": "failed", "reason": str(exc),
+            }
+    candidate = _best_effort_candidate(run_dir, workflow)
+    workflow["best_effort_candidate"] = candidate
+    if not candidate.get("safe"):
+        workflow["best_effort"] = {
+            "eligible": False,
+            "reason": reason,
+            "diagnostics": copy.deepcopy(candidate.get("diagnostics", [])),
+        }
+        write_workflow(run_dir, workflow)
+        return None
+    classification = candidate["classification"]
+    artifact = Path(candidate["artifact"]["path"])
+    validation = candidate["validation"]
+    receipt_v2 = Path(candidate["validation_receipt_v2"]["path"])
+    reviewer_descriptor = candidate.get("reviewer_verdict_v2") or {}
+    reviewer_path = Path(reviewer_descriptor.get("path", ""))
+    unresolved = [
+        {"source": "validator", "finding": item}
+        for item in classification.get("findings", [])
+    ] + [
+        {"source": "reviewer", "finding": item}
+        for item in classification.get("reviewer_findings", [])
+    ]
+    supervisor.append_event(
+        run_dir,
+        "best_effort_selected",
+        {
+            "artifact": candidate["artifact"],
+            "report_sha256": classification.get("report_sha256"),
+            "receipt_sha256": classification.get("receipt_sha256"),
+            "strict_passed": classification.get("strict_passed"),
+            "remaining_finding_ids": [
+                item.get("finding", {}).get("finding_id")
+                for item in unresolved
+                if item.get("finding", {}).get("finding_id")
+            ],
+            "selection_reason": reason,
+        },
+        actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
+    )
+    publication = {"disposition": "run_local", "reason": reason}
+    v2_selection_recorded = False
+    target = Path(workflow["target"])
+    published_descriptor = None
+    final_descriptor = copy.deepcopy(candidate["artifact"])
+    unchanged_improve = bool(
+        workflow["mode"] == "improve"
+        and (workflow.get("original_artifact") or {}).get("sha256")
+        == candidate["artifact"].get("sha256")
+    )
+    if unchanged_improve:
+        expected = (workflow.get("original_artifact") or {}).get("sha256")
+        if target.is_file() and supervisor.sha256_file(target) == expected:
+            published_descriptor = {
+                "path": str(target.resolve()), "sha256": expected,
+            }
+            final_descriptor = copy.deepcopy(published_descriptor)
+            publication = {
+                "disposition": "source_preserved",
+                "reason": "no safe monotonic improvement replaced the source",
+            }
+        else:
+            publication = {
+                "disposition": "run_local_conflict",
+                "reason": "improve target changed; source was not overwritten",
+            }
+    else:
+        try:
+            transaction = lifecycle_v2.publish_transaction(
+                run_dir,
+                accepted_artifact=artifact,
+                validation_report=Path(validation["report"]),
+                validation_receipt=receipt_v2,
+                reviewer_verdict=(reviewer_path if reviewer_path.is_file() else None),
+                unresolved_findings=unresolved,
+                decision="best_effort",
+            )
+            if transaction["status"] != "committed":
+                raise supervisor.SupervisorError(
+                    "best-effort publication transaction did not commit"
+                )
+            published_descriptor = {
+                "path": str(target.resolve()),
+                "sha256": supervisor.sha256_file(target),
+            }
+            final_descriptor = copy.deepcopy(published_descriptor)
+            publication = {
+                "disposition": "published",
+                "publication_id": transaction["publication_id"],
+                "reason": reason,
+            }
+            supervisor.append_event(
+                run_dir, "artifact_published",
+                {
+                    "decision": "best_effort",
+                    "artifact": str(target.resolve()),
+                    "artifact_sha256": published_descriptor["sha256"],
+                    "accepted_sha256": candidate["artifact"]["sha256"],
+                    "publication_id": transaction["publication_id"],
+                },
+                actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
+            )
+        except ContractError as exc:
+            if exc.code != "publication.conflict":
+                raise
+            publication = {
+                "disposition": "run_local_conflict",
+                "reason": str(exc),
+                "code": exc.code,
+            }
+            lifecycle_v2.transition(
+                run_dir, "best_effort_completed",
+                accepted_artifact=_relative_file(run_dir, artifact),
+                validation_report=_relative_file(run_dir, validation["report"]),
+                validation_receipt=_relative_file(run_dir, receipt_v2),
+                reviewer_verdict=(
+                    _relative_file(run_dir, reviewer_path)
+                    if reviewer_path.is_file() else None
+                ),
+                payload={
+                    "best_effort": True,
+                    "classification": classification,
+                    "selection_reason": reason,
+                    "publication": publication,
+                },
+            )
+            v2_selection_recorded = True
+    if unchanged_improve:
+        lifecycle_v2.transition(
+            run_dir, "best_effort_completed",
+            accepted_artifact=_relative_file(run_dir, artifact),
+            validation_report=_relative_file(run_dir, validation["report"]),
+            validation_receipt=_relative_file(run_dir, receipt_v2),
+            reviewer_verdict=(
+                _relative_file(run_dir, reviewer_path)
+                if reviewer_path.is_file() else None
+            ),
+            payload={
+                "best_effort": True,
+                "classification": classification,
+                "selection_reason": reason,
+                "publication": publication,
+            },
+        )
+        v2_selection_recorded = True
+    if not v2_selection_recorded:
+        lifecycle_v2.transition(
+            run_dir, "best_effort_completed",
+            accepted_artifact=_relative_file(run_dir, artifact),
+            validation_report=_relative_file(run_dir, validation["report"]),
+            validation_receipt=_relative_file(run_dir, receipt_v2),
+            reviewer_verdict=(
+                _relative_file(run_dir, reviewer_path)
+                if reviewer_path.is_file() else None
+            ),
+            payload={
+                "best_effort": True,
+                "classification": classification,
+                "selection_reason": reason,
+                "publication": publication,
+            },
+        )
+    supervisor.transition(
+        run_dir, "best_effort_completed",
+        artifact=artifact,
+        receipt=Path(validation["receipt"]),
+        decision="best_effort",
+        reason=reason,
+    )
+    workflow["status"] = "best_effort_completed"
+    workflow["best_effort"] = {
+        "eligible": True,
+        "strict_passed": classification["strict_passed"],
+        "reason": reason,
+        "remaining_findings": unresolved,
+        "classification": classification,
+        "publication": publication,
+    }
+    workflow["findings"] = unresolved
+    workflow["published_artifact"] = published_descriptor
+    workflow["final_artifact"] = final_descriptor
+    _complete_inflight_decision(
+        run_dir, workflow, outcome="best_effort_completed",
+    )
+    workflow["checkpoint"] = None
+    (Path(run_dir) / CHECKPOINT_FILE).unlink(missing_ok=True)
+    write_workflow(run_dir, workflow)
+    return host_result(run_dir, workflow)
+
+
 def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=600):
     workspace = normalize_workspace(workspace)
     run_dir = resolve_run(reference, workspace)
     workflow = load_workflow(run_dir)
     replayed = lifecycle_v2.require_mutable(run_dir, workflow.get("run_id"))
     if not workflow.get("checkpoint") and replayed["latest_snapshots"].get("publication-transaction"):
-        was_terminal = workflow.get("status") in {"completed", "approved_with_findings"}
+        was_terminal = workflow.get("status") in {
+            "completed", "approved_with_findings", "best_effort_completed",
+        }
         recovered = lifecycle_v2.recover_publication(run_dir)
         if recovered and recovered["status"] == "committed":
             target = Path(workflow["target"])
-            workflow["status"] = (
-                "completed" if recovered["decision"] == "approve"
-                else "approved_with_findings"
-            )
+            workflow["status"] = {
+                "approve": "completed",
+                "approve_with_findings": "approved_with_findings",
+                "best_effort": "best_effort_completed",
+            }[recovered["decision"]]
             workflow["published_artifact"] = {
                 "path": str(target.resolve()), "sha256": supervisor.sha256_file(target),
             }
+            recovered_candidate = (
+                workflow.get("publishable_candidate")
+                or workflow.get("best_effort_candidate")
+                or {}
+            )
             workflow["final_artifact"] = copy.deepcopy(
-                (workflow.get("publishable_candidate") or {}).get("artifact")
+                recovered_candidate.get("artifact")
+            )
+            _complete_inflight_decision(
+                run_dir, workflow, outcome=workflow["status"],
             )
             workflow.pop("pending_publication_decision", None)
             write_workflow(run_dir, workflow)
@@ -3375,24 +3761,126 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
     checkpoint_v2, checkpoint_v2_descriptor = lifecycle_v2.latest_document(
         run_dir, "checkpoint", replayed,
     )
-    decision_id = "decision-" + canonical_json_sha256({
-        "checkpoint_sha256": checkpoint_v2_descriptor["canonical_sha256"],
-        "decision": decision,
-        "feedback": feedback,
-    })[:24]
-    checkpoint_value = workflow.get("checkpoint")
+    processed_v2_ids = {
+        event_record["event"].get("payload", {}).get("decision_id")
+        for event_record in replayed["events"]
+        if event_record["event"].get("event_type") == "decision_processed"
+    } | {
+        event_record["event"].get("payload", {}).get("processed_decision_id")
+        for event_record in replayed["events"]
+        if event_record["event"].get("event_type") == "checkpoint_created"
+    }
+    recovered_committed_decision = None
+    latest_decision_descriptor = replayed["latest_snapshots"].get("decision")
+    if latest_decision_descriptor is not None:
+        latest_decision, _ = lifecycle_v2.latest_document(
+            run_dir, "decision", replayed,
+        )
+        if (
+            latest_decision.get("checkpoint_id")
+            == checkpoint_v2.get("checkpoint_id")
+            and latest_decision.get("decision_id") not in processed_v2_ids
+            and latest_decision.get("decision_id")
+            not in set(workflow.get("processed_decision_ids", []))
+        ):
+            if decision != latest_decision.get("decision"):
+                raise supervisor.SupervisorError(
+                    "the checkpoint already has an unprocessed committed "
+                    f"{latest_decision.get('decision')!r} decision"
+                )
+            committed_feedback = latest_decision.get("feedback") or ""
+            incoming_feedback = feedback or ""
+            if (
+                incoming_feedback.strip()
+                and incoming_feedback != committed_feedback
+            ):
+                raise supervisor.SupervisorError(
+                    "the checkpoint already has an unprocessed committed "
+                    "decision whose feedback conflicts with this resume request"
+                )
+            recovered_committed_decision = copy.deepcopy(latest_decision)
+            # A short retry such as `/drawio:resume continue` recovers the
+            # durable human input. A new non-empty clarification must never be
+            # silently discarded in favor of older committed feedback.
+            feedback = committed_feedback
+    inflight = workflow.get("inflight_decision") or {}
+    inflight_payload_matches = bool(
+        inflight.get("decision") == decision
+        and inflight.get("feedback", "") == feedback
+    )
+    decision_id = (
+        recovered_committed_decision["decision_id"]
+        if recovered_committed_decision is not None
+        else inflight["decision_id"]
+        if inflight_payload_matches and inflight.get("decision_id")
+        else "decision-" + canonical_json_sha256({
+            "checkpoint_sha256": checkpoint_v2_descriptor["canonical_sha256"],
+            "decision": decision,
+            "feedback": feedback,
+        })[:24]
+    )
+    inflight_matches = bool(
+        inflight.get("decision_id") == decision_id
+        and inflight_payload_matches
+    )
+    processed_in_v2 = any(
+        (
+            event_record["event"].get("event_type") == "decision_processed"
+            and event_record["event"].get("payload", {}).get("decision_id")
+            == decision_id
+        )
+        or (
+            event_record["event"].get("event_type") == "checkpoint_created"
+            and event_record["event"].get("payload", {}).get(
+                "processed_decision_id"
+            ) == decision_id
+        )
+        for event_record in replayed["events"]
+    )
+    if inflight_matches and processed_in_v2:
+        _complete_inflight_decision(
+            run_dir, workflow, outcome="recovered_processed_decision",
+            record_v2=False,
+        )
+        write_workflow(run_dir, workflow)
+        result = host_result(run_dir, workflow)
+        result["status"] = "already_applied"
+        result["decision_id"] = decision_id
+        result["decision_replayed"] = True
+        return result
+    checkpoint_value = workflow.get("checkpoint") or (
+        copy.deepcopy(inflight.get("checkpoint")) if inflight_matches else None
+    )
     if not checkpoint_value:
-        if any(
+        committed = any(
             event["event"].get("event_type") == "decision_committed"
             and event["event"].get("payload", {}).get("decision_id") == decision_id
             for event in replayed["events"]
-        ):
+        )
+        if committed and processed_in_v2:
             result = host_result(run_dir, workflow)
             result["status"] = "already_applied"
             result["decision_id"] = decision_id
             result["decision_replayed"] = True
             return result
-        raise supervisor.SupervisorError("run has no pending human checkpoint")
+        if committed and workflow.get("checkpoint_history"):
+            legacy_descriptor = workflow["checkpoint_history"][-1]
+            legacy_path = Path(legacy_descriptor.get("path", ""))
+            if (
+                legacy_path.is_file()
+                and supervisor.sha256_file(legacy_path)
+                == legacy_descriptor.get("sha256")
+            ):
+                checkpoint_value = {
+                    **supervisor.load_json(legacy_path),
+                    "path": str(legacy_path.resolve()),
+                    "sha256": legacy_descriptor["sha256"],
+                }
+        if checkpoint_value is None:
+            raise supervisor.SupervisorError(
+                "committed decision has no recoverable checkpoint evidence"
+                if committed else "run has no pending human checkpoint"
+            )
     if decision not in checkpoint_value["allowed_decisions"]:
         raise supervisor.SupervisorError(f"decision {decision!r} is not allowed at {checkpoint_value['kind']}")
     checkpoint_path = Path(checkpoint_value["path"])
@@ -3424,11 +3912,92 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             != approved_proposal["semantic_delta_sha256"]
         ):
             raise supervisor.SupervisorError("semantic checkpoint bindings differ from the approved v2 plan")
+    planned_workflow = copy.deepcopy(workflow)
+    if (
+        decision == "continue"
+        and checkpoint_value["kind"] != "publication_conflict"
+        and not inflight_matches
+    ):
+        resume_payload = {
+            "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
+            "phase": "resume", "request": workflow["request"], "feedback": feedback,
+            "checkpoint": checkpoint_value, "accepted_artifact": workflow.get("accepted_artifact"),
+            "iteration": workflow["iteration"], "previous_decision": workflow.get("supervisor_decision"),
+        }
+        try:
+            resume_plan, _, _, _ = role_call(
+                "supervisor", resume_payload, run_dir, workspace, cli, timeout,
+                f"supervisor-resume-{len(workflow.get('decisions', [])) + 1}",
+            )
+            requested_additional = DEFAULT_MAX_ITERATIONS
+            consume_supervisor_decision(
+                planned_workflow, resume_plan, phase="resume",
+                requested_max_iterations=requested_additional,
+            )
+        except supervisor.SupervisorError as exc:
+            # Supervisor is advisory for an already materialized baseline.  A
+            # verified checkpoint plus deterministic host policy can continue
+            # repair/review without inventing semantic authorization.
+            resume_plan = {
+                "schema_version": 1,
+                "role": "supervisor",
+                "status": "ok",
+                "result": {
+                    "action": "repair",
+                    "reason": "deterministic host resume fallback",
+                    "required_roles": ["repair", "reviewer"],
+                    "max_iterations": DEFAULT_MAX_ITERATIONS,
+                },
+            }
+            consume_supervisor_decision(
+                planned_workflow, resume_plan, phase="resume",
+                requested_max_iterations=DEFAULT_MAX_ITERATIONS,
+            )
+            planned_workflow["supervisor_resume_degraded"] = {
+                "reason": str(exc),
+                "fallback": "deterministic_host_policy",
+            }
+            supervisor.append_event(
+                run_dir, "state_transition",
+                {
+                    "phase": "resume_planning",
+                    "degraded": True,
+                    "reason": str(exc),
+                    "fallback": "deterministic_host_policy",
+                },
+                actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
+            )
+        planned_workflow["max_iterations"] = (
+            workflow["iteration"] + planned_workflow["max_iterations"]
+        )
     decision_v2, decision_v2_descriptor, decision_replayed = lifecycle_v2.commit_decision(
         run_dir, decision=decision, feedback=feedback, decision_id=decision_id,
     )
-    if decision_replayed:
-        return host_result(run_dir, workflow)
+    processed_decisions = set(workflow.get("processed_decision_ids", []))
+    if decision_replayed and (
+        decision_id in processed_decisions or processed_in_v2
+    ):
+        result = host_result(run_dir, workflow)
+        result["status"] = "already_applied"
+        result["decision_id"] = decision_id
+        result["decision_replayed"] = True
+        return result
+    workflow = planned_workflow
+    if recovered_committed_decision is not None:
+        workflow["recovered_committed_decision"] = {
+            "decision_id": recovered_committed_decision["decision_id"],
+            "decision": recovered_committed_decision["decision"],
+            "feedback": recovered_committed_decision.get("feedback"),
+            "decided_at": recovered_committed_decision["decided_at"],
+        }
+    workflow["inflight_decision"] = {
+        "decision_id": decision_id,
+        "decision": decision,
+        "feedback": feedback,
+        "checkpoint": copy.deepcopy(checkpoint_value),
+        "committed_at": decision_v2["decided_at"],
+    }
+    write_workflow(run_dir, workflow)
     semantic_approval_v2 = None
     semantic_approval_v2_path = None
     if checkpoint_value["kind"] == "semantic_approval" and decision == "continue":
@@ -3445,45 +4014,21 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
         }
         workflow["semantic_authorized"] = True
         write_workflow(run_dir, workflow)
-    if decision == "continue" and checkpoint_value["kind"] != "publication_conflict":
-        resume_payload = {
-            "schema_version": 1, "run_id": workflow["run_id"], "mode": workflow["mode"],
-            "phase": "resume", "request": workflow["request"], "feedback": feedback,
-            "checkpoint": checkpoint_value, "accepted_artifact": workflow.get("accepted_artifact"),
-            "iteration": workflow["iteration"], "previous_decision": workflow.get("supervisor_decision"),
-        }
-        try:
-            resume_plan, _, _, _ = role_call(
-                "supervisor", resume_payload, run_dir, workspace, cli, timeout,
-                f"supervisor-resume-{len(workflow.get('decisions', [])) + 1}",
-            )
-        except supervisor.SupervisorError as exc:
-            current = supervisor.load_state(run_dir)["state"]
-            if current in {"awaiting_decision", "final_review"}:
-                supervisor.transition(
-                    run_dir, "awaiting_feedback",
-                    decision="pause", reason="Supervisor resume role failed",
-                )
-            workflow["findings"] = [str(exc)]
-            write_workflow(run_dir, workflow)
-            return checkpoint(
-                run_dir, workflow, "role_contract",
-                "Supervisor resume failed after the human decision was recorded; the accepted candidate and decision evidence were preserved.",
-                workflow["findings"],
-                ["continue", "pause", "stop", "manual_handoff"],
-                evidence={"failure_class": "supervisor_resume", "decision_id": decision_id},
-            )
-        requested_additional = DEFAULT_MAX_ITERATIONS
-        consume_supervisor_decision(
-            workflow, resume_plan, phase="resume", requested_max_iterations=requested_additional,
-        )
-        workflow["max_iterations"] = workflow["iteration"] + workflow["max_iterations"]
-    decision_path = run_dir / "decisions" / f"{len(workflow.get('decisions', [])) + 1:03d}.json"
+    existing_decision = next((
+        item for item in workflow.get("decisions", [])
+        if item.get("decision_id") == decision_id
+    ), None)
+    decision_path = (
+        Path(existing_decision["path"])
+        if existing_decision
+        else run_dir / "decisions" / f"{len(workflow.get('decisions', [])) + 1:03d}.json"
+    )
     decision_value = {
-        "schema_version": 1, "decision": decision, "feedback": feedback,
+        "schema_version": 1, "decision_id": decision_id,
+        "decision": decision, "feedback": feedback,
         "checkpoint_kind": checkpoint_value["kind"],
         "checkpoint": {"path": str(checkpoint_path.resolve()), "sha256": checkpoint_value["sha256"]},
-        "decided_at": supervisor.utc_now(),
+        "decided_at": decision_v2["decided_at"],
     }
     if approved_proposal is not None:
         decision_value["approved_semantic_change"] = approved_proposal
@@ -3492,23 +4037,63 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             "sha256": supervisor.sha256_file(semantic_approval_v2_path),
             "content": semantic_approval_v2,
         }
-    supervisor.write_json(decision_path, decision_value)
-    workflow.setdefault("decisions", []).append({"path": str(decision_path), "sha256": supervisor.sha256_file(decision_path), **decision_value})
-    workflow["checkpoint"] = None
-    (run_dir / CHECKPOINT_FILE).unlink(missing_ok=True)
-    supervisor.append_event(
-        run_dir, "user_decision", {"decision": decision, "feedback_sha256": hashlib.sha256(feedback.encode("utf-8")).hexdigest(), "decision_path": str(decision_path), "decision_sha256": supervisor.sha256_file(decision_path)},
-        actor={"kind": "human", "id": "user", "model": None},
-    )
+    if decision_path.is_file():
+        if supervisor.load_json(decision_path) != decision_value:
+            raise supervisor.SupervisorError(
+                "existing decision artifact differs from the committed decision"
+            )
+    else:
+        supervisor.write_json(decision_path, decision_value)
+    if not any(
+        item.get("decision_id") == decision_id
+        for item in workflow.get("decisions", [])
+    ):
+        workflow.setdefault("decisions", []).append({"path": str(decision_path), "sha256": supervisor.sha256_file(decision_path), **decision_value})
+    decision_event_exists = False
+    manifest_path = run_dir / "run-manifest.jsonl"
+    if manifest_path.is_file():
+        decision_event_exists = any(
+            event.get("event_type") == "user_decision"
+            and event.get("payload", {}).get("decision_id") == decision_id
+            for event in (
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+        )
+    if not decision_event_exists:
+        supervisor.append_event(
+            run_dir, "user_decision", {"decision_id": decision_id, "decision": decision, "feedback_sha256": hashlib.sha256(feedback.encode("utf-8")).hexdigest(), "decision_path": str(decision_path), "decision_sha256": supervisor.sha256_file(decision_path)},
+            actor={"kind": "human", "id": "user", "model": None},
+        )
+    write_workflow(run_dir, workflow)
     state = supervisor.load_state(run_dir)
     if decision == "stop":
         supervisor.transition(run_dir, "stopped", decision="stop", reason=feedback or "user stopped iterations")
         workflow["status"] = "stopped"
+        lifecycle_v2.transition(
+            run_dir, "stopped",
+            payload={"decision": "stop", "feedback": feedback or None},
+        )
+        _complete_inflight_decision(run_dir, workflow, outcome="stopped")
+        workflow["checkpoint"] = None
+        (run_dir / CHECKPOINT_FILE).unlink(missing_ok=True)
         write_workflow(run_dir, workflow)
         return host_result(run_dir, workflow)
     if decision == "manual_handoff":
         supervisor.transition(run_dir, "manual_handoff", decision="manual_handoff", reason=feedback or "user requested manual handoff")
         workflow["status"] = "manual_handoff"
+        lifecycle_v2.transition(
+            run_dir, "manual_handoff",
+            payload={
+                "decision": "manual_handoff", "feedback": feedback or None,
+            },
+        )
+        _complete_inflight_decision(
+            run_dir, workflow, outcome="manual_handoff",
+        )
+        workflow["checkpoint"] = None
+        (run_dir / CHECKPOINT_FILE).unlink(missing_ok=True)
         write_workflow(run_dir, workflow)
         return host_result(run_dir, workflow)
     if decision == "pause":
@@ -3548,6 +4133,11 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             workflow["publishable_candidate"]["artifact"]
         )
         workflow.pop("pending_publication_decision", None)
+        _complete_inflight_decision(
+            run_dir, workflow, outcome=final_status,
+        )
+        workflow["checkpoint"] = None
+        (run_dir / CHECKPOINT_FILE).unlink(missing_ok=True)
         write_workflow(run_dir, workflow)
         return host_result(run_dir, workflow)
     if decision in {"approve", "approve_with_findings"}:
@@ -3588,6 +4178,11 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
                 decision="approve_with_findings", reason=feedback,
             )
             workflow["status"] = "approved_with_findings"
+        _complete_inflight_decision(
+            run_dir, workflow, outcome=workflow["status"],
+        )
+        workflow["checkpoint"] = None
+        (run_dir / CHECKPOINT_FILE).unlink(missing_ok=True)
         workflow["published_artifact"] = {"path": str(target), "sha256": supervisor.sha256_file(target)}
         workflow["final_artifact"] = copy.deepcopy(
             workflow["publishable_candidate"]["artifact"]
@@ -3602,6 +4197,11 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             approved_proposal=approved_proposal,
         )
         if reconciliation_result is not None:
+            _complete_inflight_decision(
+                run_dir, workflow,
+                outcome=workflow.get("status", "reconciled"),
+            )
+            write_workflow(run_dir, workflow)
             return reconciliation_result
     if approved_proposal is not None:
         workflow["approved_semantic_change"] = {
@@ -3635,7 +4235,7 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             raise supervisor.SupervisorError(
                 "checkpointed create semantic plan evidence is missing or changed"
             )
-        return _finish_checkpointed_create(
+        result = _finish_checkpointed_create(
             run_dir,
             workflow,
             supervisor.load_json(legacy_path),
@@ -3643,6 +4243,12 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             cli,
             timeout,
         )
+        _complete_inflight_decision(
+            run_dir, workflow,
+            outcome=workflow.get("status", "checkpointed_create"),
+        )
+        write_workflow(run_dir, workflow)
+        return result
     current = supervisor.load_state(run_dir)["state"]
     accepted = Path(workflow["accepted_artifact"]["path"])
     if current == "awaiting_feedback":
@@ -3750,16 +4356,25 @@ def trace_run(reference, workspace):
                     item["model"]
                     for item in policy["roles"][role].get("runtime_fallbacks", [])
                 }
+                configured_fallback_failures = {
+                    failure_kind
+                    for item in policy["roles"][role].get("runtime_fallbacks", [])
+                    if item.get("model") == resolved_model
+                    for failure_kind in item.get("on_failure", [])
+                }
                 fallback_used = bool(payload.get("fallback_used"))
                 approved_fallback = (
-                    role == "supervisor"
+                    role in {"supervisor", "repair"}
                     and fallback_used
                     and resolved_model in configured_fallbacks
                     and any(
                         failure.get("terminal") is False
                         and failure.get("attempted_model") == expected_model
                         and failure.get("fallback_model") == resolved_model
-                        and failure.get("failure_kind") == "turn_limit"
+                        and failure.get("failure_kind")
+                        in configured_fallback_failures
+                        and failure.get("original_input_sha256")
+                        == start["payload"].get("input_sha256")
                         and failure.get("isolation_proof", {}).get("system_models")
                         == [expected_model]
                         and failure.get("isolation_proof", {}).get("assistant_models")
@@ -3863,6 +4478,7 @@ def trace_run(reference, workspace):
                 "fallback_model": payload.get("fallback_model"),
                 "attempt_id": payload.get("attempt_id"),
                 "output_format": payload.get("output_format"),
+                "original_input_sha256": payload.get("original_input_sha256"),
                 "exit_code": payload.get("exit_code"),
                 "diagnostic": payload.get("diagnostic"),
                 "runtime_capture": str(capture_path) if payload.get("runtime_capture") else None,
@@ -4046,10 +4662,22 @@ def trace_run(reference, workspace):
             and latest_success_by_role.get(failure.get("role"), 0)
             > int(failure.get("sequence") or 0)
         )
+    best_effort_verified = bool(
+        workflow.get("status") == "best_effort_completed"
+        and (workflow.get("best_effort") or {}).get("eligible")
+        and (workflow.get("best_effort_candidate") or {}).get("safe")
+    )
+    for failure in failed_roles:
+        failure["accepted_by_best_effort_policy"] = bool(
+            best_effort_verified
+            and failure.get("role")
+            in {"supervisor", "semantic_analyst", "repair", "reviewer"}
+        )
     terminal_failed_roles = [
         item for item in failed_roles
         if item.get("terminal", True)
         and not item.get("recovered_by_later_success")
+        and not item.get("accepted_by_best_effort_policy")
     ]
     valid = (
         integrity_valid
@@ -4063,7 +4691,8 @@ def trace_run(reference, workspace):
         for event in events if event["event_type"] == "role_finished"
     ]
     status = (
-        "verified" if valid
+        "verified_best_effort" if valid and best_effort_verified
+        else "verified" if valid
         else "failed_verified" if integrity_valid and terminal_failed_roles
         else "tampered_or_incomplete"
     )
@@ -4080,6 +4709,10 @@ def trace_run(reference, workspace):
             bool(role.get("fallback_used")) for role in roles
         ),
         "roles": roles, "terminal_result": workflow.get("status"),
+        "strict_passed": bool(
+            (workflow.get("accepted_validation") or {}).get("strict_passed")
+        ),
+        "best_effort": copy.deepcopy(workflow.get("best_effort")),
         "role_policy": role_policy_evidence(workflow),
         "trust_scope": "local runtime capture and configured routing policy; no external cryptographic attestation",
         "control_plane_v2": v2_trace,

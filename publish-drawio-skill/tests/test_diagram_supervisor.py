@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
 import jsonschema
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(SCRIPTS))
 import agent_runtime
 import diagram_supervisor as supervisor
 import validate as drawio_validator
+import lifecycle_host_v2 as lifecycle_v2
 
 
 def assert_schema(test_case, instance, schema_name):
@@ -612,6 +614,158 @@ class DiagramWorkingModelTests(unittest.TestCase):
             self.assertEqual(result["semantic_digest_before"], result["semantic_digest_after"])
             self.assertNotEqual(before["artifact"]["sha256"], after["artifact"]["sha256"])
             self.assertEqual(cell(candidate, "source").get("data-custom"), "preserve-me")
+
+    def test_best_effort_candidate_allows_layout_readability_findings_but_rejects_structural_and_integrity_findings(self):
+        def rewrite_findings(case, findings):
+            report_path = case["candidate_report"]
+            receipt_path = case["candidate_receipt"]
+            report_value = supervisor.load_json(report_path)
+            report_value["findings"] = findings
+            supervisor.write_json(report_path, report_value)
+            stdout_path = case["run_dir"] / "attempts" / "candidate" / "validator.stdout"
+            stdout_path.write_text(json.dumps(report_value, ensure_ascii=False), encoding="utf-8")
+            receipt_value = supervisor.load_json(receipt_path)
+            receipt_value["bindings"] = {
+                **(receipt_value.get("bindings") or {}),
+                "candidate_sha256": supervisor.sha256_file(artifact_path),
+            }
+            receipt_value["outputs"]["report"]["sha256"] = supervisor.sha256_file(report_path)
+            receipt_value["outputs"]["report"]["byte_length"] = report_path.stat().st_size
+            if "stdout" in receipt_value["outputs"]:
+                receipt_value["outputs"]["stdout"]["sha256"] = supervisor.sha256_file(stdout_path)
+                receipt_value["outputs"]["stdout"]["byte_length"] = stdout_path.stat().st_size
+            else:
+                receipt_value["outputs"]["stdout_sha256"] = supervisor.sha256_file(stdout_path)
+            supervisor.write_json(receipt_path, receipt_value)
+
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            artifact_path = case["run_dir"] / "attempts" / "candidate" / "validated-artifact.drawio"
+            artifact_path.write_bytes(case["candidate"].read_bytes())
+            rewrite_findings(
+                case,
+                [
+                    {
+                        "layer": "layout",
+                        "severity": "error",
+                        "code": "artifact.readability.crossing",
+                        "path": "/pages/0",
+                        "message": "crossing",
+                    },
+                    {
+                        "layer": "layout",
+                        "severity": "error",
+                        "code": "artifact.layout.container_overlap",
+                        "path": "/pages/0",
+                        "message": "overlap",
+                    },
+                ],
+            )
+            with mock.patch.object(
+                lifecycle_v2,
+                "verify_v2_receipt",
+                return_value={"integrity_valid": True, "strict_passed": True, "diagnostics": []},
+            ):
+                safe = lifecycle_v2.verify_best_effort_candidate(
+                    case["run_dir"],
+                    artifact=artifact_path,
+                    report=case["candidate_report"],
+                    receipt=case["candidate_receipt"],
+                )
+            self.assertTrue(safe["safe"])
+            self.assertEqual(safe["reviewer_status"], "not_run")
+            self.assertEqual(safe["diagnostics"], [])
+
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            artifact_path = case["run_dir"] / "attempts" / "candidate" / "validated-artifact.drawio"
+            artifact_path.write_bytes(case["candidate"].read_bytes())
+            rewrite_findings(
+                case,
+                [
+                    {
+                        "layer": "artifact-parse",
+                        "severity": "error",
+                        "code": "artifact.structure.invalid",
+                        "path": "/pages/0",
+                        "message": "structural failure",
+                    }
+                ],
+            )
+            with mock.patch.object(
+                lifecycle_v2,
+                "verify_v2_receipt",
+                return_value={"integrity_valid": True, "strict_passed": True, "diagnostics": []},
+            ):
+                unsafe = lifecycle_v2.verify_best_effort_candidate(
+                    case["run_dir"],
+                    artifact=artifact_path,
+                    report=case["candidate_report"],
+                    receipt=case["candidate_receipt"],
+                )
+            self.assertFalse(unsafe["safe"])
+            self.assertIn(
+                "best_effort.unsafe_validator_findings",
+                {item["code"] for item in unsafe["diagnostics"]},
+            )
+
+        with tempfile.TemporaryDirectory() as temp:
+            case = prepare_routed_candidate(temp)
+            artifact_path = case["run_dir"] / "attempts" / "candidate" / "validated-artifact.drawio"
+            artifact_path.write_bytes(case["candidate"].read_bytes())
+            rewrite_findings(
+                case,
+                [
+                    {
+                        "layer": "layout",
+                        "severity": "error",
+                        "code": "artifact.readability.route_through",
+                        "path": "/pages/0",
+                        "message": "route-through",
+                    }
+                ],
+            )
+            reviewer = reviewer_verdict_v2(
+                case["run_dir"], artifact_path, case["candidate_report"], case["candidate_receipt"], suffix="best-effort"
+            )
+            reviewer_value = supervisor.load_json(reviewer)
+            reviewer_value["findings"] = [
+                {
+                    "finding_id": "integrity-1",
+                    "category": "integrity",
+                    "severity": "error",
+                    "summary": "integrity finding",
+                    "elements": [],
+                    "evidence": [
+                        {
+                            "kind": "runtime_proof",
+                            "path": None,
+                            "sha256": None,
+                            "pointer": None,
+                            "message": "integrity",
+                        }
+                    ],
+                    "remediation": {"class": "manual", "action": "review"},
+                }
+            ]
+            supervisor.write_json(reviewer, reviewer_value)
+            with mock.patch.object(
+                lifecycle_v2,
+                "verify_v2_receipt",
+                return_value={"integrity_valid": True, "strict_passed": True, "diagnostics": []},
+            ):
+                unsafe = lifecycle_v2.verify_best_effort_candidate(
+                    case["run_dir"],
+                    artifact=artifact_path,
+                    report=case["candidate_report"],
+                    receipt=case["candidate_receipt"],
+                    reviewer_verdict=reviewer,
+                )
+            self.assertFalse(unsafe["safe"])
+            self.assertIn(
+                "best_effort.reviewer_blocked",
+                {item["code"] for item in unsafe["diagnostics"]},
+            )
 
 
 class TransactionalPatchTests(unittest.TestCase):
