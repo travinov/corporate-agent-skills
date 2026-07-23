@@ -335,6 +335,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
         run_dir = Path(created["run_dir"])
         workflow = orchestrator.load_workflow(run_dir)
         baseline = Path(workflow["accepted_artifact"]["path"])
+        create_layout_request = workflow["layout_attempts"][0]["layout_request"]
         layout_scope = {
             "page_id": "page-1",
             "target_edges": ["e-2"],
@@ -369,6 +370,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "semantic_plan": semantic_plan, "adapter_input": adapter_input,
             "payload": payload,
             "intent": {"action": "edge_reroute"},
+            "create_layout_request": create_layout_request,
         }
 
     def _execute_local_attempt(self, case, scope):
@@ -556,12 +558,17 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "patch_apply", "patch apply boom",
         )
 
-    def _assert_tampered_failed_attempt_rejected(self, run_id, *, indexed):
+    def _assert_tampered_failed_attempt_rejected(
+        self, run_id, *, indexed, mutate=None,
+    ):
         case, failed = self._assert_local_stage_failure(
             run_id, "apply_patch_file", "patch_apply", "patch apply boom",
         )
         if indexed:
-            failed["failure_evidence"]["sha256"] = "0" * 64
+            if mutate:
+                mutate(case, failed)
+            else:
+                failed["failure_evidence"]["sha256"] = "0" * 64
             for position, item in enumerate(case["workflow"]["layout_attempts"]):
                 if item["attempt_id"] == failed["attempt_id"]:
                     case["workflow"]["layout_attempts"][position] = failed
@@ -625,6 +632,20 @@ class DiagramOrchestratorTests(unittest.TestCase):
     def test_ledger_recovered_failed_layout_attempt_rejects_tampered_failure_evidence(self):
         self._assert_tampered_failed_attempt_rejected(
             "ledger-failed-tamper-run", indexed=False,
+        )
+
+    def test_indexed_local_attempt_rejects_create_request_repoint(self):
+        self._assert_tampered_failed_attempt_rejected(
+            "indexed-request-repoint-run", indexed=True,
+            mutate=lambda case, attempt: attempt.update(
+                layout_request=case["create_layout_request"]
+            ),
+        )
+
+    def test_indexed_local_attempt_rejects_inline_status_mutation(self):
+        self._assert_tampered_failed_attempt_rejected(
+            "indexed-status-mutation-run", indexed=True,
+            mutate=lambda _case, attempt: attempt.update(status="completed "),
         )
 
     def test_semantic_patch_ignores_stale_layout_scope_preservation_gate(self):

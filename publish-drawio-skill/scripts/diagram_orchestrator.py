@@ -2090,11 +2090,34 @@ def _verify_failed_layout_attempt(run_dir, workflow, attempt, replayed):
     return copy.deepcopy(attempt)
 
 
+def _layout_attempt_terminal_status(replayed, attempt_id):
+    statuses = [
+        record["event"].get("payload", {}).get("status")
+        for record in replayed["events"]
+        if record["event"].get("event_type") == "tool_attempt"
+        and record["event"].get("payload", {}).get("tool") == "layout-engine"
+        and record["event"].get("payload", {}).get("attempt_id") == attempt_id
+    ]
+    if statuses == ["started", "completed"]:
+        return "completed"
+    if statuses == ["started", "failed"]:
+        return "failed"
+    raise supervisor.SupervisorError(
+        f"layout attempt {attempt_id} has no exact terminal event sequence"
+    )
+
+
 def _verify_persisted_layout_attempt(
     run_dir, workflow, attempt, replayed,
 ):
     """Fail closed unless a workflow attempt is bound to immutable run evidence."""
-    if isinstance(attempt, dict) and attempt.get("status") == "failed":
+    attempt_id = attempt.get("attempt_id") if isinstance(attempt, dict) else None
+    terminal_status = _layout_attempt_terminal_status(replayed, attempt_id)
+    if attempt.get("status") != terminal_status:
+        raise supervisor.SupervisorError(
+            f"persisted layout attempt {attempt_id} status differs from the ledger"
+        )
+    if terminal_status == "failed":
         return _verify_failed_layout_attempt(
             run_dir, workflow, attempt, replayed,
         )
@@ -2578,7 +2601,6 @@ def _run_generic_create_layouts(
             replayed,
         )
         for attempt in workflow["layout_attempts"]
-        if attempt.get("status") in {"completed", "failed"}
     ]
     completed = [
         attempt for attempt in verified_attempts
@@ -2589,7 +2611,7 @@ def _run_generic_create_layouts(
         workflow,
         replayed,
         known_attempt_ids={
-            attempt["attempt_id"] for attempt in workflow["layout_attempts"]
+            attempt["attempt_id"] for attempt in verified_attempts
         },
     )
     if recovered:
@@ -4620,20 +4642,20 @@ def _run_layout_intent_attempts(run_dir, workflow, payload, intent, *, timeout):
     replayed = lifecycle_v2.require_mutable(run_dir) if baseline_artifact.is_file() \
         else {"events": []}
     completed = []
+    verified_attempt_ids = set()
     for attempt in workflow.setdefault("layout_attempts", []):
-        if attempt.get("status") not in {"completed", "failed"}:
-            continue
+        verified = _verify_persisted_layout_attempt(
+            run_dir, workflow, attempt, replayed,
+        )
+        verified_attempt_ids.add(verified["attempt_id"])
         request_path = _verified_layout_file(
-            run_dir, attempt.get("layout_request"), label="layout request")
+            run_dir, verified.get("layout_request"), label="layout request")
         if supervisor.load_json(request_path).get("mode") == "local_reflow":
-            verified = _verify_persisted_layout_attempt(
-                run_dir, workflow, attempt, replayed,
-            )
             if verified["status"] == "completed":
                 completed.append(verified)
     recovered = _recover_layout_attempts_from_ledger(
         run_dir, workflow, replayed, mode="local_reflow",
-        known_attempt_ids={item["attempt_id"] for item in workflow["layout_attempts"]},
+        known_attempt_ids=verified_attempt_ids,
     ) if baseline_artifact.is_file() else []
     if recovered:
         workflow["layout_attempts"].extend(copy.deepcopy(recovered))

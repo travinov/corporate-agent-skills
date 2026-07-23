@@ -53,6 +53,8 @@ RED:
 - Final-review recovery regressions: a valid earlier local scope blocked
   expanded-scope recovery; indexed failed attempts were skipped; and
   ledger-only failed-event descriptors were trusted without file verification.
+- Final classification regressions: mutable request mode and inline status
+  could skip indexed attempts before immutable terminal verification.
 
 GREEN:
 
@@ -77,6 +79,8 @@ GREEN:
   recovery gate passed in 39.528s.
 - Single authorized final-review `tests.test_diagram_orchestrator` run —
   70 tests passed in 183.266s.
+- Final classification gate passed 9 tests in 51.624s; the single authorized
+  full orchestrator run passed 72 tests in 196.082s.
 
 ## Review cleanup
 
@@ -88,4 +92,5 @@ GREEN:
 - Kept the second-review recovery commit at the agreed +550 net-line cap:
   orchestrator +495/-143 and tests +198.
 - Kept the final-review recovery fix at +227 net lines before this report.
+- Kept the final classification fix at +43 net lines before this report.
 - No known Task 11 correctness concern remains after the final 70-test pass.
