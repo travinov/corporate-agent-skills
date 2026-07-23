@@ -38,11 +38,13 @@
 ### New deterministic host modules
 
 - `publish-drawio-skill/scripts/diagram_intake.py`
+- `publish-drawio-skill/scripts/layout_contracts.py`
 - `publish-drawio-skill/scripts/layout_geometry.py`
 - `publish-drawio-skill/scripts/layout_model.py`
 - `publish-drawio-skill/scripts/layout_builtin.py`
 - `publish-drawio-skill/scripts/layout_backend.py`
 - `publish-drawio-skill/scripts/layout_renderer.py`
+- `publish-drawio-skill/scripts/sequence_adapter.py`
 - `publish-drawio-skill/scripts/elk_runner.mjs`
 - `publish-drawio-skill/vendor/elkjs/elk.bundled.js`
 - `publish-drawio-skill/vendor/elkjs/LICENSE`
@@ -98,6 +100,7 @@
 - Create: `publish-drawio-skill/data/layout-request.v1.schema.json`
 - Create: `publish-drawio-skill/data/layout-result.v1.schema.json`
 - Create: `publish-drawio-skill/data/layout-repair-intent.v1.schema.json`
+- Create: `publish-drawio-skill/scripts/layout_contracts.py`
 - Create: `publish-drawio-skill/tests/test_layout_contracts.py`
 - Modify: `publish-drawio-skill/tests/test_contracts.py`
 
@@ -115,14 +118,14 @@ def test_layout_result_rejects_diagonal_route(self):
         {"x": 100, "y": 100},
         {"x": 140, "y": 130},
     ]
-    diagnostics = lifecycle_contracts.validate_contract(value, "layout-result", 1)
+    diagnostics = layout_contracts.validate_layout_result(value)
     self.assertIn("waypoints", json.dumps(diagnostics))
 
 def test_layout_request_rejects_unlocked_out_of_scope_node(self):
     value = valid_layout_request(mode="local_reflow")
     value["pages"][0]["nodes"][1]["locked"] = False
     value["scope"]["movable_nodes"] = []
-    diagnostics = lifecycle_contracts.validate_contract(value, "layout-request", 1)
+    diagnostics = layout_contracts.validate_layout_request(value)
     self.assertTrue(diagnostics)
 ```
 
@@ -181,29 +184,27 @@ Use the exact enums:
 }
 ```
 
-Represent routes as `source_port`, `target_port`, and a waypoint array. Add a
-JSON Schema custom keyword-free Manhattan constraint by representing every
-segment as:
+Represent routes once as `source_port`, `target_port`, and a waypoint array.
+JSON Schema owns shape, types, enums, required fields, numeric finiteness, and
+unknown-field rejection. `layout_contracts.py` owns cross-field invariants that
+Draft 2020-12 cannot express:
 
-```json
-{
-  "required": ["orientation", "from", "to"],
-  "properties": {
-    "orientation": {"enum": ["H", "V"]},
-    "from": {"$ref": "#/$defs/point"},
-    "to": {"$ref": "#/$defs/point"}
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"orientation": {"const": "H"}}},
-      "then": {"properties": {"from": {"required": ["y"]}, "to": {"required": ["y"]}}}
-    }
-  ]
-}
-```
+- consecutive route points share x or y;
+- route points are finite;
+- local-reflow movable and reroutable ids are inside the declared scope;
+- locked and movable sets are disjoint;
+- result request digest matches the immutable request supplied by the caller.
 
-The Python contract test must additionally verify coordinate equality because
-JSON Schema cannot compare sibling numeric values.
+Expose:
+
+- `validate_layout_request(value: Any) -> list[dict[str, str]]`
+- `validate_layout_result(value: Any, *, expected_request_sha256: str | None = None) -> list[dict[str, str]]`
+- `require_layout_request(value: Any) -> None`
+- `require_layout_result(value: Any, *, expected_request_sha256: str | None = None) -> None`
+
+Reuse `lifecycle_contracts.validate_contract` for schema diagnostics and append
+stable `layout.*` cross-field diagnostics. Do not add custom jsonschema
+keywords or duplicate canonical hashing.
 
 - [ ] **Step 4: Run schema and existing contract tests**
 
@@ -219,7 +220,7 @@ Expected: both pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add publish-drawio-skill/data publish-drawio-skill/tests/test_layout_contracts.py publish-drawio-skill/tests/test_contracts.py
+git add publish-drawio-skill/data publish-drawio-skill/scripts/layout_contracts.py publish-drawio-skill/tests/test_layout_contracts.py publish-drawio-skill/tests/test_contracts.py
 git commit -m "feat(drawio): add strict layout contracts"
 ```
 
@@ -1030,6 +1031,7 @@ git commit -m "feat(drawio): add offline elk layout backend"
 **Files:**
 
 - Create: `publish-drawio-skill/scripts/layout_renderer.py`
+- Create: `publish-drawio-skill/scripts/sequence_adapter.py`
 - Create: `publish-drawio-skill/tests/test_layout_renderer.py`
 - Modify: `publish-drawio-skill/scripts/diagram_orchestrator.py`
 - Modify: `publish-drawio-skill/scripts/renderer_adapters.py`
@@ -1047,6 +1049,8 @@ Prove:
 - output is byte-identical for identical inputs;
 - legacy renderer is available only by explicit backend id;
 - specialized adapters retain their current implementation paths and defaults.
+- `sequence-local` is selected for a frozen sequence type even without an
+  explicit renderer-source document.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -1069,7 +1073,46 @@ The renderer validates both bindings, creates stable mxCell order, writes
 class and route group in `data-*` attributes, and never performs placement or
 routing.
 
-- [ ] **Step 4: Register adapter lineage**
+- [ ] **Step 4: Register the existing sequence engine**
+
+Add `sequence_adapter.py` with:
+
+```python
+def semantic_plan_to_sequence(semantic_plan: Mapping[str, Any]) -> dict:
+    page = semantic_plan["result"]["pages"][0]
+    participants = [
+        {
+            "id": node["stable_identity"]["cell_id"],
+            "label": node["label"],
+            "actor": node["semantic_type"] in {"actor", "person"},
+        }
+        for node in page["nodes"]
+    ]
+    messages = [
+        {
+            "from": edge["source"]["cell_id"],
+            "to": edge["target"]["cell_id"],
+            "label": edge["label"],
+            "return": edge["relationship"] == "return",
+            "async": edge["relationship"] == "async",
+        }
+        for edge in page["edges"]
+    ]
+    return {
+        "title": semantic_plan["result"]["title"],
+        "participants": participants,
+        "messages": messages,
+    }
+```
+
+Validate participant references and preserve edge-array order as chronology,
+then call the existing `seqlayout.layout`. Register `sequence-local` with
+`input_schema="semantic-plan.v2"`, `supported_modes=("create",)`, and
+implementation paths `scripts/sequence_adapter.py` and
+`scripts/seqlayout.py`. Sequence improvement remains preserve-only and must not
+fall through to generic full reflow.
+
+- [ ] **Step 5: Register generic adapter lineage**
 
 Change generic adapter implementation paths to include:
 
@@ -1091,7 +1134,7 @@ reflow: preserve|local|full
 
 Do not change roadmap/git-flow/sequence selection.
 
-- [ ] **Step 5: Run renderer and adapter tests**
+- [ ] **Step 6: Run renderer and adapter tests**
 
 Run:
 
@@ -1102,10 +1145,10 @@ Run:
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add publish-drawio-skill/scripts/layout_renderer.py publish-drawio-skill/scripts/diagram_orchestrator.py publish-drawio-skill/scripts/renderer_adapters.py publish-drawio-skill/tests
+git add publish-drawio-skill/scripts/layout_renderer.py publish-drawio-skill/scripts/sequence_adapter.py publish-drawio-skill/scripts/diagram_orchestrator.py publish-drawio-skill/scripts/renderer_adapters.py publish-drawio-skill/tests
 git commit -m "feat(drawio): render validated layout results"
 ```
 
@@ -1606,11 +1649,13 @@ Assert ZIP contains:
 
 ```text
 scripts/diagram_intake.py
+scripts/layout_contracts.py
 scripts/layout_geometry.py
 scripts/layout_model.py
 scripts/layout_builtin.py
 scripts/layout_backend.py
 scripts/layout_renderer.py
+scripts/sequence_adapter.py
 scripts/elk_runner.mjs
 vendor/elkjs/elk.bundled.js
 vendor/elkjs/LICENSE
@@ -1643,11 +1688,13 @@ Add:
 
 ```json
 "scripts/diagram_intake.py",
+"scripts/layout_contracts.py",
 "scripts/layout_geometry.py",
 "scripts/layout_model.py",
 "scripts/layout_builtin.py",
 "scripts/layout_backend.py",
 "scripts/layout_renderer.py",
+"scripts/sequence_adapter.py",
 "scripts/elk_runner.mjs",
 "vendor/elkjs/*"
 ```
