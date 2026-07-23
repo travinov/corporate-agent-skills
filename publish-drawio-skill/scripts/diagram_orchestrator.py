@@ -775,7 +775,8 @@ def _finish_checkpointed_create(
         run_dir, "renderer-adapter",
         renderer_adapters.render_with_adapter,
         "generic", semantic_plan_v2, accepted,
-        mode="create", generic_renderer=render_generic,
+        mode="create", options={"backend": "legacy-generic-v2", "reflow": "full"},
+        generic_renderer=render_generic,
     )
     workflow["renderer_adapter"] = {
         **adapter_run.record(),
@@ -3445,7 +3446,12 @@ def _start_run_impl(
             run_dir, "renderer-adapter",
             renderer_adapters.render_with_adapter,
             selected_adapter.diagram_type, renderer_source, accepted,
-            mode="create", options=dict(adapter_input.options),
+            mode="create",
+            options=(
+                {"backend": "legacy-generic-v2", "reflow": "full"}
+                if selected_adapter is renderer_adapters.GENERIC_ADAPTER
+                else dict(adapter_input.options)
+            ),
             generic_renderer=render_generic, timeout=timeout,
         )
         workflow["renderer_adapter"] = {

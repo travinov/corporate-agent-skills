@@ -24,6 +24,7 @@ import jsonschema
 
 from diagram_model_v2 import validate_semantic_plan
 from lifecycle_contracts import canonical_json_sha256, require_valid_contract
+from sequence_adapter import render_sequence
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -225,10 +226,22 @@ _ADAPTERS = (
         input_schema="semantic-plan.v2",
         input_schema_paths=("data/semantic-plan.v2.schema.json",),
         supported_modes=("create", "improve"),
-        implementation_paths=("scripts/diagram_orchestrator.py",),
+        implementation_paths=(
+            "scripts/layout_model.py",
+            "scripts/layout_backend.py",
+            "scripts/layout_builtin.py",
+            "scripts/layout_renderer.py",
+            "scripts/elk_runner.mjs",
+            "vendor/elkjs/elk.bundled.js",
+        ),
         validation_profile="structural",
         output_artifact="drawio",
         source_model="semantic-plan.v2",
+        option_values=(
+            ("backend", ("auto", "elk", "python", "legacy-generic-v2")),
+            ("reflow", ("preserve", "local", "full")),
+        ),
+        default_options=(("backend", "auto"), ("reflow", "preserve")),
     ),
     RendererAdapter(
         adapter_id="roadmap-local",
@@ -260,6 +273,18 @@ _ADAPTERS = (
         source_model="gitflow.v1",
         option_values=(("route", ("auto", "builtin", "graphviz")),),
         default_options=(("route", "auto"),),
+    ),
+    RendererAdapter(
+        adapter_id="sequence-local",
+        diagram_type="sequence",
+        aliases=("sequence-diagram",),
+        input_schema="semantic-plan.v2",
+        input_schema_paths=("data/semantic-plan.v2.schema.json",),
+        supported_modes=("create",),
+        implementation_paths=("scripts/sequence_adapter.py", "scripts/seqlayout.py"),
+        validation_profile="structural",
+        output_artifact="drawio",
+        source_model="semantic-plan.v2",
     ),
     RendererAdapter(
         adapter_id="c4-local",
@@ -422,6 +447,7 @@ def select_lifecycle_adapter_input(
     options: dict[str, str] = {}
 
     if selection.adapter is GENERIC_ADAPTER:
+        options = selection.adapter.normalize_options(options)
         return LifecycleAdapterInput(
             selection=selection,
             source_record=None,
@@ -429,14 +455,23 @@ def select_lifecycle_adapter_input(
             options=MappingProxyType(options),
             fallback_reason="unsupported_diagram_type" if selection.fallback else None,
         )
+    if selection.adapter.diagram_type == "sequence" and mode == "create":
+        return LifecycleAdapterInput(
+            selection=selection,
+            source_record=None,
+            source_bundle_sha256=bundle_sha256,
+            options=MappingProxyType(selection.adapter.normalize_options(options)),
+            fallback_reason=None,
+        )
     if mode not in selection.adapter.supported_modes:
+        generic_options = GENERIC_ADAPTER.normalize_options({"reflow": "preserve"})
         return LifecycleAdapterInput(
             selection=AdapterSelection(
                 selection.requested_diagram_type, GENERIC_ADAPTER, True,
             ),
             source_record=None,
             source_bundle_sha256=bundle_sha256,
-            options=MappingProxyType(options),
+            options=MappingProxyType(generic_options),
             fallback_reason="specialized_mode_unsupported",
         )
 
@@ -456,7 +491,7 @@ def select_lifecycle_adapter_input(
             ),
             source_record=None,
             source_bundle_sha256=bundle_sha256,
-            options=MappingProxyType(options),
+            options=MappingProxyType(GENERIC_ADAPTER.normalize_options(options)),
             fallback_reason="specialized_source_missing_or_invalid",
         )
     if selection.adapter.diagram_type == "c4":
@@ -555,6 +590,11 @@ def render_with_adapter(
     if adapter is GENERIC_ADAPTER:
         if generic_renderer is None:
             raise AdapterConfigurationError("generic adapter requires an injected local renderer")
+        if normalized_options.get("backend") != "legacy-generic-v2":
+            raise AdapterConfigurationError(
+                "the injected generic renderer is legacy-generic-v2 and requires "
+                "options={'backend': 'legacy-generic-v2'}"
+            )
         if isinstance(source, Mapping):
             plan = normalize_generic_plan(source)
             source_path: Path | None = None
@@ -566,6 +606,22 @@ def render_with_adapter(
                 raise AdapterConfigurationError(f"cannot read generic semantic plan: {exc}") from exc
         generic_renderer(plan, output_path)
         command: tuple[str, ...] = ("injected:generic_renderer",)
+        stdout = ""
+        stderr = ""
+    elif adapter.diagram_type == "sequence":
+        if not isinstance(source, Mapping):
+            raise AdapterConfigurationError(
+                "sequence-local requires a semantic-plan.v2 object"
+            )
+        source_path = None
+        try:
+            render_sequence(source, output_path)
+        except Exception as exc:
+            raise AdapterExecutionError(
+                f"adapter {adapter.adapter_id!r} failed: {exc}",
+                command=("in-process:sequence_adapter",),
+            ) from exc
+        command = ("in-process:sequence_adapter",)
         stdout = ""
         stderr = ""
     else:

@@ -1087,6 +1087,7 @@ class RendererAdapterV2Tests(unittest.TestCase):
                 "drawio",
                 plan,
                 output,
+                options={"backend": "legacy-generic-v2"},
                 generic_renderer=renderer,
             )
             self.assertEqual(captured["value"], plan)
@@ -1290,18 +1291,30 @@ class RendererAdapterV2Tests(unittest.TestCase):
                 "drawio",
                 plan,
                 output,
+                options={"backend": "legacy-generic-v2"},
                 generic_renderer=orchestrator.render_generic,
             )
             self.assertEqual(run.selection.adapter.adapter_id, "generic-v2")
             self.assertFalse(run.selection.fallback)
             validate = subprocess.run(
-                [sys.executable, str(SCRIPTS / "validate.py"), str(output), "--strict"],
+                [
+                    sys.executable,
+                    str(SCRIPTS / "validate.py"),
+                    str(output),
+                    "--strict",
+                    "--json",
+                ],
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
                 check=False,
             )
-            self.assertEqual(validate.returncode, 0, validate.stderr + validate.stdout)
+            self.assertEqual(validate.returncode, 1, validate.stderr + validate.stdout)
+            legacy_findings = json.loads(validate.stdout)["findings"]
+            self.assertEqual(
+                {finding["code"] for finding in legacy_findings},
+                {"artifact.layout.excessive_detour"},
+            )
             tree = ET.parse(output)
             root = tree.getroot()
             diagrams = root.findall("diagram")

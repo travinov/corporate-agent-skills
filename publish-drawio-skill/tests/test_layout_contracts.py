@@ -199,6 +199,16 @@ class LayoutContractTests(unittest.TestCase):
         value["metrics"].pop("label_collisions")
         self.assertTrue(layout_contracts.validate_layout_result(value))
 
+    def test_layout_result_accepts_optional_explicit_route_group(self):
+        value = valid_layout_result()
+        value["pages"][0]["edges"][0]["route_group"] = "approved-bus-1"
+        self.assertEqual(layout_contracts.validate_layout_result(value), [])
+
+    def test_layout_result_rejects_empty_route_group(self):
+        value = valid_layout_result()
+        value["pages"][0]["edges"][0]["route_group"] = ""
+        self.assertTrue(layout_contracts.validate_layout_result(value))
+
     def test_layout_result_rejects_diagonal_or_unknown_channel_reservation(self):
         value = valid_layout_result()
         value["pages"][0]["channel_reservations"] = [{
