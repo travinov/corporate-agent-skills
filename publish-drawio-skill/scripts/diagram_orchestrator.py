@@ -790,18 +790,22 @@ def _source_bundle_bound_to_plan(run_dir, semantic_plan_v2):
 
 def _finish_checkpointed_create(
     run_dir, workflow, semantic_plan, semantic_plan_v2, cli, timeout,
+    *, recovering_patching=False,
 ):
     """Render and review a create plan that was explicitly approved pre-render."""
     accepted = Path(run_dir) / "accepted" / "baseline.drawio"
     current = supervisor.load_state(run_dir)["state"]
-    if current not in {"awaiting_decision", "awaiting_feedback"}:
+    if current == "patching" and recovering_patching:
+        pass
+    elif current in {"awaiting_decision", "awaiting_feedback"}:
+        supervisor.transition(
+            run_dir, "patching", decision="continue",
+            reason="approved pre-render semantic plan",
+        )
+    else:
         raise supervisor.SupervisorError(
             f"checkpointed create cannot render from state {current}"
         )
-    supervisor.transition(
-        run_dir, "patching", decision="continue",
-        reason="approved pre-render semantic plan",
-    )
     accepted.parent.mkdir(parents=True, exist_ok=True)
     source_bundle = _source_bundle_bound_to_plan(run_dir, semantic_plan_v2)
     adapter_input = renderer_adapters.select_lifecycle_adapter_input(
@@ -809,11 +813,16 @@ def _finish_checkpointed_create(
         source_bundle,
         mode="create",
     )
-    lifecycle_v2.transition(
-        run_dir,
-        "analyzing",
-        payload={"phase": "rendering", "renderer_adapter": adapter_input.record()},
-    )
+    lifecycle_state = lifecycle_v2.latest_document(run_dir, "run-state")[0]
+    if lifecycle_state["status"] != "analyzing":
+        lifecycle_v2.transition(
+            run_dir,
+            "analyzing",
+            payload={
+                "phase": "rendering",
+                "renderer_adapter": adapter_input.record(),
+            },
+        )
     selected_adapter = adapter_input.selection.adapter
     if selected_adapter is renderer_adapters.GENERIC_ADAPTER:
         selected = _run_generic_create_layouts(
@@ -1461,6 +1470,29 @@ def _quality_sort_key(attempt):
     return tuple(vector.values()) + (attempt["request_sha256"],)
 
 
+def _canonical_layout_selection(completed):
+    if not completed:
+        raise supervisor.SupervisorError(
+            "cannot select a layout without completed attempts"
+        )
+    strategy_order = {
+        name: index for index, (name, _) in enumerate(LAYOUT_STRATEGIES)
+    }
+    ordered = sorted(
+        completed,
+        key=lambda attempt: (
+            strategy_order.get(attempt["strategy"], len(strategy_order)),
+            attempt["request_sha256"],
+        ),
+    )
+    strict = [
+        attempt
+        for attempt in ordered
+        if attempt["validation"]["strict_passed"]
+    ]
+    return strict[0] if strict else min(ordered, key=_quality_sort_key)
+
+
 def _verified_layout_file(run_dir, descriptor, *, label):
     if not isinstance(descriptor, dict):
         raise supervisor.SupervisorError(
@@ -1919,6 +1951,17 @@ def _run_generic_create_layouts(
             raise supervisor.SupervisorError(
                 "persisted selected layout attempt differs from completed progress"
             )
+        canonical_selected = _canonical_layout_selection(completed)
+        expected_exhausted = not canonical_selected["validation"]["strict_passed"]
+        if (
+            canonical_json_sha256(verified_selected)
+            != canonical_json_sha256(canonical_selected)
+            or workflow.get("layout_strategy_exhausted")
+            is not expected_exhausted
+        ):
+            raise supervisor.SupervisorError(
+                "persisted selected layout attempt is noncanonical"
+            )
         return verified_selected
     strict_completed = [
         attempt
@@ -1926,16 +1969,7 @@ def _run_generic_create_layouts(
         if attempt["validation"]["strict_passed"]
     ]
     if strict_completed:
-        strategy_order = {
-            name: index for index, (name, _) in enumerate(LAYOUT_STRATEGIES)
-        }
-        selected = min(
-            strict_completed,
-            key=lambda attempt: (
-                strategy_order.get(attempt["strategy"], len(strategy_order)),
-                attempt["request_sha256"],
-            ),
-        )
+        selected = _canonical_layout_selection(completed)
         workflow["selected_layout_attempt"] = copy.deepcopy(selected)
         workflow["layout_strategy_exhausted"] = False
         write_workflow(run_dir, workflow)
@@ -2005,7 +2039,7 @@ def _run_generic_create_layouts(
         for attempt in completed
         if attempt["validation"]["strict_passed"]
     ]
-    selected = min(strict or completed, key=_quality_sort_key)
+    selected = _canonical_layout_selection(completed)
     workflow["selected_layout_attempt"] = copy.deepcopy(selected)
     workflow["layout_strategy_exhausted"] = not bool(strict)
     write_workflow(run_dir, workflow)
@@ -5260,6 +5294,25 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             != approved_proposal["semantic_delta_sha256"]
         ):
             raise supervisor.SupervisorError("semantic checkpoint bindings differ from the approved v2 plan")
+    current_state = supervisor.load_state(run_dir)["state"]
+    checkpointed_create_recovery = current_state == "patching"
+    if checkpointed_create_recovery:
+        exact_checkpoint = inflight.get("checkpoint") == checkpoint_value
+        if not (
+            workflow.get("mode") == "create"
+            and decision == "continue"
+            and checkpoint_value["kind"] == "semantic_approval"
+            and not workflow.get("accepted_artifact")
+            and recovered_committed_decision is not None
+            and inflight_matches
+            and exact_checkpoint
+            and workflow.get("semantic_authorized") is True
+            and workflow.get("approved_semantic_change")
+        ):
+            raise supervisor.SupervisorError(
+                "patching checkpoint retry does not match the exact inflight "
+                "create decision"
+            )
     planned_workflow = copy.deepcopy(workflow)
     if (
         decision == "continue"
@@ -5537,7 +5590,7 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
         )
         write_workflow(run_dir, workflow)
         return host_result(run_dir, workflow)
-    if feedback:
+    if feedback and not checkpointed_create_recovery:
         workflow["request"] += "\n\nUser feedback: " + feedback
         write_workflow(run_dir, workflow)
         reconciliation_result = _reconcile_feedback(
@@ -5590,6 +5643,7 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
             supervisor.load_json(approved_path),
             cli,
             timeout,
+            recovering_patching=checkpointed_create_recovery,
         )
         _complete_inflight_decision(
             run_dir, workflow,

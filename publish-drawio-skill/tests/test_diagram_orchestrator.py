@@ -402,6 +402,75 @@ class DiagramOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual((run_dir / "workflow.json").read_bytes(), workflow_bytes)
 
+    def test_generic_create_rejects_ledger_valid_noncanonical_selected_attempt(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "layout-selection-tamper.drawio"
+        result = orchestrator.start_run(
+            "create",
+            target,
+            "Create a deterministic selection-tamper diagram.",
+            workspace,
+            cli,
+            run_id="layout-selection-tamper-run",
+            max_iterations=1,
+        )
+        run_dir = Path(result["run_dir"])
+        workflow = orchestrator.load_workflow(run_dir)
+        canonical = workflow["selected_layout_attempt"]
+        self.assertTrue(canonical["validation"]["strict_passed"])
+        semantic_plan = orchestrator.supervisor.load_json(
+            workflow["semantic_plan_v2"]["path"]
+        )
+        source_bundle = orchestrator._source_bundle_bound_to_plan(
+            run_dir, semantic_plan
+        )
+        adapter_input = (
+            orchestrator.renderer_adapters.select_lifecycle_adapter_input(
+                semantic_plan,
+                source_bundle,
+                mode="create",
+            )
+        )
+        second_strategy = next(
+            strategy
+            for strategy in orchestrator.LAYOUT_STRATEGIES
+            if strategy[0] != canonical["strategy"]
+        )
+        alternate = orchestrator.execute_layout_attempt(
+            workflow,
+            semantic_plan,
+            run_dir=run_dir,
+            adapter_input=adapter_input,
+            mode="create",
+            scope=None,
+            strategy=second_strategy,
+            timeout=30,
+        )
+        self.assertEqual(alternate["status"], "completed")
+        workflow["layout_attempts"].append(alternate)
+        workflow["selected_layout_attempt"] = json.loads(json.dumps(alternate))
+        orchestrator.write_workflow(run_dir, workflow)
+        workflow_bytes = (run_dir / "workflow.json").read_bytes()
+        event_count = len(orchestrator.lifecycle_v2.replay(run_dir)["events"])
+
+        with self.assertRaisesRegex(
+            orchestrator.supervisor.SupervisorError,
+            "noncanonical",
+        ):
+            orchestrator._run_generic_create_layouts(
+                run_dir,
+                workflow,
+                semantic_plan,
+                adapter_input,
+                timeout=30,
+            )
+
+        self.assertEqual((run_dir / "workflow.json").read_bytes(), workflow_bytes)
+        self.assertEqual(
+            len(orchestrator.lifecycle_v2.replay(run_dir)["events"]),
+            event_count,
+        )
+
     def test_layout_strategy_schedule_is_finite_and_has_one_python_fallback(self):
         self.assertEqual(
             orchestrator.LAYOUT_STRATEGIES,
@@ -1165,6 +1234,129 @@ Route approved payments to settlement.
             workflow["renderer_adapter"]["options"]["backend"],
             "legacy-generic-v2",
         )
+
+    def test_checkpointed_generic_create_retry_recovers_patching_inflight_decision(self):
+        root, workspace, _ = self.create_workspace()
+        cli = root / "checkpointed-create-retry-cli.py"
+        cli.write_text(
+            FAKE_GIGACODE.replace(
+                'requires_human = payload["mode"] == "improve"',
+                'requires_human = payload["mode"] == "improve" or "retry-create" in payload["request"]',
+            ),
+            encoding="utf-8",
+        )
+        cli.chmod(0o755)
+        target = workspace / "checkpointed-create-retry.drawio"
+        pending = orchestrator.start_run(
+            "create",
+            target,
+            "retry-create before rendering",
+            workspace,
+            cli,
+            run_id="checkpointed-create-retry-run",
+            max_iterations=1,
+        )
+        run_dir = Path(pending["run_dir"])
+        feedback = "Approve the proposed create semantics."
+
+        with mock.patch.object(
+            orchestrator,
+            "_adopt_create_layout_attempt",
+            side_effect=orchestrator.supervisor.SupervisorError(
+                "simulated crash after durable layout selection"
+            ),
+        ):
+            with self.assertRaisesRegex(
+                orchestrator.supervisor.SupervisorError,
+                "simulated crash",
+            ):
+                orchestrator.resume_run(
+                    run_dir,
+                    "continue",
+                    feedback,
+                    workspace,
+                    cli,
+                )
+
+        crashed = orchestrator.load_workflow(run_dir)
+        self.assertEqual(
+            orchestrator.supervisor.load_state(run_dir)["state"],
+            "patching",
+        )
+        selected_attempt_id = crashed["selected_layout_attempt"]["attempt_id"]
+        attempt_ids = [
+            attempt["attempt_id"] for attempt in crashed["layout_attempts"]
+        ]
+        decision_id = crashed["inflight_decision"]["decision_id"]
+        before_events = orchestrator.lifecycle_v2.replay(run_dir)["events"]
+        before_decision_events = [
+            record["event"]
+            for record in before_events
+            if record["event"].get("payload", {}).get("decision_id")
+            == decision_id
+            and record["event"]["event_type"]
+            in {"decision_committed", "semantic_approval", "user_decision"}
+        ]
+        tampered = json.loads(json.dumps(crashed))
+        tampered["inflight_decision"]["decision_id"] = "decision-tampered"
+        orchestrator.supervisor.write_json(
+            run_dir / "workflow.json",
+            tampered,
+        )
+        tampered_workflow_bytes = (run_dir / "workflow.json").read_bytes()
+        with self.assertRaisesRegex(
+            orchestrator.supervisor.SupervisorError,
+            "exact inflight create decision",
+        ):
+            orchestrator.resume_run(
+                run_dir,
+                "continue",
+                feedback,
+                workspace,
+                cli,
+            )
+        self.assertEqual(
+            (run_dir / "workflow.json").read_bytes(),
+            tampered_workflow_bytes,
+        )
+        self.assertEqual(
+            len(orchestrator.lifecycle_v2.replay(run_dir)["events"]),
+            len(before_events),
+        )
+        orchestrator.supervisor.write_json(
+            run_dir / "workflow.json",
+            crashed,
+        )
+
+        resumed = orchestrator.resume_run(
+            run_dir,
+            "continue",
+            feedback,
+            workspace,
+            cli,
+        )
+
+        recovered = orchestrator.load_workflow(run_dir)
+        after_events = orchestrator.lifecycle_v2.replay(run_dir)["events"]
+        after_decision_events = [
+            record["event"]
+            for record in after_events
+            if record["event"].get("payload", {}).get("decision_id")
+            == decision_id
+            and record["event"]["event_type"]
+            in {"decision_committed", "semantic_approval", "user_decision"}
+        ]
+        self.assertEqual(resumed["status"], "awaiting_human")
+        self.assertEqual(
+            recovered["selected_layout_attempt"]["attempt_id"],
+            selected_attempt_id,
+        )
+        self.assertEqual(
+            [attempt["attempt_id"] for attempt in recovered["layout_attempts"]],
+            attempt_ids,
+        )
+        self.assertNotIn("inflight_decision", recovered)
+        self.assertEqual(after_decision_events, before_decision_events)
 
     def test_create_with_explicit_roadmap_source_uses_roadmap_local_and_publishes(self):
         root, workspace, _ = self.create_workspace()
