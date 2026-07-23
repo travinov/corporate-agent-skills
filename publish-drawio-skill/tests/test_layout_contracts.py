@@ -158,6 +158,28 @@ class LayoutContractTests(unittest.TestCase):
                     codes = {item["code"] for item in layout_contracts.validate_layout_result(value)}
                     self.assertIn("layout.number.non_finite", codes)
 
+    def test_diagram_intake_rejects_non_finite_completeness(self):
+        for number in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(number=number):
+                value = valid_intake()
+                value["completeness"] = number
+                codes = {item["code"] for item in layout_contracts.validate_diagram_intake(value)}
+                self.assertIn("layout.number.non_finite", codes)
+
+    def test_diagram_intake_analysis_rejects_non_finite_nested_completeness(self):
+        for number in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(number=number):
+                value = valid_intake_analysis()
+                value["result"]["completeness"] = number
+                codes = {item["code"] for item in layout_contracts.validate_diagram_intake_analysis(value)}
+                self.assertIn("layout.number.non_finite", codes)
+
+    def test_public_validator_accepts_mixed_mapping_keys_without_raising(self):
+        value = valid_layout_request()
+        value[1] = float("nan")
+        diagnostics = layout_contracts.validate_layout_request(value)
+        self.assertIn("layout.number.non_finite", {item["code"] for item in diagnostics})
+
     def test_require_helpers_raise_contract_error_for_diagnostics(self):
         invalid = copy.deepcopy(valid_layout_result())
         invalid["pages"][0]["edges"][0]["waypoints"][1]["y"] = 10

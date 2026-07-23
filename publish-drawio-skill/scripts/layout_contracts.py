@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-owned validation for strict deterministic layout contracts."""
+"""Host-owned validation for strict deterministic intake and layout contracts."""
 from __future__ import annotations
 
 import math
@@ -91,7 +91,7 @@ def _non_finite_number_diagnostics(value: Any, path: tuple[Any, ...] = ()) -> li
     """Report non-finite numbers at every contract-owned value location."""
     if isinstance(value, dict):
         diagnostics: list[dict[str, str]] = []
-        for key in sorted(value):
+        for key in sorted(value, key=lambda item: (type(item).__name__, repr(item))):
             diagnostics.extend(_non_finite_number_diagnostics(value[key], path + (key,)))
         return diagnostics
     if isinstance(value, list):
@@ -110,6 +110,16 @@ def _non_finite_number_diagnostics(value: Any, path: tuple[Any, ...] = ()) -> li
 
 def _string_set(value: Any) -> set[str]:
     return {item for item in value if isinstance(item, str)} if isinstance(value, list) else set()
+
+
+def validate_diagram_intake(value: Any) -> list[dict[str, str]]:
+    """Validate diagram intake shape and finite contract numbers."""
+    return lifecycle_contracts.validate_contract(value, "diagram-intake", 1) + _non_finite_number_diagnostics(value)
+
+
+def validate_diagram_intake_analysis(value: Any) -> list[dict[str, str]]:
+    """Validate diagram intake analysis shape and finite contract numbers."""
+    return lifecycle_contracts.validate_contract(value, "diagram-intake-analysis", 1) + _non_finite_number_diagnostics(value)
 
 
 def validate_layout_request(value: Any) -> list[dict[str, str]]:
@@ -141,6 +151,14 @@ def _require(diagnostics: list[dict[str, str]]) -> None:
 
 def require_layout_request(value: Any) -> None:
     _require(validate_layout_request(value))
+
+
+def require_diagram_intake(value: Any) -> None:
+    _require(validate_diagram_intake(value))
+
+
+def require_diagram_intake_analysis(value: Any) -> None:
+    _require(validate_diagram_intake_analysis(value))
 
 
 def require_layout_result(value: Any, *, expected_request_sha256: str | None = None) -> None:
