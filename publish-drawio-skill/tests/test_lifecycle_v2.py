@@ -736,6 +736,53 @@ else:
 
 
 class LifecycleV2Tests(unittest.TestCase):
+    def test_historical_workflow_without_quality_profile_replays_and_stays_legacy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "workspace"
+            workspace.mkdir()
+            target = write_text(workspace / "diagram.drawio", "<mxfile/>")
+            run_dir = workspace / "run"
+            lifecycle_host_v2.initialize(
+                run_dir=run_dir,
+                workspace=workspace,
+                target=target,
+                run_id="run-1",
+                mode="improve",
+                request="Improve the diagram.",
+                extension_root=ROOT,
+            )
+            replayed = lifecycle_host_v2.require_mutable(run_dir)
+            workflow, descriptor = lifecycle_host_v2.latest_document(
+                run_dir, "workflow", replayed,
+            )
+            workflow.pop("quality_profile_version")
+            transaction_id = "historical-workflow"
+            legacy_descriptor = lifecycle_host_v2._write_next_snapshot(
+                run_dir,
+                kind="workflow",
+                document=workflow,
+                transaction_id=transaction_id,
+                predecessor=descriptor,
+                sequence=replayed["event_count"] + 1,
+            )
+            lifecycle_host_v2._append_event(
+                run_dir,
+                run_id="run-1",
+                event_type="recovery",
+                transaction_id=transaction_id,
+                snapshots=[legacy_descriptor],
+            )
+
+            legacy_replay = lifecycle_host_v2.require_mutable(run_dir, "run-1")
+            legacy_workflow, _ = lifecycle_host_v2.latest_document(
+                run_dir, "workflow", legacy_replay,
+            )
+            lifecycle_host_v2.transition(run_dir, "analyzed")
+            resumed, _ = lifecycle_host_v2.latest_document(run_dir, "workflow")
+
+            self.assertNotIn("quality_profile_version", legacy_workflow)
+            self.assertNotIn("quality_profile_version", resumed)
+
     def test_new_workflow_persists_quality_profile_version_two(self):
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "workspace"
