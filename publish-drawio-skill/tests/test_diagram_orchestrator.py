@@ -223,8 +223,14 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "preservation": {"valid": True},
             "comparison": {"accepted": True, "reason": "lexicographic_improvement:crossings"},
         }
+        semantic_plan = {"schema_version": 2, "result": {"pages": [{
+            "page_id": "page-1", "name": "Page",
+            "nodes": [{"id": "node-1"}, {"id": "node-2"}],
+            "edges": [{"id": "edge-1", "source_id": "node-1",
+                       "target_id": "node-2"}],
+        }]}}
         with mock.patch.object(orchestrator, "_source_bundle_bound_to_plan", return_value={}), \
-             mock.patch.object(orchestrator.supervisor, "load_json", return_value={"schema_version": 2}), \
+             mock.patch.object(orchestrator.supervisor, "load_json", return_value=semantic_plan), \
              mock.patch.object(orchestrator.renderer_adapters, "select_lifecycle_adapter_input", return_value=mock.Mock(selection=mock.Mock(adapter=orchestrator.renderer_adapters.GENERIC_ADAPTER))), \
              mock.patch.object(orchestrator, "execute_layout_attempt", return_value=completed) as execute, \
              mock.patch.object(orchestrator, "write_workflow") as write:
@@ -373,11 +379,13 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "create_layout_request": create_layout_request,
         }
 
-    def _execute_local_attempt(self, case, scope):
+    def _execute_local_attempt(
+        self, case, scope, *, strategy=None, comparison=None,
+    ):
         with mock.patch.object(
             orchestrator.supervisor,
             "compare_reports",
-            return_value={
+            return_value=comparison or {
                 "accepted": True,
                 "reason": "lexicographic_improvement:crossings",
             },
@@ -389,7 +397,7 @@ class DiagramOrchestratorTests(unittest.TestCase):
                 adapter_input=case["adapter_input"],
                 mode="local_reflow",
                 scope=orchestrator._scope_refs_from_layout_state(scope),
-                strategy=orchestrator.LAYOUT_STRATEGIES[0],
+                strategy=strategy or orchestrator.LAYOUT_STRATEGIES[0],
                 timeout=30,
                 baseline=case["payload"]["baseline"]["diagram_spec"],
                 baseline_artifact=case["baseline"],
@@ -647,6 +655,54 @@ class DiagramOrchestratorTests(unittest.TestCase):
             "indexed-status-mutation-run", indexed=True,
             mutate=lambda _case, attempt: attempt.update(status="completed "),
         )
+
+    def test_verified_terminal_local_attempts_are_not_retried_across_resumes(self):
+        case = self._prepare_local_reflow_case("terminal-retry-run")
+        rejected = {"accepted": False, "reason": "no_improvement"}
+        completed = self._execute_local_attempt(
+            case, case["payload"]["layout_scope"], comparison=rejected,
+        )
+        with mock.patch.object(
+            orchestrator.supervisor, "apply_patch_file",
+            side_effect=orchestrator.supervisor.SupervisorError("patch failed"),
+        ):
+            failed = self._execute_local_attempt(
+                case, case["payload"]["layout_scope"],
+                strategy=orchestrator.LAYOUT_STRATEGIES[1],
+            )
+        case["workflow"]["layout_attempts"].append(completed)
+        orchestrator.write_workflow(case["run_dir"], case["workflow"])
+        original = orchestrator.execute_layout_attempt
+
+        def run_only_new(*args, **kwargs):
+            if kwargs["strategy"] in orchestrator.LAYOUT_STRATEGIES[:2]:
+                return original(*args, **kwargs)
+            return {"status": "skipped"}
+
+        event_count = len(orchestrator.lifecycle_v2.replay(case["run_dir"])["events"])
+        with mock.patch.object(
+            orchestrator, "execute_layout_attempt", side_effect=run_only_new,
+        ), mock.patch.object(
+            orchestrator.layout_model, "MAX_AUTOMATIC_SCOPE_EXPANSIONS", 0,
+        ), mock.patch.object(
+            orchestrator.supervisor, "compare_reports", return_value=rejected,
+        ):
+            for _ in range(2):
+                self.assertIsNone(orchestrator._run_layout_intent_attempts(
+                    case["run_dir"], case["workflow"], case["payload"],
+                    case["intent"], timeout=30,
+                ))
+        events = orchestrator.lifecycle_v2.replay(case["run_dir"])["events"]
+        self.assertEqual(len(events), event_count)
+        for attempt, terminal in ((completed, "completed"), (failed, "failed")):
+            self.assertEqual([
+                record["event"]["payload"]["status"] for record in events
+                if record["event"]["event_type"] == "tool_attempt"
+                and record["event"]["payload"].get("attempt_id")
+                == attempt["attempt_id"]
+            ], ["started", terminal])
+        ids = [item["attempt_id"] for item in case["workflow"]["layout_attempts"]]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_semantic_patch_ignores_stale_layout_scope_preservation_gate(self):
         workflow = {

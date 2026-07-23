@@ -2081,7 +2081,7 @@ def _verify_failed_layout_attempt(run_dir, workflow, attempt, replayed):
         any(failed_payload.get(key) != value for key, value in bound.items()),
         failed_payload.get("error") != failure.get("error", "")[-1000:],
         any(started["payload"].get(key) != value for key, value in {
-            **bound, "attempt_key": layout_backend.attempt_key(request),
+            **bound, "attempt_key": list(layout_backend.attempt_key(request)),
         }.items() if key != "failure_stage"),
     )):
         raise supervisor.SupervisorError(
@@ -2532,7 +2532,10 @@ def _recover_layout_attempts_from_ledger(
     return recovered
 
 
-def _strategy_attempt_key(workflow, semantic_plan, adapter_input, strategy):
+def _strategy_attempt_key(
+    workflow, semantic_plan, adapter_input, strategy, *,
+    mode="create", baseline=None, scope=None,
+):
     strategy_id, strategy_options = strategy
     requested_backend = str(adapter_input.options.get("backend", "auto"))
     backend = "python" if strategy_id == "python-fallback" else requested_backend
@@ -2540,12 +2543,13 @@ def _strategy_attempt_key(workflow, semantic_plan, adapter_input, strategy):
         semantic_plan,
         run_id=workflow["run_id"],
         semantic_plan_sha256=workflow["semantic_plan_v2"]["sha256"],
-        mode="create",
+        mode=mode,
         backend=backend,
         strategy_id=strategy_id,
         strategy_options=strategy_options,
         quality_profile_version=workflow.get("quality_profile_version", 2),
-        scope=None,
+        baseline=baseline,
+        scope=scope,
     )
     return "|".join(layout_backend.attempt_key(request))
 
@@ -4643,11 +4647,13 @@ def _run_layout_intent_attempts(run_dir, workflow, payload, intent, *, timeout):
         else {"events": []}
     completed = []
     verified_attempt_ids = set()
+    terminal_attempt_keys = set()
     for attempt in workflow.setdefault("layout_attempts", []):
         verified = _verify_persisted_layout_attempt(
             run_dir, workflow, attempt, replayed,
         )
         verified_attempt_ids.add(verified["attempt_id"])
+        terminal_attempt_keys.add(verified["attempt_key"])
         request_path = _verified_layout_file(
             run_dir, verified.get("layout_request"), label="layout request")
         if supervisor.load_json(request_path).get("mode") == "local_reflow":
@@ -4660,6 +4666,7 @@ def _run_layout_intent_attempts(run_dir, workflow, payload, intent, *, timeout):
     if recovered:
         workflow["layout_attempts"].extend(copy.deepcopy(recovered))
         completed.extend(item for item in recovered if item["status"] == "completed")
+        terminal_attempt_keys.update(item["attempt_key"] for item in recovered)
         write_workflow(run_dir, workflow)
     eligible = [
         item for item in completed
@@ -4676,6 +4683,11 @@ def _run_layout_intent_attempts(run_dir, workflow, payload, intent, *, timeout):
         for strategy in LAYOUT_STRATEGIES:
             if time.time() >= deadline:
                 return None
+            if _strategy_attempt_key(
+                workflow, semantic_plan, adapter_input, strategy,
+                mode="local_reflow", baseline=diagram_spec, scope=scope,
+            ) in terminal_attempt_keys:
+                continue
             try:
                 attempt = execute_layout_attempt(
                     workflow, semantic_plan, run_dir=run_dir,

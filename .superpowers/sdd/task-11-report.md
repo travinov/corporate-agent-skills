@@ -55,6 +55,8 @@ RED:
   ledger-only failed-event descriptors were trusted without file verification.
 - Final classification regressions: mutable request mode and inline status
   could skip indexed attempts before immutable terminal verification.
+- Terminal-retry regression: repeated resumes appended `skipped` events to
+  already verified completed/failed local attempt histories.
 
 GREEN:
 
@@ -81,6 +83,8 @@ GREEN:
   70 tests passed in 183.266s.
 - Final classification gate passed 9 tests in 51.624s; the single authorized
   full orchestrator run passed 72 tests in 196.082s.
+- Terminal retry plus recovery gate passed 10 tests in 58.104s. After correcting
+  one invalid mock plan, the final full run passed 73 tests in 203.087s.
 
 ## Review cleanup
 
@@ -93,4 +97,5 @@ GREEN:
   orchestrator +495/-143 and tests +198.
 - Kept the final-review recovery fix at +227 net lines before this report.
 - Kept the final classification fix at +43 net lines before this report.
+- Kept the terminal-retry fix under its +80 net-line cap.
 - No known Task 11 correctness concern remains after the final 70-test pass.
