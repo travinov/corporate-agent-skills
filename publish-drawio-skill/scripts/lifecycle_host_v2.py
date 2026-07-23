@@ -263,6 +263,7 @@ def initialize(
         "latest_checkpoint": None,
         "publication_transaction": None,
         "previous_snapshot_sha256": None,
+        "quality_profile_version": 2,
     }
     workflow_descriptor = _write_next_snapshot(
         run_root, kind="workflow", document=workflow, transaction_id=transaction_id,

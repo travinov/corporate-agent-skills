@@ -12,6 +12,7 @@ import hashlib
 import html
 import io
 import json
+import math
 import os
 import platform
 import re
@@ -56,6 +57,21 @@ QUALITY_KEYS = (
     "text_overflow",
     "route_complexity",
 )
+QUALITY_KEYS_V2 = (
+    "semantic_violations",
+    "structural_errors",
+    "overlaps",
+    "route_through",
+    "edge_label_collisions",
+    "shared_path_congestion",
+    "crossings",
+    "port_congestion",
+    "routing_uncertainty",
+    "excessive_detours",
+    "excessive_bends",
+    "route_length",
+    "canvas_penalty",
+)
 QUALITY_CODE_MAP = {
     "artifact.readability.route_through": "route_through",
     "artifact.layout.container_overflow": "container_lane",
@@ -67,6 +83,20 @@ QUALITY_CODE_MAP = {
     "artifact.layout.routing_uncertain": "routing_uncertainty",
     "artifact.layout.terminal_segment": "routing_uncertainty",
     "artifact.readability.text_overflow": "text_overflow",
+}
+QUALITY_CODE_MAP_V2 = {
+    "artifact.readability.overlap": "overlaps",
+    "artifact.readability.route_through": "route_through",
+    "artifact.readability.edge_label_collision": "edge_label_collisions",
+    "artifact.readability.shared_segment": "shared_path_congestion",
+    "artifact.readability.route_congestion": "shared_path_congestion",
+    "artifact.readability.crossing": "crossings",
+    "artifact.readability.port_congestion": "port_congestion",
+    "artifact.layout.routing_uncertain": "routing_uncertainty",
+    "artifact.layout.terminal_segment": "routing_uncertainty",
+    "artifact.layout.feedback_intrusion": "routing_uncertainty",
+    "artifact.layout.excessive_detour": "excessive_detours",
+    "artifact.layout.excessive_bends": "excessive_bends",
 }
 STRUCTURAL_CODE_PREFIXES = (
     "artifact.id.",
@@ -1174,7 +1204,64 @@ def spec_diff(before, after):
     return {"semantic": semantic, "layout": layout, "semantic_digest_equal": before["semantic_digest"]["value"] == after["semantic_digest"]["value"]}
 
 
-def quality_vector(report):
+def _finite_metric_integer(value):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float) and math.isfinite(value):
+        return max(int(round(value)), 0)
+    return 0
+
+
+def persisted_quality_profile_version(run_dir, state):
+    """Read a frozen workflow profile, retaining v1 for historical runs."""
+    if "quality_profile_version" in state:
+        return state["quality_profile_version"]
+    workflow_path = Path(run_dir) / "workflow.json"
+    if workflow_path.is_file():
+        workflow = load_json(workflow_path)
+        if "quality_profile_version" in workflow:
+            return workflow["quality_profile_version"]
+    return 1
+
+
+def quality_vector(report, *, profile_version=1):
+    if profile_version == 1:
+        return _quality_vector_v1(report)
+    if profile_version != 2:
+        raise SupervisorError(f"unsupported quality profile version {profile_version!r}")
+    vector = {key: 0 for key in QUALITY_KEYS_V2}
+    for finding in report.get("findings", []):
+        code = finding.get("code", "")
+        severity = finding.get("severity")
+        if "semantic" in code or finding.get("layer") == "round-trip":
+            vector["semantic_violations"] += 1
+        elif code in QUALITY_CODE_MAP_V2:
+            vector[QUALITY_CODE_MAP_V2[code]] += 1
+        elif severity == "error" and (
+            code.startswith(STRUCTURAL_CODE_PREFIXES)
+            or finding.get("layer") == "artifact-parse"
+        ):
+            vector["structural_errors"] += 1
+        elif severity == "error":
+            vector["structural_errors"] += 1
+        elif severity == "warning":
+            vector["routing_uncertainty"] += 1
+    metrics = report.get("metrics", {})
+    vector["route_length"] = _finite_metric_integer(metrics.get("route_length"))
+    layout_metrics = report.get("layout_metrics_v2")
+    if layout_metrics is None:
+        layout_metrics = report.get("details", {}).get("layout_metrics_v2", [])
+    if isinstance(layout_metrics, list):
+        vector["canvas_penalty"] = sum(
+            _finite_metric_integer(item.get("aspect_ratio_count"))
+            for item in layout_metrics if isinstance(item, dict)
+        )
+    return vector
+
+
+def _quality_vector_v1(report):
     vector = {key: 0 for key in QUALITY_KEYS}
     for finding in report.get("findings", []):
         code = finding.get("code", "")
@@ -1203,14 +1290,15 @@ def artifact_invariants(path):
     return document_semantic_digest(root), document_cell_hashes(root)
 
 
-def compare_reports(baseline, candidate, semantic_equal=True, untouched_equal=True):
-    before = quality_vector(baseline)
-    after = quality_vector(candidate)
+def compare_reports(baseline, candidate, *, semantic_equal=True, profile_version=1, untouched_equal=True):
+    before = quality_vector(baseline, profile_version=profile_version)
+    after = quality_vector(candidate, profile_version=profile_version)
     if not semantic_equal:
         return {"accepted": False, "reason": "semantic_digest_changed", "baseline": before, "candidate": after}
     if not untouched_equal:
         return {"accepted": False, "reason": "untouched_region_changed", "baseline": before, "candidate": after}
-    for key in QUALITY_KEYS:
+    keys = QUALITY_KEYS if profile_version == 1 else QUALITY_KEYS_V2
+    for key in keys:
         if after[key] > before[key]:
             return {"accepted": False, "reason": f"higher_priority_regression:{key}", "baseline": before, "candidate": after}
         if after[key] < before[key]:
@@ -1869,6 +1957,7 @@ def make_reviewer_input(run_dir, candidate, report_path, receipt_path, patch_pat
     state = load_state(run_dir)
     if state is None:
         raise SupervisorError("reviewer input requires an initialized run")
+    profile_version = persisted_quality_profile_version(run_dir, state)
     candidate_verification = verify_receipt(receipt_path, candidate)
     if not candidate_verification["valid"]:
         raise SupervisorError(f"reviewer input receipt failed: {candidate_verification['checks']}")
@@ -1923,9 +2012,14 @@ def make_reviewer_input(run_dir, candidate, report_path, receipt_path, patch_pat
         "candidate_spec": candidate_spec,
         "diff": diff,
         "quality": {
-            "baseline": quality_vector(baseline_report),
-            "candidate": quality_vector(candidate_report),
-            "comparison": compare_reports(baseline_report, candidate_report, diff["semantic_digest_equal"], True),
+            "baseline": quality_vector(baseline_report, profile_version=profile_version),
+            "candidate": quality_vector(candidate_report, profile_version=profile_version),
+            "comparison": compare_reports(
+                baseline_report, candidate_report,
+                semantic_equal=diff["semantic_digest_equal"],
+                untouched_equal=True,
+                profile_version=profile_version,
+            ),
         },
         "context": {
             "source_refs": baseline_spec["source_refs"],
@@ -2161,6 +2255,7 @@ def record_candidate(
     state = load_state(run_dir)
     if state is None or state.get("state") != "validating":
         raise SupervisorError("candidate decision requires a run in validating state")
+    profile_version = persisted_quality_profile_version(run_dir, state)
     artifact_hash = sha256_file(artifact)
     baseline_report = load_json(baseline_report_path)
     candidate_report = load_json(candidate_report_path)
@@ -2268,7 +2363,7 @@ def record_candidate(
             )
             return {
                 "state": "manual_handoff", "accepted": False,
-                "reason": "manual_handoff", "quality_vector": quality_vector(candidate_report),
+                "reason": "manual_handoff", "quality_vector": quality_vector(candidate_report, profile_version=profile_version),
             }
     elif not receipt_verification["passed"]:
         append_event(
@@ -2320,10 +2415,10 @@ def record_candidate(
             },
             state="validating", actor={"kind": "human", "id": semantic_approval["approver"]["id"], "model": None},
         )
-        before_vector = quality_vector(baseline_report)
-        after_vector = quality_vector(candidate_report)
+        before_vector = quality_vector(baseline_report, profile_version=profile_version)
+        after_vector = quality_vector(candidate_report, profile_version=profile_version)
         regression = next(
-            (key for key in QUALITY_KEYS[1:] if after_vector[key] > before_vector[key]),
+            (key for key in (QUALITY_KEYS if profile_version == 1 else QUALITY_KEYS_V2)[1:] if after_vector[key] > before_vector[key]),
             None,
         )
         if semantic_approval["decision"] == "reject":
@@ -2337,8 +2432,9 @@ def record_candidate(
     else:
         comparison = compare_reports(
             baseline_report, candidate_report,
-            computed_semantic_equal and semantic_equal,
-            computed_untouched_equal and untouched_equal,
+            semantic_equal=computed_semantic_equal and semantic_equal,
+            untouched_equal=computed_untouched_equal and untouched_equal,
+            profile_version=profile_version,
         )
     if reviewer_verdict and reviewer_verdict["verdict"] != "approve":
         comparison = {
@@ -2351,7 +2447,7 @@ def record_candidate(
             "baseline": comparison["baseline"],
             "candidate": comparison["candidate"],
         }
-    vector = quality_vector(candidate_report)
+    vector = quality_vector(candidate_report, profile_version=profile_version)
     vector_hash = canonical_hash(vector)
     repeated_hash = artifact_hash in state.get("seen_hashes", [])
     repeated_vector = vector_hash in state.get("seen_vectors", [])
@@ -2409,7 +2505,7 @@ def record_candidate(
         }
         if semantic_approval:
             state["quality_epoch"] = int(state.get("quality_epoch", 0)) + 1
-            state["quality_baseline"] = quality_vector(candidate_report)
+            state["quality_baseline"] = quality_vector(candidate_report, profile_version=profile_version)
             state["semantic_baseline_digest"] = candidate_semantic
         event_type = "candidate_accepted"
     else:
@@ -2546,7 +2642,11 @@ def main():
         elif args.command == "diff":
             result = spec_diff(make_spec(args.before), make_spec(args.after))
         elif args.command == "compare":
-            result = compare_reports(load_json(args.baseline), load_json(args.candidate), not args.semantic_changed, not args.untouched_changed)
+            result = compare_reports(
+                load_json(args.baseline), load_json(args.candidate),
+                semantic_equal=not args.semantic_changed,
+                untouched_equal=not args.untouched_changed,
+            )
         elif args.command == "resolve-model":
             result = resolve_model(
                 args.policy, args.role,

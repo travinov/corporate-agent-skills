@@ -1618,9 +1618,10 @@ def _reviewer_input_v2(
             "diagram": supervisor.spec_diff(baseline_spec, candidate_spec),
             "quality": supervisor.compare_reports(
                 baseline_report_value, candidate_report_value,
-                baseline_spec["semantic_digest"]["value"]
-                == candidate_spec["semantic_digest"]["value"],
-                True,
+                semantic_equal=(baseline_spec["semantic_digest"]["value"]
+                                == candidate_spec["semantic_digest"]["value"]),
+                untouched_equal=True,
+                profile_version=workflow.get("quality_profile_version", 1),
             ),
         }
 
@@ -3093,6 +3094,7 @@ def _start_run_impl(
         "workspace": str(workspace), "target": str(source), "request": request.strip(),
         "status": "running", "iteration": 0, "max_iterations": max_iterations,
         "created_at": supervisor.utc_now(), "attempts": [], "findings": [], "checkpoint": None,
+        "quality_profile_version": 2,
     }
     if not workflow["request"]:
         raise supervisor.SupervisorError("diagram request must not be empty")

@@ -736,6 +736,29 @@ else:
 
 
 class LifecycleV2Tests(unittest.TestCase):
+    def test_new_workflow_persists_quality_profile_version_two(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "workspace"
+            workspace.mkdir()
+            target = write_text(workspace / "diagram.drawio", "<mxfile/>")
+            run_dir = workspace / "run"
+
+            lifecycle_host_v2.initialize(
+                run_dir=run_dir,
+                workspace=workspace,
+                target=target,
+                run_id="run-1",
+                mode="improve",
+                request="Improve the diagram.",
+                extension_root=ROOT,
+            )
+            workflow, _ = lifecycle_host_v2.latest_document(run_dir, "workflow")
+            lifecycle_host_v2.transition(run_dir, "analyzed")
+            resumed, _ = lifecycle_host_v2.latest_document(run_dir, "workflow")
+
+            self.assertEqual(workflow["quality_profile_version"], 2)
+            self.assertEqual(resumed["quality_profile_version"], 2)
+
     def test_source_priority_and_v1_mutability_guard_do_not_reach_openspec_or_mutate_old_runs(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)

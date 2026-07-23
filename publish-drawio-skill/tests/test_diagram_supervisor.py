@@ -1298,6 +1298,65 @@ class TransactionalPatchTests(unittest.TestCase):
 
 
 class MonotonicComparisonTests(unittest.TestCase):
+    def test_quality_vector_v1_remains_byte_for_byte_legacy_shape(self):
+        legacy_report = report(
+            ("layout", "error", "artifact.readability.route_through"),
+            ("layout", "warning", "artifact.readability.crossing"),
+            route_complexity=7,
+        )
+
+        self.assertEqual(
+            supervisor.quality_vector(legacy_report, profile_version=1),
+            {
+                "semantic_violations": 0,
+                "structural_errors": 0,
+                "route_through": 1,
+                "container_lane": 0,
+                "crossings": 1,
+                "overlaps": 0,
+                "routing_uncertainty": 0,
+                "text_overflow": 0,
+                "route_complexity": 7,
+            },
+        )
+
+    def test_quality_vector_v2_uses_stable_categories_and_finite_metrics(self):
+        v2_report = report(
+            ("layout", "warning", "artifact.readability.shared_segment"),
+            ("layout", "warning", "artifact.readability.edge_label_collision"),
+            ("layout", "warning", "artifact.layout.excessive_detour"),
+        )
+        v2_report["metrics"] = {"route_length": 12.6}
+        v2_report["details"] = {"layout_metrics_v2": [{
+            "shared_segment_count": 1,
+            "route_congestion_count": 0,
+            "edge_label_collision_count": 1,
+            "port_congestion_count": 0,
+            "excessive_detour_count": 1,
+            "excessive_bends_count": 0,
+            "aspect_ratio_count": 1,
+        }, {"shared_segment_count": float("nan"), "aspect_ratio_count": float("inf")}]}
+
+        vector = supervisor.quality_vector(v2_report, profile_version=2)
+
+        self.assertEqual(tuple(vector), supervisor.QUALITY_KEYS_V2)
+        self.assertEqual(vector["shared_path_congestion"], 1)
+        self.assertEqual(vector["edge_label_collisions"], 1)
+        self.assertEqual(vector["excessive_detours"], 1)
+        self.assertEqual(vector["route_length"], 13)
+        self.assertEqual(vector["canvas_penalty"], 1)
+
+    def test_v2_rejects_shared_path_regression_despite_route_length_improvement(self):
+        baseline = report()
+        baseline["metrics"] = {"route_length": 1000}
+        candidate = report(("layout", "warning", "artifact.readability.shared_segment"))
+        candidate["metrics"] = {"route_length": 1}
+
+        rejected = supervisor.compare_reports(baseline, candidate, profile_version=2)
+
+        self.assertFalse(rejected["accepted"])
+        self.assertEqual(rejected["reason"], "higher_priority_regression:shared_path_congestion")
+
     def test_structural_id_errors_dominate_route_improvements(self):
         baseline = report(("layout", "error", "artifact.readability.route_through"))
         candidate = report(("artifact-parse", "error", "artifact.id.duplicate"))

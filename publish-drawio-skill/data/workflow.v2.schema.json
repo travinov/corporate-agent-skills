@@ -3,7 +3,7 @@
   "$id": "https://agents365.local/drawio-skill/schemas/workflow.v2.schema.json",
   "title": "Diagram lifecycle workflow v2",
   "type": "object",
-  "required": ["schema_version", "run_id", "mode", "workspace", "run_dir", "target_path", "target_initial_sha256", "created_at", "transaction_id", "state_snapshot", "source_bundle", "implementation_snapshot", "previous_snapshot_sha256"],
+  "required": ["schema_version", "run_id", "mode", "workspace", "run_dir", "target_path", "target_initial_sha256", "created_at", "transaction_id", "state_snapshot", "source_bundle", "implementation_snapshot", "previous_snapshot_sha256", "quality_profile_version"],
   "additionalProperties": false,
   "properties": {
     "schema_version": {"const": 2},
@@ -20,7 +20,8 @@
     "implementation_snapshot": {"$ref": "#/$defs/snapshot"},
     "latest_checkpoint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/snapshot"}]},
     "publication_transaction": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/snapshot"}]},
-    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"}
+    "previous_snapshot_sha256": {"$ref": "#/$defs/nullableSha"},
+    "quality_profile_version": {"enum": [1, 2]}
   },
   "allOf": [
     {"if": {"properties": {"mode": {"const": "create"}}, "required": ["mode"]}, "then": {"properties": {"target_initial_sha256": {"type": "null"}}}},
