@@ -75,10 +75,16 @@ def valid_layout_result():
     for page in pages:
         for edge in page["edges"]:
             edge.pop("locked")
+            edge["source_pin"] = 0.5
+            edge["target_pin"] = 0.5
+            edge["label_bounds"] = {"x": 120, "y": 20, "width": 40, "height": 20}
     return {
         "schema_version": 1, "result_id": "result-1", "request_sha256": SHA, "backend": "builtin",
         "pages": pages,
-        "metrics": {"crossings": 0, "overlaps": 0, "route_length": 100},
+        "metrics": {
+            "crossings": 0, "overlaps": 0, "route_length": 100,
+            "bend_count": 0, "shared_route_length": 0, "label_collisions": 0,
+        },
     }
 
 
@@ -184,6 +190,25 @@ class LayoutContractTests(unittest.TestCase):
         value = valid_layout_result()
         diagnostics = layout_contracts.validate_layout_result(value, expected_request_sha256="b" * 64)
         self.assertEqual(diagnostics[0]["code"], "layout.result.request_sha256_mismatch")
+
+    def test_layout_result_requires_normalized_pins_and_label_collision_metric(self):
+        value = valid_layout_result()
+        value["pages"][0]["edges"][0]["source_pin"] = 0.09
+        self.assertTrue(layout_contracts.validate_layout_result(value))
+        value = valid_layout_result()
+        value["metrics"].pop("label_collisions")
+        self.assertTrue(layout_contracts.validate_layout_result(value))
+
+    def test_layout_result_rejects_diagonal_or_unknown_channel_reservation(self):
+        value = valid_layout_result()
+        value["pages"][0]["channel_reservations"] = [{
+            "edge_id": "missing",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 10, "y": 10},
+        }]
+        codes = {item["code"] for item in layout_contracts.validate_layout_result(value)}
+        self.assertIn("layout.reservation.diagonal_segment", codes)
+        self.assertIn("layout.reservation.edge_missing", codes)
 
     def test_layout_request_rejects_non_finite_contract_numbers(self):
         locations = (

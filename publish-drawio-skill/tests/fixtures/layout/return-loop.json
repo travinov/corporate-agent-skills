@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"node_id": "start", "x": 200, "y": 0, "width": 100, "height": 60, "locked": true},
+    {"node_id": "retry", "x": 200, "y": 180, "width": 120, "height": 70, "locked": true},
+    {"node_id": "end", "x": 200, "y": 360, "width": 100, "height": 60, "locked": true}
+  ],
+  "edges": [
+    {"edge_id": "forward", "source": "start", "target": "retry", "edge_class": "main", "source_port": "south", "target_port": "north", "locked": false},
+    {"edge_id": "feedback", "source": "retry", "target": "start", "edge_class": "feedback", "source_port": "west", "target_port": "west", "locked": false},
+    {"edge_id": "self-loop", "source": "retry", "target": "retry", "edge_class": "self_loop", "source_port": "east", "target_port": "south", "locked": false},
+    {"edge_id": "finish", "source": "retry", "target": "end", "edge_class": "main", "source_port": "south", "target_port": "north", "locked": false}
+  ]
+}

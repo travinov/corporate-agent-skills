@@ -1,0 +1,10 @@
+{
+  "nodes": [
+    {"node_id": "source", "x": 0, "y": 100, "width": 100, "height": 60, "locked": true},
+    {"node_id": "obstacle", "x": 180, "y": 60, "width": 120, "height": 140, "locked": true},
+    {"node_id": "target", "x": 400, "y": 100, "width": 100, "height": 60, "locked": true}
+  ],
+  "edges": [
+    {"edge_id": "across", "source": "source", "target": "target", "edge_class": "main", "source_port": "east", "target_port": "west", "locked": false}
+  ]
+}

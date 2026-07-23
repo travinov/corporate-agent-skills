@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    {"node_id": "hub", "x": 200, "y": 100, "width": 120, "height": 80, "locked": true},
+    {"node_id": "left-a", "x": 0, "y": 0, "width": 100, "height": 60, "locked": true},
+    {"node_id": "left-b", "x": 0, "y": 110, "width": 100, "height": 60, "locked": true},
+    {"node_id": "right-a", "x": 450, "y": 0, "width": 100, "height": 60, "locked": true},
+    {"node_id": "right-b", "x": 450, "y": 110, "width": 100, "height": 60, "locked": true},
+    {"node_id": "right-c", "x": 450, "y": 220, "width": 100, "height": 60, "locked": true}
+  ],
+  "edges": [
+    {"edge_id": "fan-in-1", "source": "left-a", "target": "hub", "edge_class": "main", "source_port": "east", "target_port": "west", "locked": false},
+    {"edge_id": "fan-in-2", "source": "left-b", "target": "hub", "edge_class": "main", "source_port": "east", "target_port": "west", "locked": false},
+    {"edge_id": "fan-out-1", "source": "hub", "target": "right-a", "edge_class": "branch", "source_port": "east", "target_port": "west", "locked": false},
+    {"edge_id": "fan-out-2", "source": "hub", "target": "right-b", "edge_class": "branch", "source_port": "east", "target_port": "west", "locked": false},
+    {"edge_id": "fan-out-3", "source": "hub", "target": "right-c", "edge_class": "branch", "source_port": "east", "target_port": "west", "locked": false}
+  ]
+}

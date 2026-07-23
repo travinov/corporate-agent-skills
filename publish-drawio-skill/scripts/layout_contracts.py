@@ -82,11 +82,13 @@ def _layout_diagnostics(value: Any, *, request: bool) -> list[dict[str, str]]:
         edges = page.get("edges")
         if not isinstance(edges, list):
             continue
+        page_edge_ids: set[str] = set()
         for edge_index, edge in enumerate(edges):
             if not isinstance(edge, dict):
                 continue
             edge_id = edge.get("edge_id")
             if isinstance(edge_id, str):
+                page_edge_ids.add(edge_id)
                 ref = (page_id, edge_id)
                 known_edges.add(ref)
                 if edge.get("locked") is True:
@@ -112,6 +114,36 @@ def _layout_diagnostics(value: Any, *, request: bool) -> list[dict[str, str]]:
                         "consecutive route waypoints must share x or y",
                     ))
                 previous = current
+        if not request and isinstance(page.get("channel_reservations"), list):
+            reservation_edge_ids: list[str] = []
+            for reservation_index, reservation in enumerate(page["channel_reservations"]):
+                if not isinstance(reservation, dict):
+                    continue
+                reservation_edge_id = reservation.get("edge_id")
+                if isinstance(reservation_edge_id, str):
+                    reservation_edge_ids.append(reservation_edge_id)
+                    if reservation_edge_id not in page_edge_ids:
+                        diagnostics.append(_diagnostic(
+                            "layout.reservation.edge_missing",
+                            f"/pages/{page_index}/channel_reservations/{reservation_index}/edge_id",
+                            f"reservation edge {reservation_edge_id!r} is not on page {page_id!r}",
+                        ))
+                start, end = reservation.get("start"), reservation.get("end")
+                if not isinstance(start, dict) or not isinstance(end, dict):
+                    continue
+                sx, sy, ex, ey = start.get("x"), start.get("y"), end.get("x"), end.get("y")
+                if all(_finite_number(item) for item in (sx, sy, ex, ey)) and sx != ex and sy != ey:
+                    diagnostics.append(_diagnostic(
+                        "layout.reservation.diagonal_segment",
+                        f"/pages/{page_index}/channel_reservations/{reservation_index}",
+                        "channel reservations must be horizontal or vertical",
+                    ))
+            if reservation_edge_ids != sorted(reservation_edge_ids):
+                diagnostics.append(_diagnostic(
+                    "layout.reservation.unstable_order",
+                    f"/pages/{page_index}/channel_reservations",
+                    "channel reservations must be ordered by stable edge id",
+                ))
 
     if request and value.get("mode") == "local_reflow":
         scope = value.get("scope")

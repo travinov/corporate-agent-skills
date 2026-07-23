@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import layout_builtin
+import layout_contracts
+import layout_geometry
+from lifecycle_contracts import canonical_json_sha256
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "layout"
@@ -29,16 +32,22 @@ def _node(node_id, *, x=0, y=0, width=100, height=60, locked=False, parent_id=No
     return value
 
 
-def _edge(edge_id, source, target):
-    return {
+def _edge(edge_id, source, target, *, edge_class="main", locked=False, waypoints=None,
+          source_port="east", target_port="west", label_size=None):
+    value = {
         "edge_id": edge_id,
         "source": source,
         "target": target,
-        "edge_class": "main",
-        "source_port": "east",
-        "target_port": "west",
-        "locked": False,
+        "edge_class": edge_class,
+        "source_port": source_port,
+        "target_port": target_port,
+        "locked": locked,
     }
+    if waypoints is not None:
+        value["waypoints"] = copy.deepcopy(waypoints)
+    if label_size is not None:
+        value["label_size"] = copy.deepcopy(label_size)
+    return value
 
 
 def layout_request(*, direction="TB", nodes=None, edges=None):
@@ -193,8 +202,227 @@ class LayoutBuiltinTests(unittest.TestCase):
         first = layout_builtin.layout(request)
         second = layout_builtin.layout(copy.deepcopy(request))
         self.assertEqual(first, second)
-        xs = {node["bounds"]["x"] for node in first["pages"][0]["nodes"]}
+        xs = {node["x"] for node in first["pages"][0]["nodes"]}
         self.assertGreater(len(xs), 1)
+
+    def test_degree_aware_ports_are_distinct_normalized_and_page_scoped(self):
+        fixture = json.loads((FIXTURES / "fan-in-out.json").read_text(encoding="utf-8"))
+        request = layout_request(nodes=fixture["nodes"], edges=fixture["edges"])
+        request["pages"].append({
+            "page_id": "page-b",
+            "name": "B",
+            "nodes": copy.deepcopy(fixture["nodes"]),
+            "edges": copy.deepcopy(fixture["edges"]),
+        })
+        request["scope"] = _scope_for_pages(request["pages"])
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        page_a_pins = [
+            ports[f"page-a/{edge_id}"]["source"]["position"]
+            for edge_id in ("fan-out-1", "fan-out-2", "fan-out-3")
+        ]
+        self.assertEqual(page_a_pins, sorted(page_a_pins))
+        self.assertEqual(len(set(page_a_pins)), 3)
+        self.assertTrue(all(0.1 <= pin <= 0.9 for pin in page_a_pins))
+        self.assertIn("page-b/fan-out-1", ports)
+        self.assertNotEqual(
+            ports["page-a/fan-out-1"]["source"]["point"],
+            ports["page-a/fan-out-3"]["source"]["point"],
+        )
+
+    def test_visibility_route_avoids_expanded_obstacle_and_is_manhattan(self):
+        fixture = json.loads((FIXTURES / "routing-obstacles.json").read_text(encoding="utf-8"))
+        request = layout_request(direction="LR", nodes=fixture["nodes"], edges=fixture["edges"])
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        points = _points(routes["page-a/across"]["waypoints"])
+        self.assertTrue(layout_geometry.is_manhattan(points))
+        obstacle = bounds["page-a/obstacle"]
+        obstacle_rect = (obstacle["x"], obstacle["y"], obstacle["width"], obstacle["height"])
+        self.assertTrue(all(
+            not layout_geometry.segment_hits_rect(segment, obstacle_rect, clearance=10)
+            for segment in layout_geometry.route_segments(points)
+        ))
+
+    def test_self_loop_and_feedback_use_external_channels(self):
+        fixture = json.loads((FIXTURES / "return-loop.json").read_text(encoding="utf-8"))
+        request = layout_request(direction="TB", nodes=fixture["nodes"], edges=fixture["edges"])
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        loop = _points(routes["page-a/self-loop"]["waypoints"])
+        node = bounds["page-a/retry"]
+        self.assertTrue(any(
+            x < node["x"] or x > node["x"] + node["width"]
+            or y < node["y"] or y > node["y"] + node["height"]
+            for x, y in loop[1:-1]
+        ))
+        feedback = _points(routes["page-a/feedback"]["waypoints"])
+        leftmost = min(item["x"] for item in bounds.values())
+        self.assertLess(min(x for x, _ in feedback), leftmost)
+        self.assertTrue(layout_geometry.is_manhattan(loop))
+        self.assertTrue(layout_geometry.is_manhattan(feedback))
+
+    def test_reserved_segments_nudge_parallel_routes_apart(self):
+        nodes = [
+            _node("source", x=0, y=100, locked=True),
+            _node("target", x=400, y=100, locked=True),
+        ]
+        edges = [
+            _edge("parallel-a", "source", "target"),
+            _edge("parallel-b", "source", "target"),
+        ]
+        request = layout_request(direction="LR", nodes=nodes, edges=edges)
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        first = _points(routes["page-a/parallel-a"]["waypoints"])
+        second = _points(routes["page-a/parallel-b"]["waypoints"])
+        self.assertNotEqual(first, second)
+        self.assertEqual(layout_geometry.shared_route_length(first, second), 0)
+
+    def test_label_bounds_avoid_nodes_and_other_labels_or_report_collision(self):
+        nodes = [
+            _node("source", x=0, y=0, locked=True),
+            _node("target", x=400, y=0, locked=True),
+            _node("blocker", x=190, y=-10, width=120, height=80, locked=True),
+        ]
+        edges = [
+            _edge("labeled-a", "source", "target", label_size={"width": 80, "height": 20}),
+            _edge("labeled-b", "source", "target", label_size={"width": 80, "height": 20}),
+        ]
+        request = layout_request(direction="LR", nodes=nodes, edges=edges)
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        labels, collisions = layout_builtin.place_edge_labels(request, bounds, routes)
+        rectangles = []
+        for edge_id in ("labeled-a", "labeled-b"):
+            label = labels[f"page-a/{edge_id}"]
+            rect = (label["x"], label["y"], label["width"], label["height"])
+            for node_bounds in bounds.values():
+                node_rect = (
+                    node_bounds["x"], node_bounds["y"],
+                    node_bounds["width"], node_bounds["height"],
+                )
+                self.assertFalse(layout_geometry.rects_overlap(rect, node_rect))
+            self.assertTrue(all(not layout_geometry.rects_overlap(rect, prior) for prior in rectangles))
+            rectangles.append(rect)
+        self.assertEqual(collisions, 0)
+
+    def test_label_reservations_are_independent_between_pages(self):
+        edge = _edge("label", "source", "target", label_size={"width": 80, "height": 20})
+        page = {
+            "page_id": "page-a",
+            "name": "A",
+            "nodes": [
+                _node("source", x=0, y=0, locked=True),
+                _node("target", x=300, y=0, locked=True),
+            ],
+            "edges": [edge],
+        }
+        request = layout_request(nodes=page["nodes"], edges=page["edges"], direction="LR")
+        second = copy.deepcopy(page)
+        second["page_id"] = "page-b"
+        request["pages"].append(second)
+        request["scope"] = _scope_for_pages(request["pages"])
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        labels, collisions = layout_builtin.place_edge_labels(request, bounds, routes)
+        self.assertEqual(labels["page-a/label"], labels["page-b/label"])
+        self.assertEqual(collisions, 0)
+
+    def test_locked_manual_route_and_port_sides_are_preserved(self):
+        waypoints = [
+            {"x": 100, "y": 30},
+            {"x": 150, "y": 30},
+            {"x": 150, "y": 230},
+            {"x": 300, "y": 230},
+        ]
+        nodes = [
+            _node("source", x=0, y=0, locked=True),
+            _node("target", x=300, y=200, locked=True),
+        ]
+        edge = _edge(
+            "manual", "source", "target", locked=True, waypoints=waypoints,
+            source_port="east", target_port="west",
+        )
+        request = layout_request(direction="LR", nodes=nodes, edges=[edge])
+        bounds = _fixture_bounds(request)
+        ports = layout_builtin.allocate_ports(request, bounds)
+        routes = layout_builtin.route_edges(request, bounds, ports)
+        result = routes["page-a/manual"]
+        self.assertEqual(result["waypoints"], waypoints)
+        self.assertEqual(result["source_port"], "east")
+        self.assertEqual(result["target_port"], "west")
+
+    def test_unlocked_port_does_not_reuse_a_locked_pin_on_the_same_side(self):
+        manual = [
+            {"x": 100, "y": 30},
+            {"x": 200, "y": 30},
+        ]
+        nodes = [
+            _node("source", x=0, y=0, locked=True),
+            _node("locked-target", x=200, y=0, locked=True),
+            _node("free-target", x=200, y=120, locked=True),
+        ]
+        edges = [
+            _edge("locked", "source", "locked-target", locked=True, waypoints=manual),
+            _edge("free", "source", "free-target"),
+        ]
+        request = layout_request(direction="LR", nodes=nodes, edges=edges)
+        ports = layout_builtin.allocate_ports(request, _fixture_bounds(request))
+        self.assertEqual(ports["page-a/locked"]["source"]["position"], 0.5)
+        self.assertNotEqual(
+            ports["page-a/free"]["source"]["position"],
+            ports["page-a/locked"]["source"]["position"],
+        )
+
+    def test_metrics_do_not_count_intentional_parent_containment_as_node_overlap(self):
+        fixture = json.loads((FIXTURES / "nested-containers.json").read_text(encoding="utf-8"))
+        request = layout_request(nodes=fixture["nodes"], edges=fixture["edges"])
+        result = layout_builtin.layout(request)
+        self.assertEqual(result["metrics"]["overlaps"], 0)
+
+    def test_layout_returns_contract_valid_hash_bound_multi_page_result(self):
+        request = layout_request()
+        second = copy.deepcopy(request["pages"][0])
+        second["page_id"] = "page-b"
+        second["name"] = "B"
+        request["pages"].append(second)
+        request["scope"] = _scope_for_pages(request["pages"])
+        first = layout_builtin.layout(request)
+        second_result = layout_builtin.layout(copy.deepcopy(request))
+        self.assertEqual(first, second_result)
+        self.assertEqual(first["request_sha256"], canonical_json_sha256(request))
+        self.assertEqual(first["backend"], "python-layered")
+        self.assertEqual([page["page_id"] for page in first["pages"]], ["page-a", "page-b"])
+        for page in first["pages"]:
+            self.assertEqual(
+                [edge["edge_id"] for edge in page["edges"]],
+                sorted(edge["edge_id"] for edge in page["edges"]),
+            )
+            self.assertTrue(all(
+                layout_geometry.is_manhattan(_points(edge["waypoints"]))
+                for edge in page["edges"]
+            ))
+        self.assertEqual(
+            layout_contracts.validate_layout_result(
+                first, expected_request_sha256=canonical_json_sha256(request)
+            ),
+            [],
+        )
+        self.assertEqual(
+            set(first["metrics"]),
+            {
+                "crossings", "overlaps", "route_length", "bend_count",
+                "shared_route_length", "label_collisions",
+            },
+        )
+        self.assertEqual(first["metrics"]["overlaps"], 0)
+        self.assertEqual(first["metrics"]["shared_route_length"], 0)
 
 
 def _overlap(first, second):
@@ -213,6 +441,41 @@ def _contains(parent, child):
         and parent["x"] + parent["width"] >= child["x"] + child["width"]
         and parent["y"] + parent["height"] >= child["y"] + child["height"]
     )
+
+
+def _fixture_bounds(request):
+    return {
+        f"{page['page_id']}/{node['node_id']}": {
+            "x": float(node["x"]),
+            "y": float(node["y"]),
+            "width": float(node["width"]),
+            "height": float(node["height"]),
+        }
+        for page in request["pages"]
+        for node in page["nodes"]
+    }
+
+
+def _points(waypoints):
+    return [(float(point["x"]), float(point["y"])) for point in waypoints]
+
+
+def _scope_for_pages(pages):
+    nodes = [
+        {"page_id": page["page_id"], "cell_id": node["node_id"]}
+        for page in pages for node in page["nodes"]
+    ]
+    edges = [
+        {"page_id": page["page_id"], "cell_id": edge["edge_id"]}
+        for page in pages for edge in page["edges"]
+    ]
+    return {
+        "page_ids": sorted(page["page_id"] for page in pages),
+        "node_refs": nodes,
+        "edge_refs": edges,
+        "movable_node_refs": nodes,
+        "reroutable_edge_refs": edges,
+    }
 
 
 if __name__ == "__main__":

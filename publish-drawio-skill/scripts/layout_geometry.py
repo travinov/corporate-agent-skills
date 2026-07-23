@@ -23,6 +23,24 @@ def route_segments(points: list[Point]) -> list[Segment]:
     ]
 
 
+def canonicalize_route(points: list[Point], *, epsilon: float = 1e-6) -> list[Point]:
+    """Remove duplicate and redundant collinear points without moving a route."""
+    output: list[Point] = []
+    for point in points:
+        normalized = (float(point[0]), float(point[1]))
+        if output and abs(output[-1][0] - normalized[0]) <= epsilon and abs(output[-1][1] - normalized[1]) <= epsilon:
+            continue
+        output.append(normalized)
+        while len(output) >= 3:
+            first, middle, last = output[-3:]
+            same_x = abs(first[0] - middle[0]) <= epsilon and abs(middle[0] - last[0]) <= epsilon
+            same_y = abs(first[1] - middle[1]) <= epsilon and abs(middle[1] - last[1]) <= epsilon
+            if not (same_x or same_y):
+                break
+            output.pop(-2)
+    return output
+
+
 def _cross(a: Point, b: Point, c: Point) -> float:
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
