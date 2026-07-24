@@ -464,26 +464,31 @@ def select_pending_run(workspace, explicit=None):
         return explicit, "explicit"
     pending = []
     for run_dir in _workflow_dirs(workspace):
+        workflow_path = run_dir / "workflow.json"
         try:
-            workflow = json.loads((run_dir / "workflow.json").read_text(encoding="utf-8"))
+            workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+            modified_ns = workflow_path.stat().st_mtime_ns
         except (OSError, json.JSONDecodeError):
             continue
         if workflow.get("checkpoint"):
-            pending.append((run_dir, workflow.get("run_id", run_dir.name)))
+            pending.append((
+                modified_ns,
+                str(workflow.get("run_id", run_dir.name)),
+                run_dir.resolve(),
+            ))
     if len(pending) == 1:
-        return str(pending[0][0].resolve()), "only_pending_run"
+        return str(pending[0][2]), "only_pending_run"
     if not pending:
         raise CommandUXError(
             "pending_run_not_found",
             "no run with a pending human checkpoint was found",
             hint='supply --run "run-id" if you want to address a specific run',
         )
-    raise CommandUXError(
-        "pending_run_selection_ambiguous",
-        "more than one run is waiting for a human decision",
-        candidates=[run_id for _, run_id in pending],
-        hint='rerun with --run "one-of-the-listed-run-ids"',
+    selected = max(
+        pending,
+        key=lambda item: (item[0], item[1], str(item[2])),
     )
+    return str(selected[2]), "latest_pending_run"
 
 
 def select_latest_run(workspace, explicit=None):

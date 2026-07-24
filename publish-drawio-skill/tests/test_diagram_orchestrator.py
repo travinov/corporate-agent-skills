@@ -1743,22 +1743,75 @@ Route approved payments to settlement.
         self.assertIn("will not be overwritten", json.loads(completed.stderr)["message"])
         self.assertFalse((workspace / ".diagram-runs").exists())
 
-    def test_short_resume_refuses_ambiguous_pending_runs_without_mutation(self):
+    def test_short_resume_selects_latest_pending_run_without_mutation(self):
         root, workspace, cli = self.create_workspace()
         runs = workspace / ".diagram-runs"
-        for run_id in ("pending-one", "pending-two"):
+        workflow_paths = {}
+        for index, run_id in enumerate(("pending-one", "pending-two"), 1):
             run_dir = runs / run_id
             run_dir.mkdir(parents=True)
-            (run_dir / "workflow.json").write_text(
-                json.dumps({"run_id": run_id, "checkpoint": {"kind": "final_acceptance"}}),
+            workflow_path = run_dir / "workflow.json"
+            workflow_path.write_text(
+                json.dumps({
+                    "run_id": run_id,
+                    "checkpoint": {"kind": "final_acceptance"},
+                    "diagram_intake": {
+                        "status": "complete",
+                        "answers": [{"question_id": "question-a", "text": run_id}],
+                    },
+                }),
                 encoding="utf-8",
             )
-        completed = self.run_host("resume", "--workspace", workspace, "--cli", cli, "approve")
-        self.assertEqual(completed.returncode, 2)
-        result = json.loads(completed.stderr)
-        self.assertEqual(result["code"], "pending_run_selection_ambiguous")
-        self.assertEqual(result["candidates"], ["pending-one", "pending-two"])
-        self.assertFalse(any((runs / run_id / "decisions").exists() for run_id in result["candidates"]))
+            stamp = 1_000_000_000 * index
+            os.utime(workflow_path, ns=(stamp, stamp))
+            workflow_paths[run_id] = workflow_path
+        before = {
+            run_id: (path.read_bytes(), path.stat().st_mtime_ns)
+            for run_id, path in workflow_paths.items()
+        }
+
+        selected, reason = orchestrator.command_ux.select_pending_run(workspace)
+
+        self.assertEqual(Path(selected), (runs / "pending-two").resolve())
+        self.assertEqual(reason, "latest_pending_run")
+        self.assertEqual(
+            {
+                run_id: (path.read_bytes(), path.stat().st_mtime_ns)
+                for run_id, path in workflow_paths.items()
+            },
+            before,
+        )
+        self.assertFalse(any((runs / run_id / "decisions").exists() for run_id in before))
+
+    def test_short_resume_pending_tie_break_is_stable_by_run_id(self):
+        root, workspace, cli = self.create_workspace()
+        runs = workspace / ".diagram-runs"
+        stamp = 3_000_000_000
+        for run_id in ("pending-a", "pending-z"):
+            run_dir = runs / run_id
+            run_dir.mkdir(parents=True)
+            workflow_path = run_dir / "workflow.json"
+            workflow_path.write_text(
+                json.dumps({
+                    "run_id": run_id,
+                    "checkpoint": {"kind": "semantic_approval"},
+                }),
+                encoding="utf-8",
+            )
+            os.utime(workflow_path, ns=(stamp, stamp))
+
+        first = orchestrator.command_ux.select_pending_run(workspace)
+        second = orchestrator.command_ux.select_pending_run(workspace)
+
+        self.assertEqual(first, second)
+        self.assertEqual(Path(first[0]), (runs / "pending-z").resolve())
+        self.assertEqual(first[1], "latest_pending_run")
+        self.assertEqual(
+            orchestrator.command_ux.select_pending_run(
+                workspace, explicit="pending-a",
+            ),
+            ("pending-a", "explicit"),
+        )
 
     def test_create_reaches_final_checkpoint_without_repair_and_resume_publishes(self):
         root, workspace, cli = self.create_workspace()
