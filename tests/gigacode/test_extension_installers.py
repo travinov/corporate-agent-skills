@@ -15,6 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts" / "gigacode"
 ARCHIVE = ROOT / "dist" / "drawio-skill-agent-extension.zip"
+EXPECTED_DRAWIO_VERSION = "1.25.0-corporate.1"
 
 
 FAKE_GIGACODE = r'''#!/usr/bin/env bash
@@ -257,6 +258,22 @@ exec "${FAKE_PYTHON_REAL:?}" "$@"
             "Manifest checksum mismatch in active: commands/drawio/review.md",
             result.stdout,
         )
+
+    def test_install_and_verify_expect_layout_release_version(self) -> None:
+        result = self.install()
+
+        self.assertIn(f"Installed publish-drawio-skill {EXPECTED_DRAWIO_VERSION}", result.stdout)
+        verify = self.run_script("verify_drawio_agent_extension.sh", "--skip-self-check")
+        self.assertIn(f"Verified publish-drawio-skill {EXPECTED_DRAWIO_VERSION}", verify.stdout)
+
+    def test_verifier_rejects_missing_layout_runtime_inventory(self) -> None:
+        self.install()
+        result = self.run_script(
+            "verify_drawio_agent_extension.sh", "--skip-self-check", check=False
+        )
+
+        self.assertIn("inventory mismatch", result.stdout)
+        self.assertIn("scripts/layout_backend.py", result.stdout)
 
     def test_verifier_rejects_command_without_safe_raw_argument_bridge(self) -> None:
         self.install()

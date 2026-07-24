@@ -299,6 +299,33 @@ class ReleaseSkillsTests(unittest.TestCase):
         embedded_readme = (ROOT / "scripts" / "gigacode" / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("scripts/gigacode/", embedded_readme)
 
+    def test_drawio_release_archive_includes_layout_runtime_inventory(self):
+        expected = {
+            "drawio-skill/scripts/diagram_intake.py",
+            "drawio-skill/scripts/layout_contracts.py",
+            "drawio-skill/scripts/layout_geometry.py",
+            "drawio-skill/scripts/layout_model.py",
+            "drawio-skill/scripts/layout_builtin.py",
+            "drawio-skill/scripts/layout_backend.py",
+            "drawio-skill/scripts/layout_renderer.py",
+            "drawio-skill/scripts/sequence_adapter.py",
+            "drawio-skill/scripts/elk_runner.mjs",
+            "drawio-skill/vendor/elkjs/elk.bundled.js",
+            "drawio-skill/vendor/elkjs/LICENSE",
+            "drawio-skill/vendor/elkjs/NOTICE.json",
+            "drawio-skill/data/diagram-intake.v1.schema.json",
+            "drawio-skill/data/diagram-intake-analysis.v1.schema.json",
+            "drawio-skill/data/layout-request.v1.schema.json",
+            "drawio-skill/data/layout-result.v1.schema.json",
+            "drawio-skill/data/layout-repair-intent.v1.schema.json",
+            "drawio-skill/docs/drawio-agent-extension-corporate-test-commands.md",
+        }
+        with zipfile.ZipFile(ROOT / "dist" / "drawio-skill-agent-extension.zip") as bundle:
+            names = set(bundle.namelist())
+
+        missing = sorted(expected - names)
+        self.assertEqual([], missing, f"missing archive entries: {missing}")
+
 
 if __name__ == "__main__":
     unittest.main()
