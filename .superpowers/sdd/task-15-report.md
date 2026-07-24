@@ -117,9 +117,10 @@ Exact result:
 }
 ```
 
-The generated archive above predates `5903766`; Task 16 owns the required
-deterministic rebuild and final clean-extract verification that includes that
-test in the 233-file release inventory.
+The generated archive above predates `5903766`. That repository-level installer
+test is intentionally not part of the `publish-drawio-skill` archive inventory;
+Task 16 owns the deterministic rebuild plus final source and clean-extract
+verification after the test has passed against the packaged installer/verifier.
 
 `git diff --check` also exited `0`.
 
