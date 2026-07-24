@@ -7,7 +7,14 @@
 - Release version: `1.25.0-corporate.1`
 - Installer default branch:
   `codex/drawio-layout-engine-v1.25.0-corporate.1`
-- Tests were not edited.
+- Release implementation commit: `972fd8f`
+- Release tests:
+  - `tests/gigacode/test_extension_installers.py`
+  - `tests/test_release_skills.py`
+- Test commits:
+  - `8813aa7` — define the release archive/runtime inventory RED contract;
+  - `a214a52` — tighten version, no-Node, and fail-closed verifier RED cases;
+  - `5903766` — add the post-review manifest checksum tamper regression.
 
 ## RED evidence
 
@@ -44,6 +51,10 @@ The 13 failures proved the intended release gap:
 - Kept the mandatory Python layout path installable without Node.
 - Added fail-closed verifier checks. A missing or manifest-mismatched Task 15
   payload reports `inventory mismatch: <path>`.
+- Added a focused regression that tampers
+  `vendor/elkjs/elk.bundled.js` after installation and requires the verifier
+  to report
+  `inventory mismatch: vendor/elkjs/elk.bundled.js (manifest checksum mismatch in active)`.
 - Preserved existing install/source/backup paths and rollback behavior.
 - Updated the obsolete verifier role-policy literal to the current host-owned
   assignment exposed by the packaged orchestrator.
@@ -74,11 +85,16 @@ Targeted release suite:
 Exact result:
 
 ```text
-Ran 52 tests in 27.637s
+Ran 53 tests in 28.835s
 OK
 ```
 
-Clean-extract release verification:
+The 53 tests include archive inventory, installer/verifier version consistency,
+installation with no Node on `PATH`, missing runtime/schema/vendor inventory,
+and the post-review active manifest checksum tamper regression from `5903766`.
+
+Task 15 clean-extract release verification before the post-review test-only
+commit:
 
 ```bash
 .venv/bin/python scripts/release_skills.py verify --skill drawio
@@ -100,6 +116,10 @@ Exact result:
   "status": "passed"
 }
 ```
+
+The generated archive above predates `5903766`; Task 16 owns the required
+deterministic rebuild and final clean-extract verification that includes that
+test in the 233-file release inventory.
 
 `git diff --check` also exited `0`.
 
