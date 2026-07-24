@@ -17,8 +17,11 @@ Only present `approve_with_findings` when the host offers it after strict pass,
 Reviewer approve, valid integrity, and no error findings. A legacy
 v1 checkpoint is trace/manual-handoff only and cannot be resumed.
 
-Normal use when one run is awaiting a human decision:
-`/drawio:resume continue "optional notes"` or `/drawio:resume approve`.
+Use `/drawio:resume` only when the host has reported a semantic ambiguity,
+publication conflict, explicit pause, or a later optional improvement. It selects
+the latest pending run and preserves every answered intake question; it never
+restarts intake or advances a deterministic plateau. Supply the decision shown
+by that checkpoint, for example `/drawio:resume approve`.
 Advanced form: `--run "run-id-or-directory" --decision <decision> --feedback "optional notes"`.
 
 ```json

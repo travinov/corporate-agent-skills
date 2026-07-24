@@ -20,9 +20,11 @@ integrity-verified diagram with remaining layout/readability findings; report
 its final artifact and findings clearly.
 Publication is journaled: create is no-clobber, improve is compare-and-swap, and
 a target conflict must remain a resumable checkpoint rather than an overwrite.
-Recoverable Repair/Reviewer contract, scope, and deterministic-tool failures are
-handled by the bounded host loop; do not ask the user to enter `continue` unless
-the JSON actually contains a human checkpoint.
+Recoverable Repair/Reviewer contract, scope, deterministic-tool failures, and a
+deterministic plateau are handled by the bounded host loop. Do not ask the user
+to enter `continue` for those outcomes. Mention `/drawio:resume` only for a
+reported semantic ambiguity, publication conflict, explicit pause, or a later
+optional improvement, and only when the JSON contains that human checkpoint.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
 If `model_diversity_degraded` is true, identify whether Supervisor or Repair

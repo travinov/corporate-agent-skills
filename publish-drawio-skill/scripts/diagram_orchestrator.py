@@ -1634,10 +1634,20 @@ def execute_layout_attempt(
             config=backend_config,
             attempted_keys=frozenset(),
         )
+        backend_evidence_value = dict(backend_attempt.evidence)
+        if (
+            backend_evidence_value.get("backend_selected") == "python-layered"
+            and not backend_evidence_value.get("fallback_reason")
+        ):
+            backend_evidence_value["fallback_reason"] = (
+                "strategy_python_fallback"
+                if strategy_id == "python-fallback"
+                else "explicit_python_backend"
+            )
         backend_evidence, backend_evidence_path = _relocate_backend_evidence(
             run_dir,
             attempt_dir,
-            backend_attempt.evidence,
+            backend_evidence_value,
         )
         paths["backend_evidence"] = backend_evidence_path
         if backend_evidence.get("request_sha256") != request_sha256:
@@ -3244,12 +3254,22 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
     """Apply the typed Supervisor plan or fail closed before invoking sibling roles."""
     result = decision["result"]
     declared_action = result["action"]
-    action = declared_action
-    # The raw model declaration remains evidence, while executable lifecycle
-    # topology is deterministic and owned by the host. Repair is authorized in
-    # every lifecycle phase but is invoked only when validation/review findings
-    # reach repair_loop.
-    declared_roles = set(result["required_roles"])
+    action_by_layout_strategy = {
+        "create_layout": "create",
+        "reroute_edges": "repair",
+        "expand_local_scope": "repair",
+        "retry_layout_strategy": "repair",
+        "request_semantic_clarification": "analyze",
+        "finish_best_effort": "review",
+    }
+    action = action_by_layout_strategy.get(declared_action)
+    if action is None:
+        raise supervisor.SupervisorError(
+            f"Supervisor layout strategy {declared_action!r} is not executable"
+        )
+    # The model may choose only an allowlisted strategy. The host owns every
+    # downstream role and legacy lifecycle action; no model role assignment is
+    # accepted or read here.
     if phase == "initial":
         allowed_actions = {"create", "analyze"} if workflow["mode"] == "create" else {"analyze", "repair", "review"}
         host_mandatory_roles = {"supervisor", "semantic_analyst", "repair", "reviewer"}
@@ -3259,7 +3279,7 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
             allowed_actions.add("create")
         host_mandatory_roles = {"supervisor", "repair", "reviewer"}
         if (
-            declared_action == "create"
+            action == "create"
             and workflow["mode"] == "create"
             and workflow.get("accepted_artifact")
         ):
@@ -3271,15 +3291,17 @@ def consume_supervisor_decision(workflow, decision, *, phase, requested_max_iter
         raise supervisor.SupervisorError(
             f"Supervisor action {action!r} is not executable during the {phase} phase"
         )
-    roles = declared_roles | host_mandatory_roles
     proposed_max = result.get("max_iterations", requested_max_iterations)
     workflow["max_iterations"] = min(int(requested_max_iterations), int(proposed_max))
-    workflow["supervisor_declared_roles"] = sorted(declared_roles)
+    workflow["supervisor_declared_roles"] = []
     workflow["host_mandatory_roles"] = sorted(host_mandatory_roles)
-    workflow["required_roles"] = sorted(roles)
+    workflow["required_roles"] = sorted(host_mandatory_roles)
     workflow["supervisor_declared_action"] = declared_action
     workflow["supervisor_action"] = action
     workflow["supervisor_action_normalized"] = declared_action != action
+    workflow["supervisor_best_effort_requested"] = (
+        declared_action == "finish_best_effort"
+    )
     workflow["supervisor_decision"] = decision
     return workflow
 
@@ -3414,6 +3436,196 @@ def role_policy_evidence(workflow):
     }
 
 
+def _evidence_file(run_dir, descriptor, *, label):
+    """Read one run-contained descriptor without trusting its path or digest."""
+    if not isinstance(descriptor, dict):
+        raise supervisor.SupervisorError(f"{label} evidence descriptor is missing")
+    return _verified_layout_file(run_dir, descriptor, label=label)
+
+
+def _intake_evidence(run_dir, workflow):
+    """Return the durable intake contract, including the no-intake direct API case."""
+    descriptor = workflow.get("diagram_intake") or {}
+    if not descriptor:
+        return {
+            "status": "not_recorded",
+            "questions": [], "answers": [], "assumptions": [],
+        }
+    path = run_dir / str(descriptor.get("path", ""))
+    if not _inside(path, run_dir) or not path.is_file():
+        raise supervisor.SupervisorError("diagram intake evidence is missing")
+    expected = descriptor.get("sha256")
+    if not isinstance(expected, str) or supervisor.sha256_file(path) != expected:
+        raise supervisor.SupervisorError("diagram intake evidence hash differs")
+    value = supervisor.load_json(path)
+    return {
+        "status": value.get("status"),
+        "questions": copy.deepcopy(value.get("questions", [])),
+        "answers": copy.deepcopy(value.get("answers", [])),
+        "assumptions": copy.deepcopy(value.get("assumptions", [])),
+    }
+
+
+def _layout_attempt_summary(run_dir, attempt):
+    """Expose only the host-owned, hash-bound facts needed to audit an attempt."""
+    request = supervisor.load_json(_evidence_file(
+        run_dir, attempt.get("layout_request"), label="layout request",
+    ))
+    layout_contracts.require_layout_request(request)
+    result_descriptor = attempt.get("layout_result")
+    result = None
+    if attempt.get("status") == "completed":
+        result = supervisor.load_json(_evidence_file(
+            run_dir, result_descriptor, label="layout result",
+        ))
+        layout_contracts.require_layout_result(
+            result, expected_request_sha256=canonical_json_sha256(request),
+        )
+    backend_value = supervisor.load_json(_evidence_file(
+        run_dir, attempt.get("backend_evidence"), label="layout backend",
+    )) if attempt.get("backend_evidence") else {}
+    backend = {
+        "id": backend_value.get("backend_selected"),
+        "version": backend_value.get("elkjs_version"),
+        "executable": backend_value.get("node_executable"),
+        "options": copy.deepcopy(backend_value.get("effective_options", {})),
+        "fallback_reason": backend_value.get("fallback_reason"),
+    }
+    changed = []
+    locked = []
+    for page in request.get("pages", []):
+        page_id = page.get("page_id")
+        for node in page.get("nodes", []):
+            record = {"page_id": page_id, "element_id": node.get("node_id"), "kind": "node"}
+            (locked if node.get("locked") else changed).append(record)
+        for edge in page.get("edges", []):
+            record = {"page_id": page_id, "element_id": edge.get("edge_id"), "kind": "edge"}
+            (locked if edge.get("locked") else changed).append(record)
+    validation = attempt.get("validation") or {}
+    return {
+        "attempt_id": attempt.get("attempt_id"),
+        "status": attempt.get("status"),
+        "strategy": attempt.get("strategy"),
+        "strategy_options": copy.deepcopy(attempt.get("strategy_options", {})),
+        "attempt_key": attempt.get("attempt_key"),
+        "semantic_plan_sha256": request.get("semantic_plan_sha256"),
+        "layout_request_sha256": canonical_json_sha256(request),
+        "layout_result_sha256": (
+            result_descriptor.get("sha256") if isinstance(result_descriptor, dict) else None
+        ),
+        "backend": backend,
+        "quality_vector": copy.deepcopy(attempt.get("quality_vector")),
+        "changed_elements": changed,
+        "locked_elements": locked,
+        "validation_receipt": {
+            "path": validation.get("receipt_v2") or validation.get("receipt"),
+            "sha256": validation.get("receipt_v2_sha256") or validation.get("receipt_sha256"),
+            "strict_passed": validation.get("strict_passed"),
+        },
+        "fallback_reason": backend["fallback_reason"],
+    }
+
+
+def _review_verdict_evidence(run_dir, workflow):
+    descriptor = (
+        workflow.get("candidate_reviewer_verdict_v2")
+        or workflow.get("reviewer_verdict_v2")
+        or {}
+    )
+    if not descriptor:
+        return None
+    path = Path(descriptor.get("path", ""))
+    if not _inside(path, run_dir) or not path.is_file():
+        raise supervisor.SupervisorError("review verdict evidence is missing")
+    if supervisor.sha256_file(path) != descriptor.get("sha256"):
+        raise supervisor.SupervisorError("review verdict evidence hash differs")
+    verdict = supervisor.load_json(path)
+    return {
+        "verdict": verdict.get("verdict"),
+        "findings": copy.deepcopy(verdict.get("findings", [])),
+        "path": str(path), "sha256": descriptor.get("sha256"),
+    }
+
+
+def _run_evidence_summary(run_dir, workflow):
+    """Build the complete result contract from persisted evidence, never model prose."""
+    run_dir = Path(run_dir).resolve()
+    plan_descriptor = workflow.get("semantic_plan_v2") or {}
+    plan_path = Path(plan_descriptor.get("path", ""))
+    plan = None
+    if plan_path.is_file() and supervisor.sha256_file(plan_path) == plan_descriptor.get("sha256"):
+        plan = supervisor.load_json(plan_path)
+    attempts = []
+    for raw in workflow.get("layout_attempts", []):
+        try:
+            attempts.append(_layout_attempt_summary(run_dir, raw))
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
+                jsonschema.ValidationError, supervisor.SupervisorError) as exc:
+            attempts.append({
+                "attempt_id": raw.get("attempt_id") if isinstance(raw, dict) else None,
+                "status": raw.get("status") if isinstance(raw, dict) else None,
+                "evidence_error": str(exc),
+            })
+    selected_id = (workflow.get("selected_layout_attempt") or {}).get("attempt_id")
+    selected = next((item for item in attempts if item.get("attempt_id") == selected_id), None)
+    if selected is None:
+        selected = next((item for item in reversed(attempts) if not item.get("evidence_error")), None)
+    receipts = [item.get("validation_receipt") for item in attempts if item.get("validation_receipt")]
+    vectors = [item.get("quality_vector") for item in attempts if item.get("quality_vector") is not None]
+    try:
+        verdict = _review_verdict_evidence(run_dir, workflow)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
+            supervisor.SupervisorError) as exc:
+        verdict = {"evidence_error": str(exc)}
+    remaining = copy.deepcopy(
+        (workflow.get("best_effort") or {}).get("remaining_findings")
+        or workflow.get("findings", [])
+    )
+    status = workflow.get("status")
+    intake = _intake_evidence(run_dir, workflow)
+    published = copy.deepcopy(workflow.get("published_artifact"))
+    summary = {
+        "diagram_type": (
+            (plan or {}).get("result", {}).get("diagram_type")
+            or (workflow.get("renderer_adapter") or {}).get("requested_semantic_diagram_type")
+        ),
+        "intake": intake,
+        "semantic_plan_sha256": plan_descriptor.get("sha256"),
+        "layout_request_sha256": (selected or {}).get("layout_request_sha256"),
+        "layout_result_sha256": (selected or {}).get("layout_result_sha256"),
+        "backend": copy.deepcopy((selected or {}).get("backend")),
+        "strategy_attempts": attempts,
+        "quality_profile_version": workflow.get("quality_profile_version"),
+        "quality_vectors": vectors,
+        "changed_elements": copy.deepcopy((selected or {}).get("changed_elements", [])),
+        "locked_elements": copy.deepcopy((selected or {}).get("locked_elements", [])),
+        "validation_receipts": receipts,
+        "review_verdict": verdict,
+        "published_artifact": published,
+        "strict_or_best_effort": (
+            "best_effort" if status == "best_effort_completed"
+            else "strict" if bool(_working_validation(workflow).get("strict_passed"))
+            else "unverified"
+        ),
+        "remaining_findings": remaining,
+    }
+    # Keep the nested evidence readable while preserving stable machine fields
+    # for simple command clients that do not traverse presentation objects.
+    summary.update({
+        "intake_status": intake["status"],
+        "intake_questions": copy.deepcopy(intake["questions"]),
+        "intake_answers": copy.deepcopy(intake["answers"]),
+        "intake_assumptions": copy.deepcopy(intake["assumptions"]),
+        "backend_id": (summary["backend"] or {}).get("id"),
+        "backend_version": (summary["backend"] or {}).get("version"),
+        "backend_executable": (summary["backend"] or {}).get("executable"),
+        "backend_options": copy.deepcopy((summary["backend"] or {}).get("options", {})),
+        "published_artifact_path": (published or {}).get("path"),
+        "published_artifact_sha256": (published or {}).get("sha256"),
+    })
+    return summary
+
+
 def host_result(run_dir, workflow, *, error=None):
     state = supervisor.load_state(run_dir)
     working_artifact = _working_artifact(workflow)
@@ -3494,6 +3706,7 @@ def host_result(run_dir, workflow, *, error=None):
             "diagram_spec": str((Path(run_dir) / "diagram-spec.json").resolve()),
         },
     }
+    result.update(_run_evidence_summary(run_dir, workflow))
     if error:
         result["error"] = error
     supervisor.write_json(Path(run_dir) / "host-result.json", result)
@@ -6468,9 +6681,8 @@ def _resume_run_impl(reference, decision, feedback, workspace, cli, *, timeout=6
                 "role": "supervisor",
                 "status": "ok",
                 "result": {
-                    "action": "repair",
+                    "action": "retry_layout_strategy",
                     "reason": "deterministic host resume fallback",
-                    "required_roles": ["repair", "reviewer"],
                     "max_iterations": DEFAULT_MAX_ITERATIONS,
                 },
             }
@@ -6804,6 +7016,107 @@ def resume_run(reference, decision, feedback, workspace, cli, *, timeout=600):
             )
     except RunAlreadyLocked as exc:
         return {**exc.as_result(), "run_dir": str(run_dir)}
+
+
+def _trace_v2_snapshot_checks(run_dir, replayed):
+    """Verify every ledger-referenced snapshot, not just the latest descriptor."""
+    checks = []
+    for record in replayed.get("events", []):
+        event = record.get("event", {})
+        for descriptor in event.get("snapshots", []):
+            path_value = descriptor.get("path") if isinstance(descriptor, dict) else None
+            valid = False
+            diagnostic = None
+            try:
+                path = (Path(run_dir).resolve() / str(path_value)).resolve()
+                if not _inside(path, run_dir) or not path.is_file():
+                    raise supervisor.SupervisorError("snapshot file is missing or escaped the run")
+                document = supervisor.load_json(path)
+                require_valid_contract(document, descriptor["schema_kind"], 2)
+                if canonical_json_sha256(document) != descriptor.get("canonical_sha256"):
+                    raise supervisor.SupervisorError("snapshot canonical hash differs")
+                valid = True
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
+                    jsonschema.ValidationError, ContractError, supervisor.SupervisorError) as exc:
+                diagnostic = str(exc)
+            checks.append({
+                "kind": descriptor.get("schema_kind") if isinstance(descriptor, dict) else None,
+                "path": path_value,
+                "canonical_sha256": descriptor.get("canonical_sha256") if isinstance(descriptor, dict) else None,
+                "valid": valid,
+                "diagnostic": diagnostic,
+            })
+    return checks
+
+
+def _trace_layout_evidence(run_dir, workflow, replayed):
+    """Validate the durable layout contracts while leaving the run untouched."""
+    checks = []
+    attempts = workflow.get("layout_attempts", [])
+    seen_keys = set()
+    profile = workflow.get("quality_profile_version")
+    recorded_keys = workflow.get("layout_attempt_keys", [])
+    if not isinstance(recorded_keys, list) or len(recorded_keys) != len(set(recorded_keys)):
+        checks.append({
+            "attempt_id": None,
+            "valid": False,
+            "diagnostic": "duplicate or invalid recorded layout strategy key",
+        })
+    for attempt in attempts:
+        attempt_id = attempt.get("attempt_id") if isinstance(attempt, dict) else None
+        valid = True
+        diagnostic = None
+        try:
+            _verify_persisted_layout_attempt(run_dir, workflow, attempt, replayed)
+            request = supervisor.load_json(_verified_layout_file(
+                run_dir, attempt["layout_request"], label=f"{attempt_id} trace request",
+            ))
+            key = attempt.get("attempt_key")
+            if not isinstance(key, str) or key in seen_keys:
+                raise supervisor.SupervisorError("duplicate or missing layout strategy key")
+            seen_keys.add(key)
+            if request.get("quality_profile_version") != profile:
+                raise supervisor.SupervisorError("layout quality profile differs across resume")
+            if attempt.get("status") == "completed":
+                evidence = supervisor.load_json(_verified_layout_file(
+                    run_dir, attempt["backend_evidence"], label=f"{attempt_id} trace backend",
+                ))
+                backend_id = evidence.get("backend_selected")
+                if not backend_id or not isinstance(evidence.get("effective_options"), dict):
+                    raise supervisor.SupervisorError("layout backend identity is incomplete")
+                if str(backend_id).startswith("elk-"):
+                    executable = Path(str(evidence.get("node_executable") or ""))
+                    if not (
+                        executable.is_file()
+                        and evidence.get("node_version")
+                        and evidence.get("elkjs_version")
+                        and evidence.get("schema_valid") is True
+                    ):
+                        raise supervisor.SupervisorError("ELK layout has no verified Node proof")
+                if backend_id == "python-layered" and not evidence.get("fallback_reason"):
+                    raise supervisor.SupervisorError("Python layout has no recorded fallback reason")
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
+                jsonschema.ValidationError, ContractError, supervisor.SupervisorError) as exc:
+            valid = False
+            diagnostic = str(exc)
+        checks.append({"attempt_id": attempt_id, "valid": valid, "diagnostic": diagnostic})
+    publication = workflow.get("published_artifact") or {}
+    publication_valid = True
+    if publication:
+        try:
+            path = Path(publication.get("path", "")).resolve()
+            publication_valid = (
+                _inside(path, workflow["workspace"])
+                and path.is_file()
+                and supervisor.sha256_file(path) == publication.get("sha256")
+            )
+        except (OSError, TypeError):
+            publication_valid = False
+    return {
+        "checks": checks,
+        "publication_valid": publication_valid,
+        "valid": all(item["valid"] for item in checks) and publication_valid,
+    }
 
 
 def trace_run(reference, workspace):
@@ -7164,6 +7477,46 @@ def trace_run(reference, workspace):
             )
             if not v2_trace["valid"] and v2_trace["status"] == "verified":
                 v2_trace["status"] = "tampered_or_incomplete"
+    snapshot_checks = []
+    layout_trace = {"checks": [], "publication_valid": True, "valid": True}
+    if v2_trace["present"]:
+        snapshot_checks = _trace_v2_snapshot_checks(run_dir, replayed_v2)
+        artifact_checks.extend({
+            "kind": "v2_snapshot",
+            "path": str(item.get("path")),
+            "valid": item["valid"],
+            "diagnostic": item.get("diagnostic"),
+        } for item in snapshot_checks)
+        if not all(item["valid"] for item in snapshot_checks):
+            v2_trace["valid"] = False
+            v2_trace["status"] = "tampered_or_incomplete"
+        if replayed_v2["valid"]:
+            layout_trace = _trace_layout_evidence(run_dir, workflow, replayed_v2)
+            artifact_checks.extend({
+                "kind": "layout_evidence",
+                "path": item.get("attempt_id"),
+                "valid": item["valid"],
+                "diagnostic": item.get("diagnostic"),
+            } for item in layout_trace["checks"])
+            if not layout_trace["valid"]:
+                v2_trace["valid"] = False
+                v2_trace["status"] = "tampered_or_incomplete"
+        else:
+            layout_trace = {
+                "checks": [{
+                    "attempt_id": None,
+                    "valid": False,
+                    "diagnostic": "control-plane ledger is tampered or incomplete",
+                }],
+                "publication_valid": False,
+                "valid": False,
+            }
+            artifact_checks.append({
+                "kind": "layout_evidence",
+                "path": None,
+                "valid": False,
+                "diagnostic": "control-plane ledger is tampered or incomplete",
+            })
     integrity_valid = (
         bool(events)
         and all(item["schema_valid"] and item["chain_valid"] for item in checks)
@@ -7242,7 +7595,33 @@ def trace_run(reference, workspace):
         "role_policy": role_policy_evidence(workflow),
         "trust_scope": "local runtime capture and configured routing policy; no external cryptographic attestation",
         "control_plane_v2": v2_trace,
+        "snapshot_checks": snapshot_checks,
+        "layout_evidence_checks": layout_trace["checks"],
+        "layout_evidence_valid": layout_trace["valid"],
     }
+    try:
+        result.update(_run_evidence_summary(run_dir, workflow))
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
+            jsonschema.ValidationError, ContractError, supervisor.SupervisorError) as exc:
+        result.update({
+            "diagram_type": None,
+            "intake": {"status": "tampered_or_incomplete", "questions": [], "answers": [], "assumptions": []},
+            "semantic_plan_sha256": (workflow.get("semantic_plan_v2") or {}).get("sha256"),
+            "layout_request_sha256": None, "layout_result_sha256": None,
+            "backend": None, "strategy_attempts": [],
+            "quality_profile_version": workflow.get("quality_profile_version"),
+            "quality_vectors": [], "changed_elements": [], "locked_elements": [],
+            "validation_receipts": [], "review_verdict": {"evidence_error": str(exc)},
+            "published_artifact": copy.deepcopy(workflow.get("published_artifact")),
+            "strict_or_best_effort": "unverified",
+            "remaining_findings": copy.deepcopy(workflow.get("findings", [])),
+            "intake_status": "tampered_or_incomplete",
+            "intake_questions": [], "intake_answers": [], "intake_assumptions": [],
+            "backend_id": None, "backend_version": None,
+            "backend_executable": None, "backend_options": {},
+            "published_artifact_path": (workflow.get("published_artifact") or {}).get("path"),
+            "published_artifact_sha256": (workflow.get("published_artifact") or {}).get("sha256"),
+        })
     return result
 
 

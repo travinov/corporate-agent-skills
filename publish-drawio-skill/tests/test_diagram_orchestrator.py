@@ -102,9 +102,8 @@ if model == "GigaChat-3-Ultra":
         "role": "supervisor",
         "status": "ok",
         "result": {
-            "action": "create" if payload["mode"] == "create" else "analyze",
+            "action": "create_layout" if payload["mode"] == "create" else "reroute_edges",
             "reason": "schema-valid supervisor decision",
-            "required_roles": ["supervisor", "semantic_analyst", "reviewer"],
             "max_iterations": 1,
         },
     })
@@ -1387,12 +1386,8 @@ Route approved payments to settlement.
         cli = root / "corporate-supervisor-output-cli.py"
         cli.write_text(
             FAKE_GIGACODE.replace(
-                '"action": "create" if payload["mode"] == "create" else "analyze",',
-                '"action": "repair",',
-                1,
-            ).replace(
-                '"required_roles": ["supervisor", "semantic_analyst", "reviewer"],',
-                '"required_roles": ["repair", "reviewer"],',
+                '"action": "create_layout" if payload["mode"] == "create" else "reroute_edges",',
+                '"action": "reroute_edges",',
                 1,
             ),
             encoding="utf-8",
@@ -1410,22 +1405,17 @@ Route approved payments to settlement.
             result["role_policy"],
             {
                 "supervisor_action": "repair",
-                "supervisor_action_normalized": False,
-                "supervisor_declared_action": "repair",
-                "supervisor_declared_roles": ["repair", "reviewer"],
+                "supervisor_action_normalized": True,
+                "supervisor_declared_action": "reroute_edges",
+                "supervisor_declared_roles": [],
                 "host_mandatory_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
                 "effective_required_roles": ["repair", "reviewer", "semantic_analyst", "supervisor"],
             },
         )
         workflow = json.loads(Path(result["evidence"]["workflow"]).read_text())
-        self.assertEqual(workflow["supervisor_decision"]["result"]["action"], "repair")
-        self.assertEqual(
-            workflow["supervisor_decision"]["result"]["required_roles"],
-            ["repair", "reviewer"],
-        )
-        self.assertEqual(
-            workflow["supervisor_declared_roles"], ["repair", "reviewer"]
-        )
+        self.assertEqual(workflow["supervisor_decision"]["result"]["action"], "reroute_edges")
+        self.assertNotIn("required_roles", workflow["supervisor_decision"]["result"])
+        self.assertEqual(workflow["supervisor_declared_roles"], [])
         self.assertEqual(
             workflow["host_mandatory_roles"],
             ["repair", "reviewer", "semantic_analyst", "supervisor"],
@@ -1444,9 +1434,8 @@ Route approved payments to settlement.
             "role": "supervisor",
             "status": "ok",
             "result": {
-                "action": "create",
+                "action": "create_layout",
                 "reason": "Create the requested diagram",
-                "required_roles": ["semantic_analyst", "reviewer"],
             },
         }
 
@@ -1454,7 +1443,7 @@ Route approved payments to settlement.
             workflow, decision, phase="initial", requested_max_iterations=3,
         )
 
-        self.assertEqual(workflow["supervisor_declared_roles"], ["reviewer", "semantic_analyst"])
+        self.assertEqual(workflow["supervisor_declared_roles"], [])
         self.assertEqual(
             workflow["host_mandatory_roles"],
             ["repair", "reviewer", "semantic_analyst", "supervisor"],
@@ -1504,9 +1493,8 @@ Route approved payments to settlement.
             "role": "supervisor",
             "status": "ok",
             "result": {
-                "action": "repair",
+                "action": "retry_layout_strategy",
                 "reason": "Continue from the approved semantic plan",
-                "required_roles": ["reviewer"],
             },
         }
 
@@ -1526,9 +1514,8 @@ Route approved payments to settlement.
             "role": "supervisor",
             "status": "ok",
             "result": {
-                "action": "repair",
+                "action": "reroute_edges",
                 "reason": "Repair is incompatible with initial create",
-                "required_roles": ["repair", "reviewer"],
             },
         }
 
@@ -1540,7 +1527,46 @@ Route approved payments to settlement.
                 workflow, decision, phase="initial", requested_max_iterations=3,
             )
 
-        self.assertNotIn("host_mandatory_roles", workflow)
+    def test_supervisor_layout_strategies_are_mapped_by_the_host(self):
+        expected = {
+            "create_layout": "create",
+            "reroute_edges": "repair",
+            "expand_local_scope": "repair",
+            "retry_layout_strategy": "repair",
+            "request_semantic_clarification": "analyze",
+            "finish_best_effort": "review",
+        }
+        for strategy, action in expected.items():
+            workflow = {"mode": "improve"}
+            decision = {
+                "schema_version": 1, "role": "supervisor", "status": "ok",
+                "result": {"action": strategy, "reason": "host mapping"},
+            }
+            if strategy == "create_layout":
+                with self.assertRaisesRegex(
+                    orchestrator.supervisor.SupervisorError, "not executable",
+                ):
+                    orchestrator.consume_supervisor_decision(
+                        workflow, decision, phase="initial", requested_max_iterations=3,
+                    )
+                continue
+            with self.subTest(strategy=strategy):
+                orchestrator.consume_supervisor_decision(
+                    workflow, decision, phase="initial", requested_max_iterations=3,
+                )
+                self.assertEqual(workflow["supervisor_declared_action"], strategy)
+                self.assertEqual(workflow["supervisor_action"], action)
+                self.assertEqual(workflow["supervisor_declared_roles"], [])
+                self.assertEqual(
+                    workflow["required_roles"],
+                    ["repair", "reviewer", "semantic_analyst", "supervisor"],
+                )
+                self.assertEqual(
+                    workflow["supervisor_best_effort_requested"],
+                    strategy == "finish_best_effort",
+                )
+
+        self.assertIn("host_mandatory_roles", workflow)
 
     def test_bare_improve_rejects_stale_review_in_ambiguous_workspace(self):
         root, workspace, cli = self.create_workspace()
@@ -3096,6 +3122,58 @@ Route approved payments to settlement.
         self.assertEqual(manifest.stat().st_mtime_ns, manifest_mtime_before)
         self.assertEqual(workflow.stat().st_mtime_ns, workflow_mtime_before)
 
+    def test_result_and_trace_expose_hash_bound_layout_evidence(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "trace-evidence.drawio"
+
+        result = orchestrator.start_run(
+            "create", target, "Create a trace evidence diagram.", workspace, cli,
+            run_id="trace-evidence-run", max_iterations=1,
+        )
+
+        expected = {
+            "diagram_type", "intake", "semantic_plan_sha256",
+            "layout_request_sha256", "layout_result_sha256", "backend",
+            "strategy_attempts", "quality_profile_version", "quality_vectors",
+            "changed_elements", "locked_elements", "validation_receipts",
+            "review_verdict", "published_artifact", "strict_or_best_effort",
+            "remaining_findings",
+        }
+        self.assertTrue(expected.issubset(result))
+        self.assertEqual(result["diagram_type"], "generic")
+        self.assertEqual(result["semantic_plan_sha256"], result["strategy_attempts"][0]["semantic_plan_sha256"])
+        self.assertEqual(result["layout_request_sha256"], result["strategy_attempts"][0]["layout_request_sha256"])
+        self.assertEqual(result["layout_result_sha256"], result["strategy_attempts"][0]["layout_result_sha256"])
+        self.assertIn("status", result["intake"])
+        self.assertIn("id", result["backend"])
+        self.assertIn("options", result["backend"])
+
+        trace = orchestrator.trace_run(result["run_dir"], workspace)
+        self.assertTrue(expected.issubset(trace))
+        self.assertTrue(trace["layout_evidence_valid"])
+        self.assertEqual(trace["status"], "verified")
+
+    def test_trace_marks_tampered_layout_snapshot_without_deleting_artifact(self):
+        root, workspace, cli = self.create_workspace()
+        target = workspace / "trace-tamper.drawio"
+        result = orchestrator.start_run(
+            "create", target, "Create a trace snapshot tamper diagram.", workspace, cli,
+            run_id="trace-tamper-run", max_iterations=1,
+        )
+        run_dir = Path(result["run_dir"])
+        workflow = orchestrator.load_workflow(run_dir)
+        artifact = Path(workflow["accepted_artifact"]["path"])
+        before = artifact.read_bytes()
+        request_path = Path(workflow["layout_attempts"][0]["layout_request"]["path"])
+        request_path.write_text("{}", encoding="utf-8")
+
+        trace = orchestrator.trace_run(run_dir, workspace)
+
+        self.assertFalse(trace["valid"])
+        self.assertEqual(trace["status"], "tampered_or_incomplete")
+        self.assertFalse(trace["layout_evidence_valid"], trace)
+        self.assertEqual(artifact.read_bytes(), before)
+
     def test_trace_verifies_failed_turn_limit_capture_and_isolation_evidence(self):
         root, workspace, _ = self.create_workspace()
         cli = root / "turn-limited-gigacode.py"
@@ -3204,9 +3282,9 @@ Route approved payments to settlement.
             "if model == 'GigaChat-3-Ultra' and 'recovered-turn-limit' in payload.get('request', ''):\n"
             "    emit_turn_limit(model)\n"
             "if model == 'GigaChat-3-Ultra':\n"
-            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'schema-valid supervisor decision', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}})\n"
+            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create_layout', 'reason': 'schema-valid supervisor decision', 'max_iterations': 1}})\n"
             "elif model == 'vllm/DeepSeek-V4-Flash-262k' and 'recovered-turn-limit' in payload.get('request', ''):\n"
-            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create', 'reason': 'fallback approval', 'required_roles': ['supervisor', 'semantic_analyst', 'reviewer'], 'max_iterations': 1}})\n"
+            "    emit_stream(model, {'schema_version': 1, 'role': 'supervisor', 'status': 'ok', 'result': {'action': 'create_layout', 'reason': 'fallback approval', 'max_iterations': 1}})\n"
             "elif model == 'vllm/Qwen3.6-35B-262k':\n"
             "    if payload.get('phase') == 'intake':\n"
             "        emit_stream(model, {'schema_version': 1, 'role': 'semantic_analyst', 'status': 'ok', 'result': {'diagram_type': 'generic', 'confidence': 0.95, 'alternatives': [], 'sufficient': True, 'blocking_questions': [], 'assumptions': []}})\n"
@@ -3485,11 +3563,8 @@ Route approved payments to settlement.
         root, workspace, _ = self.create_workspace()
         target = workspace / "unsupported-supervisor-plan.drawio"
         source = FAKE_GIGACODE.replace(
-            '"action": "create" if payload["mode"] == "create" else "analyze",',
-            '"action": "review",',
-        ).replace(
-            '"required_roles": ["supervisor", "semantic_analyst", "reviewer"],',
-            '"required_roles": ["supervisor", "reviewer"],',
+            '"action": "create_layout" if payload["mode"] == "create" else "reroute_edges",',
+            '"action": "finish_best_effort",',
         ).replace('"max_iterations": 1,', '"max_iterations": 2,', 1)
         cli = root / "unsupported-supervisor-plan-cli.py"
         cli.write_text(source, encoding="utf-8")

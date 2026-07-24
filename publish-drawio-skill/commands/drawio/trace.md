@@ -6,9 +6,10 @@ The deterministic trace verifier has already read the run. Do not call tools, ag
 shell, directory search, or file-reading operations. Present every role and effective
 model plus any broken event or artifact binding. Never call an incomplete or tampered
 trace verified.
-For a new run, present `control_plane_v2` diagnostics for immutable snapshots,
-source/decision/checkpoint bindings, receipt, implementation snapshot, and
-publication transaction. For legacy v1 evidence, state that trace is read-only
+For a new run, present `control_plane_v2` diagnostics for every immutable snapshot,
+request/result binding, backend identity, strategy key, Node proof or Python
+fallback reason, quality-profile consistency, receipt, implementation snapshot,
+and publication target/hash. For legacy v1 evidence, state that trace is read-only
 and mutable resume is refused. Trace itself never performs recovery or writes.
 `failed_verified` means failure evidence is intact, not that the diagram workflow
 succeeded; present its failed role, capture paths, isolation proof, and diagnostic.

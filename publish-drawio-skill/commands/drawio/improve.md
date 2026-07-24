@@ -19,8 +19,11 @@ It may be returned only as `best_effort_completed` after deterministic structura
 receipt, hash, and semantic-safety checks. When no safe monotonic improvement is
 available, preserve the original source byte-for-byte and report that disposition.
 The source diagram remains unchanged until explicit final approval.
-The host automatically continues bounded recoverable repair iterations; request
-human continuation only when the returned JSON contains a real checkpoint.
+The host automatically continues bounded recoverable repair iterations and a
+deterministic plateau. Do not instruct the user to enter `continue` for those
+outcomes. Mention `/drawio:resume` only for a reported semantic ambiguity,
+publication conflict, explicit pause, or a later optional improvement, and only
+when the returned JSON contains that human checkpoint.
 If a role exhausts its command-line turn budget, report the saved runtime evidence
 and do not recommend changing global `maxSessionTurns` or resuming without a checkpoint.
 If `model_diversity_degraded` is true, identify the configured Supervisor or Repair fallback.

@@ -60,6 +60,21 @@ class IntakeCommandUXTests(unittest.TestCase):
         self.assertEqual(tokens[0:2], ["--intake-id", "intake-123"])
         self.assertIn("--accept-intake-assumptions", tokens)
 
+    def test_drawio_commands_keep_resume_for_real_human_cases_only(self):
+        commands = ROOT / "commands" / "drawio"
+        create = (commands / "create.md").read_text(encoding="utf-8")
+        improve = (commands / "improve.md").read_text(encoding="utf-8")
+        resume = (commands / "resume.md").read_text(encoding="utf-8")
+        trace = (commands / "trace.md").read_text(encoding="utf-8")
+
+        for document in (create, improve, resume, trace):
+            self.assertIn("/drawio:", document)
+        self.assertIn("deterministic plateau", create.lower())
+        self.assertIn("deterministic plateau", improve.lower())
+        self.assertIn("semantic ambiguity", resume.lower())
+        self.assertIn("publication conflict", resume.lower())
+        self.assertIn("read-only", trace.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
