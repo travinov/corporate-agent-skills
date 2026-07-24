@@ -2,7 +2,7 @@
 
 Builds two independent installable artifacts:
 
-- `dist/drawio-skill-agent-extension.zip`
+- `dist/drawio-skill-agent-extension.zip` (`1.25.0-corporate.1`)
 - `dist/bpmn-architect-skill.zip`
 
 Install the Draw.io agent package as a native GigaCode extension. Do not unpack
@@ -14,6 +14,7 @@ unzip dist/drawio-skill-agent-extension.zip -d ~/Downloads
 cd ~/Downloads/drawio-skill
 chmod +x install/*.sh
 ./install/install_drawio_agent_extension.sh
+./install/verify_drawio_agent_extension.sh
 ```
 
 The installer defaults to `/Users/travinov-sv/.gigacode/bin/gigacode` through
@@ -27,6 +28,24 @@ latest installation with:
 ```bash
 ./install/rollback_drawio_agent_extension.sh --latest
 ```
+
+For a transferred corporate ZIP, verify the separately supplied checksum before
+installation:
+
+```bash
+cd ~/Downloads
+shasum -a 256 -c drawio-skill-agent-extension.zip.sha256
+/usr/bin/ditto -x -k drawio-skill-agent-extension.zip .
+cd drawio-skill
+./install/install_drawio_agent_extension.sh
+./install/verify_drawio_agent_extension.sh
+```
+
+The Draw.io archive contains the Python layout fallback, versioned intake/layout
+schemas, `scripts/elk_runner.mjs`, and the exact vendored ELK bundle, license,
+and notice. Node is optional; a machine without Node must install and verify
+successfully. The installed runtime never runs npm/npx, contacts a package
+registry, or fetches layout code from the network.
 
 The BPMN archive remains an independent skill:
 

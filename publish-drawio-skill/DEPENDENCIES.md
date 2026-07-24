@@ -38,6 +38,22 @@ leave it `null` for verified `PATH` discovery. If no verified Node executable
 is available, `auto` deterministically uses the bundled Python layout backend.
 Explicit `elk` mode fails closed when Node cannot be verified.
 
+From the extracted extension root, prove the optional Node path without any
+package install or network access:
+
+```bash
+node --version
+node scripts/elk_runner.mjs --probe
+```
+
+The second command must return
+`{"bridge":"drawio-elk-runner","elkjs_version":"0.11.1"}`. To prove the
+mandatory Node-free path, force Python mode through the focused offline test:
+
+```bash
+python3 -m unittest tests.test_layout_backend.LayoutBackendTests.test_python_mode_and_sanitized_path_do_not_require_node
+```
+
 Configuration:
 
 ```json
@@ -70,3 +86,10 @@ prefix is retained and hashed with observed-byte and truncation evidence; it is
 never parsed as a result. Any non-whitespace stderr is a failed ELK attempt.
 The lifecycle host owns the larger `layout_wall_clock_seconds` budget across a
 finite strategy set.
+
+Durable trace evidence records `backend_requested`, `backend_selected`,
+`node_executable`, `node_version`, `elkjs_version`, `strategy_id`,
+`effective_options`, `options_sha256`, `request_sha256`, `result_sha256`,
+`fallback_reason`, capture sizes/truncation flags, and stdout/stderr paths and
+SHA-256 values. The vendored bundle, license, notice, bridge, Python fallback,
+and all layout schemas are release inventory protected by `MANIFEST.sha256`.

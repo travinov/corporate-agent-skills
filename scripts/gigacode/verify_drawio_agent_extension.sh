@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
-EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.24.0-corporate.5}"
+EXPECTED_VERSION="${DRAWIO_EXTENSION_VERSION:-1.25.0-corporate.1}"
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
 GIGACODE_BIN="${GIGACODE_BIN:-$GIGACODE_HOME/bin/gigacode}"
 GIGACODE_SKILLS_DIR="${GIGACODE_SKILLS_DIR:-$GIGACODE_HOME/skills}"
@@ -134,6 +134,26 @@ COMMAND_FILES = (
     "commands/drawio/trace.md",
 )
 
+LAYOUT_RELEASE_FILES = (
+    "scripts/diagram_intake.py",
+    "scripts/layout_contracts.py",
+    "scripts/layout_geometry.py",
+    "scripts/layout_model.py",
+    "scripts/layout_builtin.py",
+    "scripts/layout_backend.py",
+    "scripts/layout_renderer.py",
+    "scripts/sequence_adapter.py",
+    "scripts/elk_runner.mjs",
+    "vendor/elkjs/elk.bundled.js",
+    "vendor/elkjs/LICENSE",
+    "vendor/elkjs/NOTICE.json",
+    "data/diagram-intake.v1.schema.json",
+    "data/diagram-intake-analysis.v1.schema.json",
+    "data/layout-request.v1.schema.json",
+    "data/layout-result.v1.schema.json",
+    "data/layout-repair-intent.v1.schema.json",
+)
+
 
 def verify_tree(root, label):
     operator_guide = root / "docs" / "drawio-agent-extension-corporate-test-commands.md"
@@ -145,6 +165,9 @@ def verify_tree(root, label):
             fail(f"Missing {label} corporate operator guide marker: {marker}")
     if re.search(r"(?m)^SHA-256:\s*`[0-9a-f]{64}`", guide_text):
         fail(f"Self-referential ZIP checksum in {label} corporate operator guide")
+    for relative in LAYOUT_RELEASE_FILES:
+        if not (root / relative).is_file():
+            fail(f"inventory mismatch: {relative}")
     for relative in (
         "scripts/diagram_host.py",
         "scripts/diagram_orchestrator.py",
@@ -209,7 +232,7 @@ def verify_tree(root, label):
     for marker in (
         'workflow["supervisor_declared_roles"]',
         'workflow["host_mandatory_roles"]',
-        'declared_roles | host_mandatory_roles',
+        'workflow["required_roles"] = sorted(host_mandatory_roles)',
     ):
         if marker not in orchestrator:
             fail(f"Missing {label} host-owned role policy marker: {marker}")
@@ -361,9 +384,22 @@ def payload_inventory(root):
 reference = source or active
 entries = manifest_entries(reference)
 if source:
-    active_manifest_digest = hashlib.sha256((active / "MANIFEST.sha256").read_bytes()).hexdigest()
-    source_manifest_digest = hashlib.sha256((source / "MANIFEST.sha256").read_bytes()).hexdigest()
-    if active_manifest_digest != source_manifest_digest:
+    active_entries = manifest_entries(active)
+    if active_entries != entries:
+        mismatched = sorted(
+            relative
+            for relative in set(active_entries) | set(entries)
+            if active_entries.get(relative) != entries.get(relative)
+        )
+        layout_mismatch = next(
+            (relative for relative in mismatched if relative in LAYOUT_RELEASE_FILES),
+            None,
+        )
+        if layout_mismatch is not None:
+            fail(
+                f"inventory mismatch: {layout_mismatch} "
+                "(active/source manifest mismatch)"
+            )
         fail("Active/source mismatch: MANIFEST.sha256")
 for root, label in ((reference, "source" if source else "active"), (active, "active")):
     actual = payload_inventory(root)
@@ -376,6 +412,11 @@ for root, label in ((reference, "source" if source else "active"), (active, "act
         target = root.joinpath(*PurePosixPath(relative).parts)
         actual_digest = hashlib.sha256(target.read_bytes()).hexdigest()
         if actual_digest != digest:
+            if relative in LAYOUT_RELEASE_FILES:
+                fail(
+                    f"inventory mismatch: {relative} "
+                    f"(manifest checksum mismatch in {label})"
+                )
             fail(f"Manifest checksum mismatch in {label}: {relative}")
 
 install_metadata = active / ".gigacode-extension-install.json"

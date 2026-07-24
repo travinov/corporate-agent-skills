@@ -2,7 +2,7 @@
 name: drawio-skill
 description: Use when the user requests diagrams, flowcharts, roadmap diagrams, git-flow / branching strategy timelines, architecture diagrams, ER diagrams, UML / sequence / class diagrams, network topology, cloud architecture from Terraform or Kubernetes manifests, ML/DL model figures (Transformer/CNN/LSTM), mind maps, or any visualization. Also use proactively when explaining systems with 3+ components, complex data flows, or relationships that benefit from visual representation. Best suited when the diagram needs custom styling, rich shape vocabulary, swimlanes, precise timeline/lane placement, intake clarification, canonical XLSX/CSV roadmap intake, full milestone revision history, baseline comparison, milestone shift markers, or exportable images (PNG/SVG/PDF/JPG). Generates .drawio XML and exports locally via the native draw.io desktop CLI.
 license: MIT
-metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.24.0-corporate.5"}
+metadata: {"openclaw":{"requires":{"anyBins":["draw.io","drawio"]},"emoji":"📐","os":["darwin","linux","win32"],"install":[{"id":"marketplace-drawio","kind":"manual","label":"Install draw.io Desktop from the corporate application marketplace / SberUserSoft","os":["darwin","win32"]},{"id":"graphviz","kind":"manual","label":"Install Graphviz for optional autolayout.py / gitflow.py edge routing if approved in your environment","optional":true}]},"hermes":{"tags":["drawio","diagram","flowchart","git-flow","architecture","visualization","uml"],"category":"design","requires_tools":["drawio","draw.io"],"related_skills":["mermaid","excalidraw","plantuml"]},"author":"Agents365-ai","version":"1.25.0-corporate.1"}
 ---
 
 # Draw.io Diagrams
@@ -147,6 +147,26 @@ not conversational requests to list directories or call native agents:
 /drawio:resume approve
 /drawio:trace
 ```
+
+Keep the normal user surface short: `/drawio:create "..."` and
+`/drawio:improve "..."`. If either command returns `status: awaiting_input`,
+present the single structured question and replay only the exact
+`selection_required.replay` command. Intake is host-owned and bounded: at most
+three sequential blocking questions, then one consolidated question; assumptions
+require explicit acceptance. Never invent `--intake-id`, `--intake-answer`, or
+`--accept-intake-assumptions`.
+
+New generic, dependency, C4, ER, BPMN, flowchart, and sequence flows use the
+versioned layout contracts in `scripts/layout_contracts.py`. The default
+`layout_backend: auto` accepts vendored ELK only after `node --version` and
+`scripts/elk_runner.mjs --probe` both succeed, and otherwise uses the mandatory
+`python-layered` backend. `layout_backend: python` must work without Node;
+explicit `elk` fails closed without proof. Node is optional and the packaged
+runtime must never invoke npm, npx, a package registry, curl, or the network.
+Trace must retain backend identity, Node/ELK proof, strategy/options,
+request/result hashes, capture hashes, and any `fallback_reason`. A Python
+fallback or a safe `best_effort_completed` result is never described as strict
+success.
 
 These conversational forms use the current workspace. Create generates a
 collision-safe target; bare improve continues the latest completed hash-matching

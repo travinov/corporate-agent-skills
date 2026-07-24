@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 EXTENSION_NAME="publish-drawio-skill"
 ARCHIVE_NAME="drawio-skill-agent-extension.zip"
-DEFAULT_VERSION="1.24.0-corporate.5"
-DEFAULT_BRANCH="codex/drawio-best-effort-recovery-v1.24.0-corporate.5"
+DEFAULT_VERSION="1.25.0-corporate.1"
+DEFAULT_BRANCH="codex/drawio-layout-engine-v1.25.0-corporate.1"
 DEFAULT_BASE_URL="https://raw.githubusercontent.com/travinov/corporate-agent-skills/refs/heads/${DEFAULT_BRANCH}/dist"
 
 GIGACODE_HOME="${GIGACODE_HOME:-$HOME/.gigacode}"
@@ -349,6 +349,23 @@ if [[ -n "$source_dir" ]]; then
     scripts/evidence_v2.py \
     scripts/implementation_snapshot_v2.py \
     scripts/renderer_adapters.py \
+    scripts/diagram_intake.py \
+    scripts/layout_contracts.py \
+    scripts/layout_geometry.py \
+    scripts/layout_model.py \
+    scripts/layout_builtin.py \
+    scripts/layout_backend.py \
+    scripts/layout_renderer.py \
+    scripts/sequence_adapter.py \
+    scripts/elk_runner.mjs \
+    vendor/elkjs/elk.bundled.js \
+    vendor/elkjs/LICENSE \
+    vendor/elkjs/NOTICE.json \
+    data/diagram-intake.v1.schema.json \
+    data/diagram-intake-analysis.v1.schema.json \
+    data/layout-request.v1.schema.json \
+    data/layout-result.v1.schema.json \
+    data/layout-repair-intent.v1.schema.json \
     data/checkpoint.v2.schema.json \
     data/decision.v2.schema.json \
     data/diagramspec.v2.schema.json \
@@ -489,6 +506,23 @@ required = {
     "drawio-skill/scripts/evidence_v2.py",
     "drawio-skill/scripts/implementation_snapshot_v2.py",
     "drawio-skill/scripts/renderer_adapters.py",
+    "drawio-skill/scripts/diagram_intake.py",
+    "drawio-skill/scripts/layout_contracts.py",
+    "drawio-skill/scripts/layout_geometry.py",
+    "drawio-skill/scripts/layout_model.py",
+    "drawio-skill/scripts/layout_builtin.py",
+    "drawio-skill/scripts/layout_backend.py",
+    "drawio-skill/scripts/layout_renderer.py",
+    "drawio-skill/scripts/sequence_adapter.py",
+    "drawio-skill/scripts/elk_runner.mjs",
+    "drawio-skill/vendor/elkjs/elk.bundled.js",
+    "drawio-skill/vendor/elkjs/LICENSE",
+    "drawio-skill/vendor/elkjs/NOTICE.json",
+    "drawio-skill/data/diagram-intake.v1.schema.json",
+    "drawio-skill/data/diagram-intake-analysis.v1.schema.json",
+    "drawio-skill/data/layout-request.v1.schema.json",
+    "drawio-skill/data/layout-result.v1.schema.json",
+    "drawio-skill/data/layout-repair-intent.v1.schema.json",
     "drawio-skill/data/checkpoint.v2.schema.json",
     "drawio-skill/data/decision.v2.schema.json",
     "drawio-skill/data/diagramspec.v2.schema.json",
@@ -557,7 +591,7 @@ run mkdir -p -- "$(dirname "$version_source")"
 [[ -e "$version_source" ]] && safe_remove_tree "$version_source" "$(dirname "$version_source")"
 run cp -a -- "$extension_root" "$version_source"
 if [[ -L "$current_source" || -e "$current_source" ]]; then safe_remove_tree "$current_source" "$(dirname "$current_source")"; fi
-run ln -s -- "$version_source" "$current_source"
+run /bin/ln -s -- "$version_source" "$current_source"
 
 if (( ! skip_deps )); then
   log "Installing pinned Python dependencies for the extension"
