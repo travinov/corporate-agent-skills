@@ -255,9 +255,12 @@ Read-only review содержит `workflow.json`, поэтому `/drawio:trace
 
 Semantic Analyst v2 также не вычисляет evidence SHA или `operation_id`: Qwen
 возвращает строгий page-scoped `semantic-analysis.v2` с nodes, edges, parents,
-style hints, pins и waypoints. Host связывает его с фактическим source bundle и
-baseline, затем детерминированно строит canonical `semantic-plan.v2` и typed
-delta с add/remove/update/relationship/parent operations.
+style hints и топологическими связями.
+Do not return ordinary routes, coordinates, or geometry. Host связывает analysis
+с фактическим source bundle и baseline, затем детерминированно строит canonical
+`semantic-plan.v2` и typed delta с add/remove/update/relationship/parent operations. Host-owned
+`semantic-plan.v2` сохраняет routes для совместимости canonical/baseline и
+детерминированного layout; это не model-facing контракт Semantic Analyst.
 
 Raw `roles/repair-*/output.json` остаётся неизменным модельным evidence. Перед
 применением Host создаёт рядом `host-bound.patch.json`, подставляет SHA и

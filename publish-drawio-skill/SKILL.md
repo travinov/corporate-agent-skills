@@ -251,10 +251,14 @@ review/create/improve workflow and an explicit published run UUID resolves to
 the same directory.
 
 Semantic Analyst v2 returns strict analysis-only `semantic-analysis.v2` with
-page-scoped structure, parents, styles, routes, assumptions, and human
-questions. It does not calculate evidence hashes or semantic operation IDs.
-The host binds the actual source bundle and baseline and deterministically
-normalizes the result into canonical `semantic-plan.v2` plus a typed delta.
+page-scoped structure, parents, styles, topology, assumptions, and human
+questions.
+Do not return ordinary routes, coordinates, or geometry. It does not calculate
+evidence hashes or semantic operation IDs. The host binds the actual
+source bundle and baseline and deterministically normalizes the result into
+canonical `semantic-plan.v2` plus a typed delta. The host-owned
+`semantic-plan.v2` retains routes for canonical/baseline compatibility and
+deterministic layout; it is not the model-facing Semantic Analyst contract.
 An unambiguous layout-only clarification is classified by deterministic
 vocabulary and explicit stable IDs, bypasses Semantic Analyst, and becomes a
 narrow Repair scope. Mixed or semantic feedback always returns to Semantic

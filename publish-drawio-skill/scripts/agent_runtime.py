@@ -912,7 +912,12 @@ def _semantic_geometry_contract_diagnostics(payload, parsed):
         return []
 
     diagnostics = []
-    pages = parsed.get("result", {}).get("pages", [])
+    result = parsed.get("result")
+    if not isinstance(result, dict):
+        return diagnostics
+    pages = result.get("pages")
+    if not isinstance(pages, list):
+        return diagnostics
     forbidden_fields = {
         "geometry", "bounds", "coordinates", "position",
         "x", "y", "width", "height",
@@ -1369,9 +1374,9 @@ def invoke_role(
     if config is None:
         raise SupervisorError(f"unknown role {role!r}")
     input_path = Path(input_path)
-    input_bytes = input_path.read_bytes()
-    input_sha256 = hashlib.sha256(input_bytes).hexdigest()
     payload = load_json(input_path)
+    stdin_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    input_sha256 = hashlib.sha256(stdin_text.encode("utf-8")).hexdigest()
     try:
         validate_role_input(role, payload)
     except SupervisorError as exc:
@@ -1416,7 +1421,6 @@ def invoke_role(
         )
     )
     prompt_path = ROOT / config["prompt"]
-    stdin_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     correction_prompt = None
     if correction_attempt:
         correction_prompt = correction_contract(
