@@ -560,7 +560,10 @@ else:
             second_model, second_input_hash = call_log[1].split()
             self.assertEqual(first_model, second_model)
             self.assertEqual(first_input_hash, second_input_hash)
-            self.assertEqual(result["contract_correction"]["original_input_sha256"], first_input_hash)
+            self.assertEqual(
+                result["contract_correction"]["original_input_sha256"],
+                hashlib.sha256(input_path.read_bytes()).hexdigest(),
+            )
 
     def test_v2_failure_paths_do_not_retry_after_proof_isolation_timeout_or_integrity_errors(self):
         cases = (

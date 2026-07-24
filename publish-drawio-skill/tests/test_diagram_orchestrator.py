@@ -2448,10 +2448,6 @@ Route approved payments to settlement.
             accepted_descriptor["path"] = str(accepted.resolve())
             receipt_descriptor["path"] = str(receipt_v2_path.resolve())
             verdict_v2_path = receipt_v2_path.with_name("reviewer-verdict.v2.json")
-            source_bundle_path = run_dir / "source-bundle.v2.json"
-            source_bundle_value = {"schema_version": 2, "bundle": "test"}
-            source_bundle_path.write_text(json.dumps(source_bundle_value, ensure_ascii=False), encoding="utf-8")
-            source_bundle_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(source_bundle_path, root=run_dir)
             candidate_spec_path = run_dir / "candidate-spec.v2.json"
             baseline_spec_path = run_dir / "baseline-spec.v2.json"
             patch_path = run_dir / "patch.v1.json"
@@ -2460,42 +2456,85 @@ Route approved payments to settlement.
                 (candidate_spec_path, {"schema_version": 2, "diagram_id": "candidate"}),
                 (baseline_spec_path, {"schema_version": 2, "diagram_id": "baseline"}),
                 (patch_path, {"schema_version": 1, "patch_id": "test-patch"}),
-                (semantic_plan_path, {"schema_version": 2, "role": "semantic_analyst"}),
             ):
                 path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
             candidate_spec_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(candidate_spec_path, root=run_dir)
             baseline_spec_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(baseline_spec_path, root=run_dir)
             patch_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(patch_path, root=run_dir)
-            semantic_plan_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(semantic_plan_path, root=run_dir)
             run_root = run_dir.resolve()
+            source_bundle, source_bundle_descriptor = orchestrator.lifecycle_v2.latest_document(run_dir, "source-bundle")
+            baseline_semantic_digest = "7" * 64
+            semantic_delta_value = {
+                "schema_version": 2,
+                "baseline_semantic_digest": baseline_semantic_digest,
+                "source_bundle_sha256": source_bundle_descriptor["canonical_sha256"],
+                "operations": [],
+            }
+            semantic_plan_value = {
+                "schema_version": 2,
+                "role": "semantic_analyst",
+                "status": "ok",
+                "run_id": "final-approval-run",
+                "source_bundle_sha256": source_bundle_descriptor["canonical_sha256"],
+                "baseline_semantic_digest": baseline_semantic_digest,
+                "result": {
+                    "mode": "create",
+                    "diagram_type": "flowchart",
+                    "title": "Warning-only approval",
+                    "direction": "LR",
+                    "pages": [{"page_id": "page-1", "name": "Page-1", "nodes": [], "edges": []}],
+                    "semantic_delta": semantic_delta_value,
+                    "assumptions": [],
+                    "requires_human": False,
+                    "human_questions": [],
+                },
+            }
+            semantic_plan_path.write_text(json.dumps(semantic_plan_value, ensure_ascii=False), encoding="utf-8")
+            semantic_plan_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(semantic_plan_path, root=run_dir)
+            semantic_plan_descriptor["path"] = str(semantic_plan_path.resolve())
+            semantic_plan_descriptor["semantic_delta_sha256"] = orchestrator.semantic_delta_sha256(semantic_delta_value)
             review_input_path = run_dir / "reviewer-input.v2.json"
             review_input_value = {
                 "schema_version": 2,
                 "run_id": "final-approval-run",
                 "review_kind": "candidate_review",
                 "baseline": {
-                    "artifact": {"path": str(accepted.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(accepted), "byte_length": accepted.stat().st_size},
-                    "report": {"path": str(report.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(report), "byte_length": report.stat().st_size},
-                    "receipt": {"path": str(receipt_v2_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(receipt_v2_path), "byte_length": receipt_v2_path.stat().st_size},
+                    "artifact": orchestrator._relative_file(run_dir, accepted),
+                    "report": orchestrator._role_document(run_dir, report),
+                    "receipt": orchestrator._role_document(run_dir, receipt_v2_path),
                     "strict_passed": True,
                 },
                 "candidate": {
-                    "artifact": {"path": str(accepted.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(accepted), "byte_length": accepted.stat().st_size},
-                    "report": {"path": str(report.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(report), "byte_length": report.stat().st_size},
-                    "receipt": {"path": str(receipt_v2_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(receipt_v2_path), "byte_length": receipt_v2_path.stat().st_size},
+                    "artifact": orchestrator._relative_file(run_dir, accepted),
+                    "report": orchestrator._role_document(run_dir, report),
+                    "receipt": orchestrator._role_document(run_dir, receipt_v2_path),
                     "strict_passed": True,
                 },
                 "baseline_spec": {"path": str(baseline_spec_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(baseline_spec_path), "content": {"schema_version": 2, "diagram_id": "baseline"}},
                 "candidate_spec": {"path": str(candidate_spec_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(candidate_spec_path), "content": {"schema_version": 2, "diagram_id": "candidate"}},
                 "patch": {"path": str(patch_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(patch_path), "content": {"schema_version": 1, "patch_id": "test-patch"}},
-                "semantic_plan": {"path": str(semantic_plan_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(semantic_plan_path), "content": {"schema_version": 2, "role": "semantic_analyst"}},
-                "semantic_delta": None,
-                "source_bundle": {"path": str(source_bundle_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(source_bundle_path), "content": source_bundle_value},
+                "semantic_plan": {"path": str(semantic_plan_path.resolve().relative_to(run_root)), "sha256": orchestrator.supervisor.sha256_file(semantic_plan_path), "content": semantic_plan_value},
+                "semantic_delta": {"sha256": orchestrator.semantic_delta_sha256(semantic_delta_value), "content": semantic_delta_value},
+                "source_bundle": {"path": source_bundle_descriptor["path"], "sha256": source_bundle_descriptor["sha256"], "content": source_bundle},
                 "comparison": None,
                 "model_resolutions": [],
             }
             review_input_path.write_text(json.dumps(review_input_value, ensure_ascii=False), encoding="utf-8")
             review_input_descriptor = orchestrator.lifecycle_v2.make_file_descriptor(review_input_path, root=run_dir)
+            orchestrator.supervisor.append_event(
+                run_dir,
+                "role_started",
+                {
+                    "role": "reviewer",
+                    "input": str(review_input_path.resolve()),
+                    "input_sha256": orchestrator.supervisor.sha256_file(review_input_path),
+                    "requested_model": "vllm/DeepSeek-V4-Flash-262k",
+                    "attempted_model": "vllm/DeepSeek-V4-Flash-262k",
+                    "attempt_id": "candidate-review-1",
+                    "resolution_mode": "isolated_cli",
+                },
+                actor={"kind": "system", "id": "diagram-orchestrator", "model": None},
+            )
             verdict_v2 = {
                 "schema_version": 2,
                 "verdict_id": "review-v2-candidate",
@@ -2508,9 +2547,9 @@ Route approved payments to settlement.
                     "candidate_sha256": orchestrator.supervisor.sha256_file(accepted),
                     "report_sha256": orchestrator.supervisor.sha256_file(report),
                     "receipt_sha256": orchestrator.supervisor.sha256_file(receipt_v2_path),
-                    "source_bundle_sha256": orchestrator.canonical_json_sha256(source_bundle_value),
-                    "semantic_plan_sha256": None,
-                    "semantic_delta_sha256": None,
+                    "source_bundle_sha256": source_bundle_descriptor["canonical_sha256"],
+                    "semantic_plan_sha256": review_input_value["semantic_plan"]["sha256"],
+                    "semantic_delta_sha256": review_input_value["semantic_delta"]["sha256"],
                 },
                 "runtime_proof": {
                     "requested_model": "vllm/DeepSeek-V4-Flash-262k",
@@ -2546,6 +2585,7 @@ Route approved payments to settlement.
                 },
                 "candidate_review_input_v2": review_input_descriptor,
             }
+            workflow["semantic_plan_v2"] = semantic_plan_descriptor
             workflow["working_artifact"] = accepted_descriptor
             workflow["working_validation"] = {
                 "report": str(report.resolve()),
@@ -2554,22 +2594,21 @@ Route approved payments to settlement.
                 "receipt_sha256": receipt_descriptor["sha256"],
                 "strict_passed": receipt_v2_verification["strict_passed"],
             }
-            with mock.patch.object(orchestrator, "_reviewer_gate_binding_error", return_value=None):
-                orchestrator._set_publishable_candidate(
-                    workflow,
-                    artifact=accepted_descriptor,
-                    validation={
-                        "report": str(report.resolve()),
-                        "receipt": str(receipt_v2_path.resolve()),
-                        "report_sha256": report_descriptor["sha256"],
-                        "receipt_sha256": receipt_descriptor["sha256"],
-                        "strict_passed": receipt_v2_verification["strict_passed"],
-                    },
-                    receipt_v2=receipt_descriptor,
-                    verdict_v2=verdict_descriptor,
-                )
-                workflow["candidate_review_input_v2"] = review_input_descriptor
-                eligibility = orchestrator._final_approval_eligibility(run_dir, workflow)
+            orchestrator._set_publishable_candidate(
+                workflow,
+                artifact=accepted_descriptor,
+                validation={
+                    "report": str(report.resolve()),
+                    "receipt": str(receipt_v2_path.resolve()),
+                    "report_sha256": report_descriptor["sha256"],
+                    "receipt_sha256": receipt_descriptor["sha256"],
+                    "strict_passed": receipt_v2_verification["strict_passed"],
+                },
+                receipt_v2=receipt_descriptor,
+                verdict_v2=verdict_descriptor,
+            )
+            workflow["candidate_review_input_v2"] = review_input_descriptor
+            eligibility = orchestrator._final_approval_eligibility(run_dir, workflow)
 
         self.assertFalse(eligibility["approve"])
         self.assertTrue(eligibility["approve_with_findings"])
