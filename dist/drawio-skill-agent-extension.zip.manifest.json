@@ -1,12 +1,12 @@
 {
   "archive": "drawio-skill-agent-extension.zip",
   "archive_root": "drawio-skill",
-  "archive_sha256": "f92cd010a76e1ad59a4265aad471c902373338fee5e182c5cfdcd774b8db7bbe",
+  "archive_sha256": "bc6d5c352447dc39cac3b2f4412dbd41c492b93174e1587c9c65e8b80e1cfcc0",
   "files": [
     {
       "path": "DEPENDENCIES.md",
-      "sha256": "ba647d7a34e5963c6ddd5c80f6314617c883db50d1c688ef45309c777e34e1a4",
-      "size": 654
+      "sha256": "f88e0d8f0d7358a0323ec92edc741a1d1dc9cbb22abb3f3a581c4fc86569d2fe",
+      "size": 3809
     },
     {
       "path": "LICENSE",
@@ -20,33 +20,33 @@
     },
     {
       "path": "README.md",
-      "sha256": "656df4af57f8758bb8f000d5d71772bf3db3eac231d5d085ce0f5484578c4f5c",
-      "size": 31371
+      "sha256": "6ae729965801ca6a441fdea83f6522cd0f3f63de8775744d81dc2acf2ded27af",
+      "size": 34150
     },
     {
       "path": "SKILL.md",
-      "sha256": "81f3df1b6aa53c2aa1efb0675d9c34a5239db2b8c7d9043006b0393724157cb9",
-      "size": 52216
+      "sha256": "d57c741b3b58c6822ae98ea52658544f9ff0444e63f8218dd16420620488b4d4",
+      "size": 53739
     },
     {
       "path": "agents/diagram-repair.md",
-      "sha256": "7535de8f9f52597bbb05a1cb2946c66247c17beca811db403d65f39be0afb027",
-      "size": 4467
+      "sha256": "e50054a332704e8f46d6557a85b00af5bf70bf6769b7dbdcf386de022f8e371b",
+      "size": 5294
     },
     {
       "path": "agents/diagram-reviewer.md",
-      "sha256": "5871c5b6774a091d7cb763910fd1c5f2960862d4c6f735dfc0afdcdbbd10e2f7",
-      "size": 4670
+      "sha256": "883b5cb91a4c5666ea163c3aed6d3c9e47b06efe052433e109d461f14ad935a2",
+      "size": 4965
     },
     {
       "path": "agents/diagram-semantic-analyst.md",
-      "sha256": "d23e61a3c1cc460ee566dc7a6ef63ca1ba7d4b021613899a038b2e7542da7ce1",
-      "size": 3197
+      "sha256": "c7971922af79ccf63945d0904cbba11b363fca2136634b08bbf9aa0a51253acd",
+      "size": 3898
     },
     {
       "path": "agents/diagram-supervisor.md",
-      "sha256": "e29c10124e940e9852b145f35019e038497006f5fbd1d6248f7171a60b5ebe8f",
-      "size": 5378
+      "sha256": "da87af48d9458ab02faab13a4680f0dc327205a6bb0d583208856e276803fba7",
+      "size": 3224
     },
     {
       "path": "assets/roadmap/roadmap-template.csv",
@@ -60,18 +60,18 @@
     },
     {
       "path": "commands/drawio/create.md",
-      "sha256": "4fc651ebcfd26cbde81aa64ac47c7062275e208be52146027a00177b2b1a1253",
-      "size": 2487
+      "sha256": "55a8b1cbb427329fda5ab10c1b5b3ab0c0303ab152d8beed0c924b0737af3358",
+      "size": 3401
     },
     {
       "path": "commands/drawio/improve.md",
-      "sha256": "4d20d3a7803b650b62c1a54c8ba768fca02a64faea5dd9b5857da5261e955837",
-      "size": 2216
+      "sha256": "2cff31fb141fa8a7d450679a8b3a2e287fd25b7a3ce800030370f216c73e5a0b",
+      "size": 3126
     },
     {
       "path": "commands/drawio/resume.md",
-      "sha256": "4529c8a0e6881e21cd081fa291f7cab64ce7a27edea816148bd920c587c16648",
-      "size": 1915
+      "sha256": "99fe64f6fecc6a299da38313c9fb622b19d36350eefd09d4cee5a599d6208fb8",
+      "size": 2161
     },
     {
       "path": "commands/drawio/review.md",
@@ -80,13 +80,13 @@
     },
     {
       "path": "commands/drawio/trace.md",
-      "sha256": "876df7809df9cc1e9252f95d442dfb6f106c256141a4b7b50fca4eb53aa8e42b",
-      "size": 1988
+      "sha256": "1b7f8f2af0124234b24a85d506cdaab4f651c96bd9f672707f5a8b2b96fd4e40",
+      "size": 2079
     },
     {
       "path": "config.example.json",
-      "sha256": "c207d17a4cf3523cdb312b9c853c82117ecc5428cc163e23a213df87e363c1f6",
-      "size": 62
+      "sha256": "240887b8f8d06dca60c95ebcbf15dbf206769cbe053ada694fe8367a3869a1d7",
+      "size": 180
     },
     {
       "path": "data/SHAPE-INDEX-NOTICE.md",
@@ -107,6 +107,16 @@
       "path": "data/decision.v2.schema.json",
       "sha256": "f7445250abac35cfc9a847db56cf827ba23b56aacd512ae5c6e83b6c809236d6",
       "size": 2080
+    },
+    {
+      "path": "data/diagram-intake-analysis.v1.schema.json",
+      "sha256": "5f317e41717545b160914c9513734914acadeb8ecc058731e915df3924f54774",
+      "size": 2313
+    },
+    {
+      "path": "data/diagram-intake.v1.schema.json",
+      "sha256": "2f3f8a7a033246e5ec41515c752c8420f5ecf70618f93978af1679e9e538b629",
+      "size": 3790
     },
     {
       "path": "data/diagram-patch.v1.schema.json",
@@ -132,6 +142,21 @@
       "path": "data/implementation-snapshot.v2.schema.json",
       "sha256": "3aca7349bcc48322c6959fb4b4d70015e4963a327c9a23ba51c4311edef1c3c2",
       "size": 2773
+    },
+    {
+      "path": "data/layout-repair-intent.v1.schema.json",
+      "sha256": "6a05daa8a42d60faac6384edbf760d7491cb3ea35acb1c98804e85ab17b6901f",
+      "size": 2008
+    },
+    {
+      "path": "data/layout-request.v1.schema.json",
+      "sha256": "3452ea57f2886a54bd9a45886f8efeb144ef27968290eba07268e6726b02b520",
+      "size": 4827
+    },
+    {
+      "path": "data/layout-result.v1.schema.json",
+      "sha256": "f5dd52c9f518fd9258f2cfdb7ff2aeb614e583c6f941b6b138c9e7d4162f2e96",
+      "size": 3555
     },
     {
       "path": "data/lobe-icons.json",
@@ -215,8 +240,8 @@
     },
     {
       "path": "data/semantic-analysis.v2.schema.json",
-      "sha256": "2eb7c3c1ef262b865e75590be15b1be4da292d4465625c829292e02bd96d739e",
-      "size": 4102
+      "sha256": "f00ff7efd860cc6ed9eff788c6b9ad53726e65ed4d5b224ee13e66fb2e97710e",
+      "size": 3201
     },
     {
       "path": "data/semantic-approval.v1.schema.json",
@@ -270,13 +295,13 @@
     },
     {
       "path": "data/workflow.v2.schema.json",
-      "sha256": "02d5bc995a12a0e5d010d171816d6ce65b8dba3964ee6733f7c73a5bfc14e6e1",
-      "size": 2767
+      "sha256": "4ff99f9168efdc0225f88ae48ae8020161db9011ce878e1e3eb26b025c304773",
+      "size": 2816
     },
     {
       "path": "docs/drawio-agent-extension-corporate-test-commands.md",
-      "sha256": "23eb0a7a52736e85160dd1821896778a6f86e45b537cda3433956e48cd198cc7",
-      "size": 21242
+      "sha256": "7706f6830071d45e293cf5f4de14eadd8826ad9287f4f9bd16b308445a2bdf5c",
+      "size": 25260
     },
     {
       "path": "examples/roadmap/table-source.md",
@@ -290,8 +315,8 @@
     },
     {
       "path": "gemini-extension.json",
-      "sha256": "d02a88fa8795655abc2e153d40d8463a64ec16316ca0463f7e177b0ad81c71e1",
-      "size": 284
+      "sha256": "ef88b773491cc54bc7cad7d32c1be13d54a847f4e37f1eeb86cda02f9f2e3a08",
+      "size": 291
     },
     {
       "path": "install/README.md",
@@ -300,8 +325,8 @@
     },
     {
       "path": "install/install_drawio_agent_extension.sh",
-      "sha256": "24fbb45508f62957c1e7b5f981f04b9c605d95f23d8dd781a7fc3452b08ad14d",
-      "size": 22697
+      "sha256": "9af829410ab394ae35ed62e55a2d923ea82c64fa6e5d5f6e1ec22be97a783a2b",
+      "size": 24133
     },
     {
       "path": "install/rollback_drawio_agent_extension.sh",
@@ -310,13 +335,13 @@
     },
     {
       "path": "install/verify_drawio_agent_extension.sh",
-      "sha256": "c67327d9278b24e5d333ce10c04407e855cc8cb4839e2564d15ac095eb91948e",
-      "size": 17955
+      "sha256": "47ecf7646f8e5972e6e8dba249a9eb7269c86138c7b38269ed1ffba220d4587f",
+      "size": 19311
     },
     {
       "path": "metadata.md",
-      "sha256": "359f0da7196d46a6cf892981b719e5de3af67de59bb39df1d2f980bc4d024383",
-      "size": 4566
+      "sha256": "a556700537431dfe9bb5a7cdb9a72d4d514c53b04b9ac50b8ec570e56e228765",
+      "size": 4520
     },
     {
       "path": "references/autolayout.md",
@@ -325,8 +350,8 @@
     },
     {
       "path": "references/diagram-intake.md",
-      "sha256": "2bddae414a05395d577b6ae8fb28bd87d9aa1eeda36e9c9c10c78f95accbc83d",
-      "size": 7449
+      "sha256": "6d1509c91e4afbd95609e5c6f36a48a99337db43a47d089239cd2c75adfa77ea",
+      "size": 7711
     },
     {
       "path": "references/diagram-supervisor.md",
@@ -395,8 +420,8 @@
     },
     {
       "path": "scripts/agent_runtime.py",
-      "sha256": "a999a7396bab9c1fdb5a4d5caa06b9707dfb6ae260d47f985bf674214c15655b",
-      "size": 68578
+      "sha256": "6bfd27c1470d59831e3c94437733e9b0a0c4fa493764a0982b06302617f8aba7",
+      "size": 80110
     },
     {
       "path": "scripts/aiicons.py",
@@ -415,8 +440,8 @@
     },
     {
       "path": "scripts/command_ux.py",
-      "sha256": "9aac26d619b32d4c853b86cbeb50e57dc704e3bc6c6c912cde69c9d49cd9be6a",
-      "size": 17540
+      "sha256": "cc8a0e1abc403bd6bbde750a22a6b8cfc7a007c95202c19c4b1770df71102026",
+      "size": 20903
     },
     {
       "path": "scripts/composeimports.py",
@@ -429,19 +454,29 @@
       "size": 29923
     },
     {
+      "path": "scripts/diagram_intake.py",
+      "sha256": "e2a81d9c4f6bf447a28b92908625a197eea144f2db327db797c069447314b41d",
+      "size": 18826
+    },
+    {
       "path": "scripts/diagram_model_v2.py",
-      "sha256": "c1e859ea2d1cdb7cda9ac73d1b8dd5b29f3eb2221579d3420102b240ed4c5221",
-      "size": 36432
+      "sha256": "3bb95077619421ca9b4bf46ea106d542ed10750273e960e5523bdfcf9c3bef5c",
+      "size": 36619
     },
     {
       "path": "scripts/diagram_orchestrator.py",
-      "sha256": "077ef8e99f7aea0771b9c46af9c426710e51a2d8c189aa0ffc3efee1c2f735f0",
-      "size": 227075
+      "sha256": "408faf5966ee68fd27db22c177929c54d344a2df8fc4ef05e819b93d263d3aa8",
+      "size": 350896
     },
     {
       "path": "scripts/diagram_supervisor.py",
-      "sha256": "6ad634db87ff0dca7269d9a3e07e2a48f8338cdc055ac782ce28dcbe0d7ccd8b",
-      "size": 117282
+      "sha256": "dd5f2ed692c3349258c078a504cb7a36945010d1fa19e8876692695970688225",
+      "size": 121532
+    },
+    {
+      "path": "scripts/elk_runner.mjs",
+      "sha256": "f39266f99d9c9515045c62fd0e075d85bfc14ddacd4d1595695626ed428247c5",
+      "size": 13530
     },
     {
       "path": "scripts/encode_drawio_url.py",
@@ -450,8 +485,8 @@
     },
     {
       "path": "scripts/evidence_v2.py",
-      "sha256": "273d969233eeafe5e16b612661e9d01de4d17593dba918f482e83ee3d425bda7",
-      "size": 15064
+      "sha256": "d5fd0a7d2c32aba211637706319b09035d88be1e5a5828c4708e522fe09a0756",
+      "size": 17867
     },
     {
       "path": "scripts/export_smoke.py",
@@ -460,8 +495,8 @@
     },
     {
       "path": "scripts/gitflow.py",
-      "sha256": "c5f1f932cdf9cc5ddcfbf38f40f60fc194657f3d6a8fbc91a753438bccdbf6be",
-      "size": 13982
+      "sha256": "2f02a0f81e8bc7340e2ea9f962f618eef076bc2bd69ec0ec7bd7378faab3d46b",
+      "size": 14509
     },
     {
       "path": "scripts/gitflow_validate.py",
@@ -475,8 +510,8 @@
     },
     {
       "path": "scripts/implementation_snapshot_v2.py",
-      "sha256": "1a0a37fd28b6c4d83579963a1a8ba1fd45b0024e11c38333b1b80344276d2cb1",
-      "size": 6121
+      "sha256": "e62ff576b41f2798912cf3802f350c0f660dfa6e0e391d7a51006b541537b2f6",
+      "size": 6489
     },
     {
       "path": "scripts/jsimports.py",
@@ -489,14 +524,44 @@
       "size": 9464
     },
     {
+      "path": "scripts/layout_backend.py",
+      "sha256": "26dd9665f9a4c549a310c0f7e69aa10e818108996dab849920ca940c95c566af",
+      "size": 29570
+    },
+    {
+      "path": "scripts/layout_builtin.py",
+      "sha256": "290c9c33a682af8ebe661c5934e76027ac71b193bd8262e814ca39741a119c70",
+      "size": 52223
+    },
+    {
+      "path": "scripts/layout_contracts.py",
+      "sha256": "f3f8421d2b7376bbbb82d9fa4b87596824fa0317a5bee52de4f0b36e3a7de28c",
+      "size": 15537
+    },
+    {
+      "path": "scripts/layout_geometry.py",
+      "sha256": "2668bda5882c6e231cddecb043c4026b22531c1a5bbd07a10d5c4f45cf7eda03",
+      "size": 7477
+    },
+    {
+      "path": "scripts/layout_model.py",
+      "sha256": "42da9fce537bfefd4be4cf23a237ac8ffa39672f893c8da97d17f50074fe6811",
+      "size": 23543
+    },
+    {
+      "path": "scripts/layout_renderer.py",
+      "sha256": "31b129917050f6996152b1faa6bc173b171412a42fa996346834eb04a6507e92",
+      "size": 20813
+    },
+    {
       "path": "scripts/lifecycle_contracts.py",
       "sha256": "95ec7ca6ef4d42c1286043294676b58250505a36872d2278f397f582b1a9243b",
       "size": 12720
     },
     {
       "path": "scripts/lifecycle_host_v2.py",
-      "sha256": "95a8a164902eff74d4d3e3fa68fa16650e3b531cbe92c8212ad29e1d8d62ec60",
-      "size": 61384
+      "sha256": "f3fb2aa0133d5331636841155f8021562b86f1510887f468438ea32105b8a0e2",
+      "size": 66042
     },
     {
       "path": "scripts/pyclasses.py",
@@ -510,8 +575,8 @@
     },
     {
       "path": "scripts/renderer_adapters.py",
-      "sha256": "a7da224d51c35004cba0c2e0af1c6e217038a355d5d98215ed5a75d9d5fed7e2",
-      "size": 23934
+      "sha256": "13b7d0635e763ed1d0bf485c6d5a5b17138a841e97b2febfe90d85a631bd1a35",
+      "size": 26345
     },
     {
       "path": "scripts/repair_png.py",
@@ -555,13 +620,18 @@
     },
     {
       "path": "scripts/self_check.py",
-      "sha256": "68bbfe2b8a494c33bc651450f1edfda6709f6455800c50057940b14016549a0f",
-      "size": 11747
+      "sha256": "fbdcd7ac7950e262cb9dd4f3880309fdb092c2bd5d82ec7674b40d11047afac5",
+      "size": 25498
     },
     {
       "path": "scripts/seqlayout.py",
       "sha256": "527c522dfd1ccff1c252bb146f250710d0033385444ac3cc2a33ede11ee09fc4",
       "size": 9917
+    },
+    {
+      "path": "scripts/sequence_adapter.py",
+      "sha256": "4b4c631e1a6f7773a1d0440de611293b39237105faabee2c429ea423c8eabb9d",
+      "size": 4068
     },
     {
       "path": "scripts/shapesearch.py",
@@ -585,8 +655,8 @@
     },
     {
       "path": "scripts/validate.py",
-      "sha256": "85975dca1df352cdc35eec120bc1682c5a5a7ac9b6b027057d0d2c3effb1d132",
-      "size": 48843
+      "sha256": "ff1a809d4772bfa2be0701556a5ef910298000d3c0730bac734923bfb96af906",
+      "size": 60497
     },
     {
       "path": "scripts/validation_common.py",
@@ -734,6 +804,146 @@
       "size": 780
     },
     {
+      "path": "tests/fixtures/layout/allowed-fanout.drawio",
+      "sha256": "c2751783a872a594a7d202f2d3e9367b0c75e0ef7ab91f261088445f65009cd7",
+      "size": 888
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/bpmn-lanes.json",
+      "sha256": "b18a7588a853908d453cb62bdc968994c0debb47391a9c022f74f1b6693eccd6",
+      "size": 349
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/c4-services.json",
+      "sha256": "e4c9e1316d44fe3b07b2ad4e728ba2318418a6566a7397ca8adb74fd0246126a",
+      "size": 385
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/elk-failure-fallback.json",
+      "sha256": "ad04c53e587946d621569e5d0e08e976bce3e373975169db99bdc9a60a7b5be3",
+      "size": 252
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/er-dependency.json",
+      "sha256": "5a78afcddbbc2add390ec573d721219d3469b8b415ca77547d30a0a953821ffe",
+      "size": 432
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/linear-process.json",
+      "sha256": "db12331f1ad99698ad487033e6ffe48729bed7fb4375d20faa0c55f8b8194859",
+      "size": 300
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/local-edge-improve.json",
+      "sha256": "d7462340eeb213587ea764941aae81e293e99f1d9c3fe4230e4e34d271d7cbaf",
+      "size": 444
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/local-node-move.json",
+      "sha256": "608e22abc85384577d7dc608bc6c3cc35396d93578b46b85395973b1ae419858",
+      "size": 459
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/microservices.json",
+      "sha256": "8759f999026f471d635e133b47b6009cce3526dbd0b13617b00e87059795ce21",
+      "size": 451
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/order-processing.json",
+      "sha256": "922fd922c4717d8df67e733b8f6e8b3002a27e046857bec04f19e8eac79ea318",
+      "size": 498
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/return-loop.json",
+      "sha256": "16b8ab3408fdc0170659283134d23ecf657d90e7067868fa9955bf1515143c8c",
+      "size": 298
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/strict-failure-best-effort.json",
+      "sha256": "364014f67abb406928749cb3db203adea7de036eca2d57e35d03023c6c0c6ec2",
+      "size": 268
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/three-way-decision.json",
+      "sha256": "eeb1e7b41b6b38b878777ba909dd3d35f5e003a013f8b0999e86246bc4adb32e",
+      "size": 603
+    },
+    {
+      "path": "tests/fixtures/layout/corpus/two-way-decision.json",
+      "sha256": "011241f645fe0922856fd1e3ffc1197dfc237de1e93dec4e3a029e329f2ed65b",
+      "size": 476
+    },
+    {
+      "path": "tests/fixtures/layout/cycle.json",
+      "sha256": "0e529205d95d3fc88608997fbc8b185385480bb1d4bab348f419910ec03bf740",
+      "size": 360
+    },
+    {
+      "path": "tests/fixtures/layout/detour-bends.drawio",
+      "sha256": "a5ca281979eb3b720bca43468ebfdbb926fb5d81b360075e57080402a27589d9",
+      "size": 807
+    },
+    {
+      "path": "tests/fixtures/layout/extreme-aspect.drawio",
+      "sha256": "d6456d95cf2384768d3285fe0ccdeb6dda479befd4ddadd94db22501713840b7",
+      "size": 298
+    },
+    {
+      "path": "tests/fixtures/layout/fan-in-out.json",
+      "sha256": "ba3b4bf633fd3539458d08e8046b5db09ece0cc85f1903a5711eaad066f99499",
+      "size": 1342
+    },
+    {
+      "path": "tests/fixtures/layout/feedback-intrusion.drawio",
+      "sha256": "5e1a517b3450b0d3385854ffbdf9dcc332e9b21f693d7b0dbaea2690a21b6971",
+      "size": 741
+    },
+    {
+      "path": "tests/fixtures/layout/intentional-bus.drawio",
+      "sha256": "6a546ef8582ba65400b2247040b40a1a937655f529af512701ba6181d6185fdb",
+      "size": 1063
+    },
+    {
+      "path": "tests/fixtures/layout/label-collisions.drawio",
+      "sha256": "befcda2e45081ad35459b00f7f949fa152cbcddd6b8ea6d17f5129cefdba3229",
+      "size": 589
+    },
+    {
+      "path": "tests/fixtures/layout/local-improve.drawio",
+      "sha256": "b1f53bb24ebb992a52be3edb532340d16ce3f1672677041d90631e4e1b9b65c7",
+      "size": 635
+    },
+    {
+      "path": "tests/fixtures/layout/nested-containers.json",
+      "sha256": "33fd3a004f6e1c660447a70feaa269775089c75a76468d13eee54711a56603da",
+      "size": 842
+    },
+    {
+      "path": "tests/fixtures/layout/order-process-plan.json",
+      "sha256": "518290f9c5d117ef6b588adb720b600ef4ae88ce23b27ee5fe5938a15ea6a8ff",
+      "size": 1609
+    },
+    {
+      "path": "tests/fixtures/layout/return-loop.json",
+      "sha256": "b9141c1b3d6ecf947bd3e97de356acb7089354e22ad4f49d5ea91d1bf4f9d8e3",
+      "size": 921
+    },
+    {
+      "path": "tests/fixtures/layout/routing-obstacles.json",
+      "sha256": "7c8280e996697a5d8ffc980a4f93a425e876bb8e6d5118c30c78fbe431d3a440",
+      "size": 462
+    },
+    {
+      "path": "tests/fixtures/layout/shared-trunk.drawio",
+      "sha256": "b89616e0c5a346a7abbd335f317addae4a1ec22e444ad4e7f313c8de7c10daf5",
+      "size": 1606
+    },
+    {
+      "path": "tests/fixtures/layout/shared-x-350.drawio",
+      "sha256": "06e7505d7ba4a5c25786a9b112b7d3c3efae919af5b01de634377401b5c66eae",
+      "size": 1378
+    },
+    {
       "path": "tests/fixtures/roadmap/baseline_shift.yaml",
       "sha256": "8cef1f752f5b30cba693b8eff0d69cb07c9fdef6af78bd758122e3dd63a2822e",
       "size": 1591
@@ -814,9 +1024,24 @@
       "size": 309
     },
     {
+      "path": "tests/test_agent_contracts.py",
+      "sha256": "64eaab6135793986619e05001d38fefd8052b46f22013474a80bc3e223fcffde",
+      "size": 3707
+    },
+    {
+      "path": "tests/test_agent_runtime.py",
+      "sha256": "9509a1d99ca7fe3559da622b8817e527866865a57aa20fd3bf6624f15a310e7d",
+      "size": 11335
+    },
+    {
       "path": "tests/test_artifact_tools.py",
       "sha256": "e3853175015611d24a14f72cfdbee076ef862429946fa73c4557fad386074988",
       "size": 9644
+    },
+    {
+      "path": "tests/test_command_ux.py",
+      "sha256": "3d212ac6115136f897ff261afd3609542d79b2e30222d3aea9b05e2bd57d4d2f",
+      "size": 3289
     },
     {
       "path": "tests/test_contract_docs.py",
@@ -825,8 +1050,8 @@
     },
     {
       "path": "tests/test_contracts.py",
-      "sha256": "708cbe5a653bfebc375b2cf5d81906fd08e5c9a44e1560f1b85c3abdff8de568",
-      "size": 11862
+      "sha256": "8bde4e19fdc0bbcf5cb2ac78b7746a287522da1ae2b41f137e09d0f3896c5717",
+      "size": 12324
     },
     {
       "path": "tests/test_diagram_host.py",
@@ -834,39 +1059,84 @@
       "size": 15101
     },
     {
+      "path": "tests/test_diagram_intake.py",
+      "sha256": "de25bb01f1fe3e402440ee90baacd4defa5f82941696d0b2c34b114539360b39",
+      "size": 11492
+    },
+    {
       "path": "tests/test_diagram_orchestrator.py",
-      "sha256": "143e9b97305d38decddf44c9b85b9b3cc801c8aec6c2ec4364987f808d1c10e4",
-      "size": 105803
+      "sha256": "02b9dcd60cc9dda5203f99d6f8fbac20e4aed837e36b90a0a45ebcca3c102887",
+      "size": 170875
     },
     {
       "path": "tests/test_diagram_supervisor.py",
-      "sha256": "a6ca3bb31f54b4c38316e38724e4d8402f378b172dd754de8ea949eb89776ddc",
-      "size": 172576
+      "sha256": "6356dd9d2ef5c3e74404ba132b05d9e4cfbc7988315f6be4848e2b539fbaa82e",
+      "size": 175075
     },
     {
       "path": "tests/test_finding_fixtures.py",
-      "sha256": "a5fe9b47c6af15e0c00b68dc961ac8b1891c16b8f2540907dfd3a62d7c4c1461",
-      "size": 17734
+      "sha256": "08cfd311835472aa99220d7955397bf807e7ec6baa02cdc91a1bd3b1c477a482",
+      "size": 20925
     },
     {
       "path": "tests/test_gitflow.py",
-      "sha256": "a9e91a4523cd60c22d5d9651f029e42190a1486d85c7cfeeec6382a5616ca531",
-      "size": 5363
+      "sha256": "547002ba246b207acf15e1f4d7ec5f95231422435d43075ef169ea61c046a974",
+      "size": 6026
     },
     {
       "path": "tests/test_intake_docs.py",
-      "sha256": "e97a9972805c076f1b2338909af73097f959339c3d7b411896b9c997e441ac4b",
-      "size": 1447
+      "sha256": "0ffc70189bfa3ad5ae95c825019d87d3bbd49b8fbfbf545048f55e2c1cda36b5",
+      "size": 1942
+    },
+    {
+      "path": "tests/test_layout_backend.py",
+      "sha256": "687bf604825d96c2a7d7f7287431a01623916ad8468096ea6c6842479fc82265",
+      "size": 18486
+    },
+    {
+      "path": "tests/test_layout_builtin.py",
+      "sha256": "ac74d01d374c7a536b132a7b8354bd20a354e0f3a0cd2eccf90a1e9f237492fe",
+      "size": 27207
+    },
+    {
+      "path": "tests/test_layout_contracts.py",
+      "sha256": "9ef0f1a73301c52c9675440136224b13b346ba3adbe1f1392d89c30dc58fe014",
+      "size": 14950
+    },
+    {
+      "path": "tests/test_layout_corpus.py",
+      "sha256": "751eaa1ee6b5dd0d412b46987e3fc2b74b9eab1e6007e9d75e889a1bf55de75e",
+      "size": 30805
+    },
+    {
+      "path": "tests/test_layout_geometry.py",
+      "sha256": "628937f616f72da608ea26667bfc922aff55866bec2688e6e0a09b1b93743424",
+      "size": 2506
+    },
+    {
+      "path": "tests/test_layout_model.py",
+      "sha256": "60cc6e2541edcef804252dd0273e81026f5a2a9cdb64d990777f8185f643b32d",
+      "size": 17653
+    },
+    {
+      "path": "tests/test_layout_renderer.py",
+      "sha256": "35be9553d7330885645d0d0921c65e5525af39317e896a92f06f4370742d4983",
+      "size": 15113
     },
     {
       "path": "tests/test_lifecycle_v2.py",
-      "sha256": "ae99c9c9686a07bac0b7ca5126d052f5d8810193d86420e8a167488bc1dd3ad1",
-      "size": 53598
+      "sha256": "6f34e72c25abd43da812bd37189ca09f15078b3aa9eba83e75f380eb510f78fe",
+      "size": 62362
     },
     {
       "path": "tests/test_readme_docs.py",
-      "sha256": "d4bb50f168e3c3e592019146a8d4d2f71f4852cff36a35d9d6097e09c3a74703",
-      "size": 1225
+      "sha256": "f815c1d7be50dc9a6fae57346d64424fd3b33fbceabfd997a52b7f96c2088b2e",
+      "size": 1856
+    },
+    {
+      "path": "tests/test_renderer_adapters.py",
+      "sha256": "858db9af960e488a1a934e818a777f5dd321132caf2f2042ea4c29265132815b",
+      "size": 9264
     },
     {
       "path": "tests/test_roadmap.py",
@@ -882,23 +1152,38 @@
       "path": "tests/test_validate.py",
       "sha256": "985faa7a90cfa147cfeef9e67ed6e3122ff1d7078f54860d88c405c88690ea94",
       "size": 1562
+    },
+    {
+      "path": "vendor/elkjs/LICENSE",
+      "sha256": "89591d4578fb1ebd91501312a3d25f021bd865a2e436641c1cf7b1bc7e3c1617",
+      "size": 14480
+    },
+    {
+      "path": "vendor/elkjs/NOTICE.json",
+      "sha256": "690a95134ec1c1bbda3a6d558f99076ae301107b5bda11056f1100fed0e78edd",
+      "size": 833
+    },
+    {
+      "path": "vendor/elkjs/elk.bundled.js",
+      "sha256": "20dd2114d683ce758b3ce19bcc56e28a504a617b0d280f760407c37314631d0e",
+      "size": 1607470
     }
   ],
   "format_version": 1,
   "skill": "drawio",
-  "version": "1.24.0-corporate.5",
+  "version": "1.25.0-corporate.1",
   "version_sources": [
     {
       "path": "SKILL.md",
-      "value": "1.24.0-corporate.5"
+      "value": "1.25.0-corporate.1"
     },
     {
       "path": "metadata.md",
-      "value": "1.24.0-corporate.5"
+      "value": "1.25.0-corporate.1"
     },
     {
       "path": "gemini-extension.json",
-      "value": "1.24.0-corporate.5"
+      "value": "1.25.0-corporate.1"
     }
   ]
 }
